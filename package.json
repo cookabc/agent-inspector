@@ -1,0 +1,24 @@
+{
+  "name": "zcode-inspector",
+  "version": "1.0.0",
+  "description": "把 ~/.zcode 摊开看清楚：每一类占多少、删了会怎样，然后决定清掉哪些",
+  "type": "module",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cookabc/zcode-inspector.git"
+  },
+  "keywords": [
+    "zcode",
+    "disk-usage",
+    "cleanup",
+    "audit",
+    "sqlite"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node server.mjs"
+  }
+}

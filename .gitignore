@@ -1,0 +1,34 @@
+# 依赖（这个项目零依赖，留着以防将来加了）
+node_modules/
+
+# ── 最要紧的一条 ──────────────────────────────────────────────
+# backups/ 里是会话库的完整副本，含对话正文。清一次任务就生成一份，
+# 单个就有几百 MB 到 1 GB 级。它永远不该进仓库。
+backups/
+
+# 数据库与 SQLite 的侧车文件
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.db
+
+# 日志与运行时产物
+*.log
+npm-debug.log*
+.npm/
+
+# 环境变量与本地配置
+.env
+.env.*
+
+# 编辑器与系统
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# 临时文件与缓存
+*.tmp
+.cache/
