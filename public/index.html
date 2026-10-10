@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ZCode 磁盘审计</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+        <ellipse cx="12" cy="5.5" rx="7" ry="2.6"/>
+        <path d="M5 5.5v13c0 1.44 3.13 2.6 7 2.6s7-1.16 7-2.6v-13"/>
+        <path d="M5 12c0 1.44 3.13 2.6 7 2.6s7-1.16 7-2.6"/>
+      </svg>
+    </span>
+    <span class="brand-text">
+      <strong>ZCode 磁盘审计</strong>
+      <code id="rootPath">~/.zcode</code>
+    </span>
+  </div>
+
+  <nav class="nav" id="nav" aria-label="页面导航">
+    <a class="nav-a" href="#overview">总览</a>
+    <a class="nav-a" href="#clean">清理</a>
+    <a class="nav-a" href="#files">文件</a>
+    <a class="nav-a" href="#tasks">任务</a>
+  </nav>
+
+  <div class="topbar-actions">
+    <span class="scan-note" id="scanNote"></span>
+    <button class="btn btn-ghost" id="rescanBtn" type="button">重新扫描</button>
+    <button class="btn btn-ghost btn-icon" id="themeBtn" type="button" aria-label="切换主题" title="切换主题">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+        <circle cx="12" cy="12" r="4"/>
+        <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- ── 总览：先说总量，再说这里面能清掉什么 ───────────────
+       这两件事本来就是一句话的两半 —— 上面那个数是分母，下面两条清理线是分子。
+       拆成两张卡反而要人自己把它们接起来。 -->
+  <section class="hero" id="overview" aria-labelledby="heroTitle">
+    <div class="hero-head">
+      <p class="eyebrow" id="heroTitle">磁盘占用</p>
+      <p class="hero-figure" id="heroBytes">—</p>
+      <p class="hero-sub" id="heroSub">正在扫描 <code>~/.zcode</code> …</p>
+    </div>
+
+    <section class="clean" id="clean" aria-labelledby="cleanTitle">
+      <h2 class="section-title" id="cleanTitle">可以清理的</h2>
+
+      <div class="lanes">
+        <!-- 文件与日志 -->
+        <article class="lane" id="rec">
+          <header class="lane-head">
+            <span class="lane-name">文件与日志</span>
+            <span class="lane-figure" id="recFigure">—</span>
+          </header>
+          <p class="lane-sub" id="recSub"></p>
+
+          <div class="lane-scope" id="recScope" role="group" aria-label="推荐清理包含哪些"></div>
+
+          <footer class="lane-foot">
+            <button class="btn btn-primary" id="recBtn" type="button">推荐清理</button>
+            <p class="lane-cap" id="recCap"></p>
+          </footer>
+        </article>
+
+        <!-- 历史任务 -->
+        <article class="lane" id="taskQuick" hidden>
+          <header class="lane-head">
+            <span class="lane-name">历史任务</span>
+            <span class="lane-figure" id="tqFigure">—</span>
+          </header>
+          <p class="lane-sub" id="tqSub"></p>
+
+          <div class="lane-scope">
+            <label class="mini-sel">
+              <span>跳过最近</span>
+              <select id="taskAge">
+                <option value="7">7 天</option>
+                <option value="30" selected>30 天</option>
+                <option value="90">90 天</option>
+                <option value="0">不跳过</option>
+              </select>
+            </label>
+            <button type="button" class="rec-chip st-warning is-on" id="taskSkipPinned" aria-pressed="true">
+              <span class="box" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span>
+              跳过置顶的
+            </button>
+          </div>
+
+          <footer class="lane-foot">
+            <button class="btn btn-primary" id="taskQuickBtn" type="button">一键清理</button>
+            <p class="lane-cap" id="taskQuickCap"></p>
+          </footer>
+        </article>
+      </div>
+    </section>
+  </section>
+
+  <!-- ── 诊断 ───────────────────────────────────────────── -->
+  <section class="note" id="diagnosis" aria-labelledby="diagTitle">
+    <details class="note-fold">
+      <summary class="note-title" id="diagTitle">
+        <span class="dot dot-serious" aria-hidden="true"></span>
+        <span class="note-title-text" id="diagTitleText">失控日志</span>
+        <span class="note-hint">展开看原因与复现命令</span>
+      </summary>
+      <p class="note-lede" id="diagLede"></p>
+      <div class="diag-body">
+        <p>Agent 会把每条命令的 stdout 完整落盘到 <code>&lt;root&gt;/cli/exec/&lt;会话&gt;/call_&lt;id&gt;-stdout.log</code>。这个路径就在被审计的目录里面，于是它自己也会成为搜索的目标。</p>
+        <p>真实发生过的一次：某个只读的 Explore 子 Agent 执行了下面这样一条命令（搜索模式已脱敏）——</p>
+        <pre><code>grep -RIn --exclude-dir=.git \
+     -E '&lt;某个内部指标名&gt;' \
+     ~/.zcode/cli/exec</code></pre>
+        <p>它搜索的目录里，正躺着这条命令自己的输出文件。grep 一边读、一边匹配到 harness 正在写入的内容，输出被下一轮再次匹配 —— 于是每转一圈就嵌套一层。证据是日志的结尾，同一条路径被层层套住，行号以 8 递减：</p>
+        <pre><code>…/call_&lt;id&gt;-stdout.log:19977:…/call_&lt;id&gt;-stdout.log:19969:…:19961:…</code></pre>
+        <p>另一种放大不需要自引用：搜的是 <code>cli/agents/**/transcript.jsonl</code>，而每条记录都保存了发给模型的完整请求体，单行就有几百 KB，匹配一次就是几百 KB 的输出。</p>
+        <p><strong>要避免复发</strong>：别让 Agent 把 <code>~</code>、<code>~/.zcode</code>、<code>~/.claude</code> 当 <code>grep -R</code> 的搜索根。</p>
+      </div>
+    </details>
+  </section>
+
+  <!-- ── 逐项清单（文件）────────────────────────────────── -->
+  <section class="panel" id="files" aria-labelledby="listTitle">
+    <h2 id="listTitle">文件清单</h2>
+    <p class="lede" id="splitLede"></p>
+    <div class="split" id="split"></div>
+
+    <div class="toolbar">
+      <label class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>
+        </svg>
+        <input type="search" id="search" placeholder="搜索路径…（按 / 聚焦）" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="chips" id="statusChips" role="group" aria-label="按可清理程度筛选"></div>
+      <label class="sort">
+        <span>排序</span>
+        <select id="sortSel">
+          <option value="size">体积</option>
+          <option value="time">修改时间</option>
+          <option value="name">名称</option>
+        </select>
+      </label>
+      <div class="btn-pair" role="group" aria-label="逐项清单的勾选快捷操作">
+        <button class="btn btn-ghost btn-sm" id="fileSelAll" type="button">全选</button>
+        <button class="btn btn-ghost btn-sm" id="clearSelBtn" type="button">取消</button>
+      </div>
+    </div>
+
+    <div class="groups" id="groups"></div>
+    <p class="empty" id="emptyHint" hidden>没有匹配的条目。</p>
+  </section>
+
+  <!-- ── 历史任务 ───────────────────────────────────────── -->
+  <section class="panel" id="tasks" aria-labelledby="taskTitle">
+    <h2 id="taskTitle">历史任务</h2>
+
+    <div class="app-warn" id="taskWarn" hidden></div>
+
+    <p class="lede" id="taskLede">正在读取会话库…</p>
+    <div class="dbbar" id="dbBar"></div>
+
+    <div class="toolbar">
+      <label class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>
+        </svg>
+        <input type="search" id="taskSearch" placeholder="搜索标题或工作区…" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="chips" id="taskChips" role="group" aria-label="按任务状态筛选"></div>
+      <label class="sort">
+        <span>排序</span>
+        <select id="taskSort">
+          <option value="size">体积</option>
+          <option value="time">最后使用</option>
+          <option value="title">标题</option>
+        </select>
+      </label>
+      <button class="btn btn-ghost btn-sm" id="taskGroupBtn" type="button" aria-pressed="false">
+        按工作区分组
+      </button>
+      <div class="btn-pair" role="group" aria-label="任务勾选快捷操作">
+        <button class="btn btn-ghost btn-sm" id="taskPickAll" type="button">全选</button>
+        <button class="btn btn-ghost btn-sm" id="taskClearSel" type="button">取消</button>
+      </div>
+    </div>
+
+    <div class="task-list" id="taskList"></div>
+    <p class="empty" id="taskEmpty" hidden>没有匹配的任务。</p>
+
+    <div class="task-foot" id="taskFoot" hidden>
+      <div class="ab-summary">
+        <span>已选</span> <strong id="tfCount">0</strong>
+        <span>个任务 · 文本 <b id="tfBytes">0 B</b></span>
+      </div>
+      <button class="btn btn-primary" id="taskPurgeBtn" type="button">清理…</button>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <p>只读扫描：只读取文件大小与时间，从不读取文件内容。清理默认移入废纸篓，可随时恢复。</p>
+  </footer>
+</div>
+
+<!-- ── 文件清理：底部操作条 + 确认抽屉 ─────────────────── -->
+<div class="actionbar" id="actionbar" hidden>
+  <div class="ab-summary">
+    <strong id="abCount">0</strong>
+    <span>项 · <b id="abBytes">0 B</b></span>
+  </div>
+  <div class="ab-actions">
+    <button class="btn btn-ghost" id="abReveal" type="button">在 Finder 中显示</button>
+    <button class="btn btn-primary" id="abClean" type="button">清理…</button>
+  </div>
+</div>
+
+<div class="drawer-scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" hidden aria-labelledby="drawerTitle" role="dialog" aria-modal="true">
+  <header class="drawer-head">
+    <h3 id="drawerTitle">确认清理</h3>
+    <button class="btn btn-ghost btn-icon" id="drawerClose" type="button" aria-label="关闭">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+
+  <div class="drawer-body">
+    <div class="mode-choice" role="radiogroup" aria-label="清理方式">
+      <label class="mode">
+        <input type="radio" name="mode" value="trash" checked>
+        <span class="mode-body">
+          <strong>移入废纸篓</strong>
+          <em>默认。文件进 <code>~/.Trash</code>，可随时拖回来。所有可清理项都支持。</em>
+        </span>
+      </label>
+      <label class="mode">
+        <input type="radio" name="mode" value="purge">
+        <span class="mode-body">
+          <strong>彻底删除</strong>
+          <em>不进废纸篓，直接抹掉，无法恢复。受保护的内容一律被拒绝。</em>
+        </span>
+      </label>
+    </div>
+
+    <div class="drawer-stats" id="drawerStats"></div>
+    <div class="drawer-mix" id="drawerMix"></div>
+
+    <div class="drawer-list-head">
+      <span>将要处理的条目</span>
+      <span id="drawerListCount"></span>
+    </div>
+    <ul class="drawer-list" id="drawerList"></ul>
+
+    <label class="purge-confirm" id="purgeConfirm" hidden>
+      <span>彻底删除不可恢复。请输入 <code>彻底删除</code> 以确认：</span>
+      <input type="text" id="purgeWord" placeholder="彻底删除" autocomplete="off">
+    </label>
+  </div>
+
+  <footer class="drawer-foot">
+    <p class="drawer-msg" id="drawerMsg" role="status"></p>
+    <div class="drawer-btns">
+      <button class="btn btn-ghost" id="drawerCancel" type="button">取消</button>
+      <button class="btn btn-primary" id="drawerGo" type="button">移入废纸篓</button>
+    </div>
+  </footer>
+</aside>
+
+<!-- ── 任务清理：确认抽屉 ──────────────────────────────── -->
+<div class="drawer-scrim" id="tscrim" hidden></div>
+<aside class="drawer" id="tdrawer" hidden role="dialog" aria-modal="true" aria-labelledby="tdrawerTitle">
+  <header class="drawer-head">
+    <h3 id="tdrawerTitle">清理历史任务</h3>
+    <button class="btn btn-ghost btn-icon" id="tdrawerClose" type="button" aria-label="关闭">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+
+  <div class="drawer-body">
+    <div class="drawer-stats" id="tdrawerStats"></div>
+    <p class="tdrawer-note" id="tdrawerNote"></p>
+
+    <div class="drawer-list-head">
+      <span>将要删除的任务</span>
+      <span id="tdrawerCount"></span>
+    </div>
+    <ul class="drawer-list" id="tdrawerList"></ul>
+
+    <div id="tdryWrap" hidden>
+      <div class="drawer-list-head" style="margin-bottom:8px"><span>空跑核对：实际会删掉的行</span></div>
+      <ul class="dryrun" id="tdryList"></ul>
+    </div>
+
+    <label class="purge-confirm" id="tConfirmBox" hidden>
+      <span>删除不可撤销（会先自动备份）。请输入 <code>清理</code> 以确认：</span>
+      <input type="text" id="tWord" placeholder="清理" autocomplete="off">
+    </label>
+  </div>
+
+  <footer class="drawer-foot">
+    <p class="drawer-msg" id="tdrawerMsg" role="status"></p>
+    <div class="drawer-btns">
+      <button class="btn btn-ghost" id="tdryBtn" type="button">先空跑核对</button>
+      <button class="btn btn-ghost" id="tdrawerCancel" type="button">取消</button>
+      <button class="btn btn-danger" id="tdrawerGo" type="button">删除</button>
+    </div>
+  </footer>
+</aside>
+
+<div class="tooltip" id="tooltip" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
