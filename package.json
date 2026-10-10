@@ -21,5 +21,6 @@
   },
   "scripts": {
     "start": "node server.mjs"
-  }
+  },
+  "author": "cookabc"
 }
