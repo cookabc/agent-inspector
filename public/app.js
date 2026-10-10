@@ -230,6 +230,11 @@ function renderGroups() {
     // 筛过之后还写整类的体积，就会跟卡里勾着的行对不上（2.84 GB 的卡里躺着 9.2 MB 的勾）。
     const filtered = all.length !== totalHere;
     const visBytes = all.reduce((a, f) => a + f.s, 0);
+    // 只有两个数格式化之后真的不一样，才值得把"整类多大"补在后面。
+    // 否则会印出 "2.84 GB / 2.84 GB" 这种 —— 筛没筛、差多少，全靠读者自己猜。
+    const visLabel = fmtBytes(visBytes);
+    const allLabel = fmtBytes(cat.bytes);
+    const showAll = filtered && visLabel !== allLabel;
 
     const shown = isOpen ? all.slice(0, MAX_ROWS) : [];
     const rows = shown.map((f) => rowHtml(f, cat)).join('');
@@ -250,8 +255,7 @@ function renderGroups() {
           }${selCount ? ` · 已选 ${selCount.toLocaleString()}` : ''}</span>
         </div>
         <div class="group-right">
-          <span class="group-size">${fmtBytes(visBytes)}${
-            filtered ? `<em> / ${fmtBytes(cat.bytes)}</em>` : ''}</span>
+          <span class="group-size">${visLabel}${showAll ? `<em> / ${allLabel}</em>` : ''}</span>
           <input type="checkbox" data-group-box="${cat.id}"
             ${cat.verdict === 'never' ? 'disabled aria-label="受保护内容，不可清理"' : ''}
             ${selCount && selCount === all.length ? 'checked' : ''}
