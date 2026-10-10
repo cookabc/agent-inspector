@@ -4,6 +4,7 @@
   "description": "把 ~/.zcode 摊开看清楚：每一类占多少、删了会怎样，然后决定清掉哪些",
   "type": "module",
   "private": true,
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/cookabc/zcode-inspector.git"

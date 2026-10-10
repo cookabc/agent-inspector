@@ -226,3 +226,7 @@ public/app.js       渲染、勾选、清理流程
 - **`node:sqlite` 的 `DatabaseSync` 是同步的**，所以它必须待在 worker 里。
 - **SQLite 的 `PRAGMA foreign_keys` 是每连接的**，忘了开就等于 `ON DELETE CASCADE` 从没生效过。
 - **孤儿判定读不到会话库时要放弃判定**，而不是判定"全都是孤儿" —— 后者会把所有会话文件标成可清理。
+
+## 许可
+
+MIT，见 [LICENSE](LICENSE)。
