@@ -255,7 +255,9 @@ function renderGroups() {
           }${selCount ? ` · 已选 ${selCount.toLocaleString()}` : ''}</span>
         </div>
         <div class="group-right">
-          <span class="group-size">${visLabel}${showAll ? `<em> / ${allLabel}</em>` : ''}</span>
+          <span class="group-size" title="${visBytes.toLocaleString()} 字节${
+            filtered ? `（整个分类 ${cat.bytes.toLocaleString()} 字节）` : ''}">${
+            visLabel}${showAll ? `<em> / ${allLabel}</em>` : ''}</span>
           <input type="checkbox" data-group-box="${cat.id}"
             ${cat.verdict === 'never' ? 'disabled aria-label="受保护内容，不可清理"' : ''}
             ${selCount && selCount === all.length ? 'checked' : ''}
@@ -538,7 +540,7 @@ function renderSplit() {
       <header class="split-head">
         <h3><span class="box" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span>${esc(title)}</h3>
-        <span class="split-size">${fmtBytes(sum(xs))}</span>
+        <span class="split-size" title="${sum(xs).toLocaleString()} 字节">${fmtBytes(sum(xs))}</span>
       </header>
       <p class="split-desc">${esc(desc)}</p>
       <p class="split-meta">${xs.length.toLocaleString()} 个文件${extra}</p>
