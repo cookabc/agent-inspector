@@ -20,7 +20,9 @@
     "node": ">=22.5.0"
   },
   "scripts": {
-    "start": "node server.mjs"
+    "start": "node server.mjs",
+    "test": "node --experimental-sqlite --test",
+    "check": "node --check server.mjs && node --check public/app.js && npm test"
   },
   "author": "cookabc"
 }

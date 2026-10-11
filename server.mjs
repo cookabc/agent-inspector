@@ -26,9 +26,9 @@ import { Worker } from 'node:worker_threads';
 /* 自己的模块用动态 import：本地这几个都依赖内置的 node:sqlite，
    而它是 Node 22.5 才有的。更早的版本上静态 import 会在任何提示之前直接崩掉，
    用户只看到一句 "Cannot find module 'node:sqlite'"。这里接住它，说人话。 */
-let scan, CATEGORIES, appRunning;
+let scan, CATEGORIES, classify, appRunning;
 try {
-  [{ scan }, { CATEGORIES }, { appRunning }] = await Promise.all([
+  [{ scan }, { CATEGORIES, classify }, { appRunning }] = await Promise.all([
     import('./lib/scan.mjs'),
     import('./lib/rules.mjs'),
     import('./lib/tasks.mjs'),
@@ -114,22 +114,59 @@ function getTasks(force = false) {
 
 /* ── 安全 ─────────────────────────────────────────────────── */
 
-/** 把相对路径解析成 root 内的绝对路径；越界抛错。 */
+/** 检查每一级路径，不允许通过目录软链接或 .. 绕过保护。 */
 function safeResolve(rel) {
   if (typeof rel !== 'string' || !rel.length) throw httpError(400, '路径为空');
   if (path.isAbsolute(rel)) throw httpError(400, `只接受相对路径：${rel}`);
-  const abs = path.resolve(ROOT, rel);
-  if (abs !== ROOT && !abs.startsWith(ROOT + path.sep)) {
+  if (rel.includes('\0') || rel.split(path.sep).includes('..')) {
+    throw httpError(400, `拒绝：路径包含非法部分：${rel}`);
+  }
+  const normalized = path.normalize(rel).replace(/\/$/, '');
+  if (normalized === '.') throw httpError(400, '拒绝：不能操作扫描根目录');
+  const root = fs.realpathSync.native(ROOT);
+  const abs = path.resolve(root, normalized);
+  if (!abs.startsWith(root + path.sep)) {
     throw httpError(400, `拒绝：路径越出 ${ROOT}`);
   }
-  // 目标本身若是符号链接，检查它指向哪里
+  let current = root;
   try {
-    const lst = fs.lstatSync(abs);
-    if (lst.isSymbolicLink()) throw httpError(400, `拒绝：${rel} 是符号链接`);
+    for (const part of normalized.split(path.sep)) {
+      current = path.join(current, part);
+      if (fs.lstatSync(current).isSymbolicLink()) {
+        throw httpError(400, `拒绝：${rel} 包含符号链接`);
+      }
+    }
+    if (!fs.realpathSync.native(abs).startsWith(root + path.sep)) {
+      throw httpError(400, `拒绝：路径越出 ${ROOT}`);
+    }
   } catch (err) {
     if (err.statusCode) throw err;
-    if (err.code !== 'ENOENT') throw httpError(400, `无法访问 ${rel}`);
+    throw httpError(400, `无法访问 ${rel}`);
   }
+  return fs.realpathSync.native(abs);
+}
+
+/** 对整个批次先检查，再开始执行，避免拒绝后已经删掉部分文件。 */
+async function validateDeletionPaths(paths) {
+  if (!Array.isArray(paths) || !paths.length) throw httpError(400, '没有选中任何路径');
+  for (const rel of paths) await deletablePath(rel);
+}
+
+async function deletablePath(rel) {
+  const abs = safeResolve(rel);
+  // native realpath 还原 macOS 不区分大小写文件系统上的实际名称。
+  const normalized = path.relative(fs.realpathSync.native(ROOT), abs);
+  async function inspect(file, relative) {
+    const st = await fsp.lstat(file);
+    if (isProtected(relative, st.isDirectory())) {
+      throw httpError(403, `受保护内容不能删除：${relative}`);
+    }
+    // rm/rename 不跟随目录内的链接；检查也不进入其目标。
+    if (st.isDirectory()) {
+      for (const name of await fsp.readdir(file)) await inspect(path.join(file, name), `${relative}/${name}`);
+    }
+  }
+  await inspect(abs, normalized);
   return abs;
 }
 
@@ -152,7 +189,7 @@ function uniqueTrashTarget(abs) {
 async function moveToTrash(rel) {
   // 非 macOS 上 ~/.Trash 不存在，rename 会报一句看不懂的 ENOENT。直说。
   if (!MACOS) throw httpError(400, '这台机器不是 macOS，"移入废纸篓"用不了，请改用"彻底删除"');
-  const abs = safeResolve(rel);
+  const abs = await deletablePath(rel);
   const st = await fsp.lstat(abs);
   const target = uniqueTrashTarget(abs);
   await fsp.rename(abs, target);
@@ -160,23 +197,19 @@ async function moveToTrash(rel) {
 }
 
 async function purge(rel) {
-  const abs = safeResolve(rel);
+  const abs = await deletablePath(rel);
   const st = await fsp.lstat(abs);
   const bytes = st.isDirectory() ? -1 : st.size;
   await fsp.rm(abs, { recursive: true, force: true });
   return { path: rel, bytes };
 }
 
-/** 受保护分类：除非 force，否则拒绝。 */
-function isProtected(rel) {
-  const id = Object.values(CATEGORIES).find((c) => {
-    if (c.id === 'credentials') return rel === 'v2/credentials.json';
-    if (c.id === 'database') return rel.startsWith('cli/db/') || /^v2\/tasks-index\.sqlite/.test(rel) || rel === 'v2/tasks-index.sqlite';
-    if (c.id === 'usage') return rel === 'cli/usage.json';
-    if (c.id === 'appConfig') return rel.startsWith('v2/') && rel.endsWith('.json') && !rel.startsWith('v2/logs/') && !rel.startsWith('v2/cache/');
-    return false;
-  });
-  return id ? id.id : null;
+/** 与界面共用分类规则；数据库目录本身也必须保护。 */
+function isProtected(rel, directory = false) {
+  if (rel === 'cli/db' || rel.startsWith('cli/db/')) return true;
+  // v2 是容器，由其实际后代决定；v2/cache 等目录按带斜杠的路径分类。
+  if (directory && rel === 'v2') return false;
+  return Boolean(CATEGORIES[classify(directory ? `${rel}/` : rel, 0)]?.locked);
 }
 
 /* ── HTTP ─────────────────────────────────────────────────── */
@@ -228,7 +261,9 @@ function readBody(req) {
     req.on('end', () => {
       if (!chunks.length) return resolve({});
       try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('object required');
+        resolve(body);
       } catch {
         reject(httpError(400, '请求体不是合法 JSON'));
       }
@@ -250,10 +285,18 @@ async function serveStatic(req, res, urlPath) {
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const p = url.pathname;
-
   try {
+    const host = req.headers.host;
+    const allowedHosts = [`127.0.0.1:${req.socket.localPort}`, `localhost:${req.socket.localPort}`];
+    if (!allowedHosts.includes(host)) throw httpError(403, '拒绝：不是本地服务地址');
+    if ((req.headers.origin && req.headers.origin !== `http://${host}`) || req.headers['sec-fetch-site'] === 'cross-site') {
+      throw httpError(403, '拒绝：跨站请求');
+    }
+    const url = new URL(req.url, `http://${host}`);
+    const p = url.pathname;
+    if (p.startsWith('/api/') && req.method === 'POST' && req.headers['content-type']?.split(';')[0].trim().toLowerCase() !== 'application/json') {
+      throw httpError(415, '请求必须使用 application/json');
+    }
     if (p === '/api/scan') {
       const index = await getIndex(url.searchParams.get('refresh') === '1');
       // 前端照这两个开关决定要不要摆出"移入废纸篓"和"在 Finder 中显示" ——
@@ -299,13 +342,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/trash' && req.method === 'POST') {
-      const { paths = [], force = false } = await readBody(req);
-      if (!Array.isArray(paths) || !paths.length) throw httpError(400, '没有选中任何路径');
-
-      const refused = paths.filter((r) => isProtected(r) && !force);
-      if (refused.length) {
-        throw httpError(403, `这些属于受保护内容，已拒绝：${refused.join('、')}`);
-      }
+      const { paths = [] } = await readBody(req);
+      await validateDeletionPaths(paths);
 
       const done = [];
       const failed = [];
@@ -320,10 +358,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/purge' && req.method === 'POST') {
       const { paths = [], confirm } = await readBody(req);
       if (confirm !== '彻底删除') throw httpError(400, '确认串不正确');
-      if (!Array.isArray(paths) || !paths.length) throw httpError(400, '没有选中任何路径');
-      // 受保护内容无论以哪条路由进来，都不能彻底删除
-      const guarded = paths.filter((r) => isProtected(r));
-      if (guarded.length) throw httpError(403, `这些属于受保护内容，已拒绝：${guarded.join('、')}`);
+      await validateDeletionPaths(paths);
 
       const done = [];
       const failed = [];
