@@ -1,7 +1,8 @@
 /* ════════════════════════════════════════════════════════════
-   ZCode 磁盘审计
-   方向：把 ~/.zcode 当成一根地质岩芯来读 —— 左侧一根分层的
-   剖面柱，越厚的一层就是越占地方的东西。克制、精密、可核对。
+   Agent Inspector
+   方向：把每个 coding agent 的落盘目录当成一根地质岩芯来读 ——
+   左侧一根分层的剖面柱，越厚的一层就是越占地方的东西。
+   克制、精密、可核对。
    ════════════════════════════════════════════════════════════ */
 
 :root {
@@ -188,6 +189,39 @@ p { margin: 0; }
 }
 .nav-a:hover { color: var(--ink); background: var(--surface-2); }
 .nav-a.is-on { color: var(--ink); background: var(--surface-2); font-weight: 550; }
+
+/* ── 工具切换 ───────────────────────────────────────────── */
+
+/* 四个工具并排，装了没、各占多少一眼看完。
+   没装的那一个压暗但仍然可点 —— 有时人就是想进去确认它真的没落盘。 */
+.app-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.app-tab {
+  font: inherit;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 8px 15px;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color .14s ease, background .14s ease, color .14s ease;
+}
+.app-tab:hover { border-color: var(--line-strong); color: var(--ink); }
+.app-tab.is-on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--ink);
+}
+.app-tab.is-empty { opacity: .6; }
+
+.app-tab-name { font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+.app-tab-size { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.app-tab.is-on .app-tab-size { color: var(--accent); font-weight: 550; }
 
 /* ── 按钮 ───────────────────────────────────────────────── */
 
@@ -951,6 +985,43 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   white-space: nowrap;
   overflow: hidden;
 }
+
+/* 只读会话库的构成：不能清理，那就数清楚给你看。
+   左边名字、中间等比条、右边行数与体积，读法和上面那根柱子一致。 */
+.tcomp {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 13px 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.tcomp-title { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.tcomp-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 168px) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+.tcomp-label {
+  font-size: 12px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tcomp-bar { height: 7px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.tcomp-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--line-strong);
+}
+.tcomp-n { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tcomp-row.is-total .tcomp-label,
+.tcomp-row.is-total .tcomp-n { color: var(--ink); font-weight: 600; }
+.tcomp-row.is-total .tcomp-bar i { background: var(--accent); }
 
 /* 任务列表：246 行不该把页面撑成一万像素，给它自己的滚动区 */
 .task-list {

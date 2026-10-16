@@ -1,9 +1,14 @@
-/* ZCode 磁盘审计 —— 前端 */
+/* Agent Inspector —— 前端
+ *
+ * 一次只审一个 app：ZCode / Codex / Claude Code / Cursor 把东西存在四个完全不同的地方，
+ * 分类表也各自一套。把四张表叠成一个总数只会骗人，所以顶栏那排标签决定下面每一块读谁的数据。
+ */
 
 const $ = (id) => document.getElementById(id);
 
 const els = {
   rootPath: $('rootPath'), scanNote: $('scanNote'), rescanBtn: $('rescanBtn'), themeBtn: $('themeBtn'),
+  appTabs: $('appTabs'),
   heroBytes: $('heroBytes'), heroSub: $('heroSub'),
   diagnosis: $('diagnosis'), diagLede: $('diagLede'), diagTitleText: $('diagTitleText'),
   rec: $('rec'), recBtn: $('recBtn'), recCap: $('recCap'), recScope: $('recScope'),
@@ -26,18 +31,25 @@ const els = {
 };
 
 const state = {
-  index: null,
-  selection: new Set(),
+  scan: null,            // /api/scan 的原始返回：{ apps: [每个 app 一份视图], grand, ... }
+  apps: [],              // 本次扫描到的 app 视图，按注册表顺序
+  appId: null,           // 当前在看哪个 app
+  index: null,           // 当前 app 的那一份视图 —— 下面所有渲染只读它
+  selection: new Set(),  // 勾选的是 "目标:路径"，同一路径在两个目标里不会互相顶掉
   open: new Set(),
   explain: new Set(),    // 展开了"这是什么 / 为什么在这里"的分类
   q: '',
   statuses: new Set(),   // 空 = 全部
   sort: 'size',
   group: null,           // 三块里被勾上的那一组：orphan / live / other；null = 不筛
-  recOff: new Set(),     // 被排除在"推荐清理"之外的分类
+  recOff: new Set(),     // 被排除在"推荐清理"之外的分类（按 app 各记一份）
   recReady: false,
   busy: false,
 };
+
+/* 一个 app 可能有多个扫描目标（Cursor 的 ~/.cursor 与 App Support）。
+   勾选、删除都要带上目标，否则两个目标里的同名路径会互相冒名顶替。 */
+const keyOf = (f) => `${f.t}:${f.p}`;
 
 /* ── 工具 ───────────────────────────────────────────────── */
 
@@ -89,24 +101,32 @@ const sumCats = (cats) => ({
   count: cats.reduce((s, c) => s + c.count, 0),
 });
 
-const REC_KEY = 'zci-rec-off';
+const REC_KEY = 'zci-rec-off';   // 每个 app 各记一份：分类表本来就不共用
+
+function recStore() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(REC_KEY) || '{}');
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch { return {}; }
+}
 
 function loadRecOff() {
-  const defaults = () =>
-    new Set(recommendAll().filter((c) => c.recommendDefaultOff).map((c) => c.id));
-  try {
-    const raw = localStorage.getItem(REC_KEY);
-    if (raw) {
-      const ids = JSON.parse(raw);
-      // 只认得当前存在的分类；旧版留下的 id 直接丢掉
-      if (Array.isArray(ids)) return new Set(ids.filter((id) => recommendAll().some((c) => c.id === id)));
-    }
-  } catch {}
-  return defaults();
+  // 只认得当前这个 app 存在的分类；旧版留下的、或换 app 带过来的 id 直接丢掉
+  const ids = recStore()[state.appId];
+  if (Array.isArray(ids)) {
+    const known = new Set(recommendAll().map((c) => c.id));
+    const kept = ids.filter((id) => known.has(id));
+    if (ids.length || kept.length) return new Set(kept);
+  }
+  return new Set(recommendAll().filter((c) => c.recommendDefaultOff).map((c) => c.id));
 }
 
 function saveRecOff() {
-  try { localStorage.setItem(REC_KEY, JSON.stringify([...state.recOff])); } catch {}
+  try {
+    const all = recStore();
+    all[state.appId] = [...state.recOff];
+    localStorage.setItem(REC_KEY, JSON.stringify(all));
+  } catch {}
 }
 
 
@@ -116,9 +136,28 @@ async function load(refresh = false) {
   els.scanNote.textContent = '扫描中…';
   const res = await fetch('/api/scan' + (refresh ? '?refresh=1' : ''));
   if (!res.ok) throw new Error((await res.json()).error || res.statusText);
-  state.index = await res.json();
+  state.scan = await res.json();
+  state.apps = state.scan.apps;
+  if (!state.apps.some((a) => a.app === state.appId)) state.appId = pickApp();
+  applyApp();
+}
+
+/** 默认看谁：上次看的 → 第一个装了的。四个都没装就停在第一个，页面要说"没东西"而不是空白。 */
+function pickApp() {
+  try {
+    const last = localStorage.getItem(APP_KEY);
+    const hit = state.apps.find((a) => a.app === last && a.totals.files > 0);
+    if (hit) return hit.app;
+  } catch {}
+  return (state.apps.find((a) => a.totals.files > 0) || state.apps[0] || {}).app;
+}
+
+/** 把渲染层切到当前 app 的那一份视图。 */
+function applyApp() {
+  state.index = state.apps.find((a) => a.app === state.appId);
   state.selection.clear();
-  state.group = null;   // 重扫一次，筛选也从头开始
+  state.group = null;   // 换 app，筛选也从头开始
+  state.recReady = false;
 
   // 按分类预分组，避免每次渲染都全量过滤
   state.byCat = new Map();
@@ -128,12 +167,29 @@ async function load(refresh = false) {
     arr.push(f);
   }
 
+  try { localStorage.setItem(APP_KEY, state.appId); } catch {}
+  els.rootPath.textContent = state.index.targets.filter((t) => t.exists).map((t) => t.short).join(' + ')
+    || `${state.index.label}：这台机器上没有`;
+  els.scanNote.textContent = `扫描用时 ${(state.scan.durationMs / 1000).toFixed(1)}s`;
 
-  els.rootPath.textContent = state.index.rootShort || state.index.root;
-  // 只留"这次扫描花了多久"这一条瞬时状态 —— 文件数写在首屏，不在这儿再说一遍
-  els.scanNote.textContent = `扫描用时 ${(state.index.durationMs / 1000).toFixed(1)}s`;
-
+  renderAppTabs();
   renderAll();
+}
+
+const APP_KEY = 'zci-app';
+
+function renderAppTabs() {
+  els.appTabs.innerHTML = state.apps.map((a) => {
+    const on = a.app === state.appId;
+    const empty = a.totals.files === 0;
+    return `<button type="button" class="app-tab ${on ? 'is-on' : ''}${empty ? ' is-empty' : ''}"
+      role="tab" aria-selected="${on}" data-app="${esc(a.app)}"
+      title="${esc(a.targets.map((t) => `${t.short}${t.exists ? '' : '（没有）'}`).join('、'))} · ${
+        a.totals.files.toLocaleString()} 个文件">
+      <span class="app-tab-name">${esc(a.label)}</span>
+      <span class="app-tab-size">${empty ? '未安装' : fmtBytes(a.totals.bytes)}</span>
+    </button>`;
+  }).join('');
 }
 
 function catById(id) {
@@ -157,11 +213,16 @@ function renderHero() {
 
   // 总量下面只说一件事：这里面有多少是失控日志。其余的分档数字交给下面的筛选条，
   // 不在这里重复一遍。
-  const shape = `共计 <b>${t.files.toLocaleString()}</b> 个文件、<b>${t.dirs.toLocaleString()}</b> 个目录。`;
+  const shape = `${esc(state.index.label)} 共 <b>${t.files.toLocaleString()}</b> 个文件、<b>${t.dirs.toLocaleString()}</b> 个目录。`;
+  const others = state.apps.filter((a) => a.app !== state.appId && a.totals.bytes > 0);
+  const grand = others.length
+    ? `四个工具加起来 <b>${fmtBytes(state.scan.grand.bytes)}</b>，另有 ${
+        others.map((a) => `${esc(a.label)} ${fmtBytes(a.totals.bytes)}`).join('、')}。`
+    : '';
   els.heroSub.innerHTML = runawayBytes > 0
     ? shape + `其中 <b>${fmtBytes(runawayBytes)}</b> 来自 <b>${runawayCount}</b> 个失控放大的日志，` +
-      `占 <b>${((runawayBytes / t.bytes) * 100).toFixed(0)}%</b>。`
-    : shape;
+      `占 <b>${((runawayBytes / t.bytes) * 100).toFixed(0)}%</b>。` + grand
+    : shape + grand;
 
   /* 诊断段。数字全部从这次扫描里现算 —— 写死"4 个文件 / 34 GB"只对写出它的那台机器成立，
      换一台就是撒谎。这里唯一固定的东西是机器无关的成因。 */
@@ -169,7 +230,7 @@ function renderHero() {
   if (runawayBytes > 0) {
     const files = (state.index.files || []).filter((f) => f.c === 'runaway');
     const biggest = files.reduce((a, f) => Math.max(a, f.s), 0);
-    const rootShort = state.index.rootShort || state.index.root;
+    const rootShort = state.index.targets[0].short;
     els.diagTitleText.textContent = `这 ${fmtBytes(runawayBytes)} 是怎么来的`;
     els.diagLede.innerHTML =
       `不是你的文件多，是 <b>${runawayCount}</b> 个文件失控了。Agent 把每条命令的完整输出写进 ` +
@@ -225,7 +286,7 @@ function renderGroups() {
     const all = sortFiles(filesOf(cat.id).filter(matches));
     const isOpen = state.open.has(cat.id);
     const totalHere = filesOf(cat.id).length;
-    const selCount = all.filter((f) => state.selection.has(f.p)).length;
+    const selCount = all.filter((f) => state.selection.has(keyOf(f))).length;
     // 右上角那个数说的是"这张卡里现在装着的东西"，不是这个分类一共有多少 ——
     // 筛过之后还写整类的体积，就会跟卡里勾着的行对不上（2.84 GB 的卡里躺着 9.2 MB 的勾）。
     const filtered = all.length !== totalHere;
@@ -289,42 +350,63 @@ function renderGroups() {
 }
 
 function rowHtml(f, cat) {
-  const on = state.selection.has(f.p);
+  const on = state.selection.has(keyOf(f));
   const protectedRow = cat.verdict === 'never';
   const when = new Date(f.m).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
   const cut = f.p.lastIndexOf('/');
   const dir = cut < 0 ? '' : f.p.slice(0, cut + 1);
   const name = cut < 0 ? f.p : f.p.slice(cut + 1);
+  // 一个 app 有多个根（Cursor 的 ~/.cursor 与 App Support）时，相对路径看不出它落在哪一边
+  const tTag = multiTarget()
+    ? `<span class="row-tag" title="位于 ${esc(targetShort(f.t))}">${esc(targetLabel(f.t))}</span>` : '';
   // 只给可清理的那一种打标。会话 id 是 8 位十六进制，摆在行里没人读得懂，
   // 也没人能拿它做什么 —— 挪进 tooltip，行里只留"孤儿"这两个字。
   const sidTag = f.sid && f.orphan
-    ? `<span class="row-tag is-orphan" title="会话 ${esc(f.sid)} 已不在 ZCode 的会话库里，文件是残骸">孤儿</span>`
+    ? `<span class="row-tag is-orphan" title="会话 ${esc(f.sid)} 已不在 ${esc(state.index.label)} 的会话库里，文件是残骸">孤儿</span>`
     : '';
   return `<div class="row ${on ? 'is-on' : ''}">
-    <input type="checkbox" data-path="${esc(f.p)}" ${on ? 'checked' : ''}
+    <input type="checkbox" data-key="${esc(keyOf(f))}" ${on ? 'checked' : ''}
       ${protectedRow ? 'disabled aria-label="受保护内容"' : ''}>
-    <span class="row-path" title="${esc(f.p)}">
-      <span class="row-dir">${esc(dir)}</span><b class="row-name">${esc(name)}</b>${sidTag}
+    <span class="row-path" title="${esc(targetShort(f.t)) + '/' + esc(f.p)}">
+      <span class="row-dir">${esc(dir)}</span><b class="row-name">${esc(name)}</b>${tTag}${sidTag}
     </span>
     <span class="row-size">${fmtBytes(f.s)}</span>
     <span class="row-time">${when}</span>
-    ${canReveal() ? `<button class="row-reveal" data-reveal="${esc(f.p)}" title="在 Finder 中显示" aria-label="在 Finder 中显示">
+    ${canReveal() ? `<button class="row-reveal" data-reveal="${esc(keyOf(f))}" title="在 Finder 中显示" aria-label="在 Finder 中显示">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>
     </button>` : ''}
   </div>`;
 }
 
+/** 当前 app 有没有第二个扫描目标；有的话行上要标出来。 */
+const multiTarget = () => (state.index?.targets || []).length > 1;
+const targetView = (key) => state.index.targets.find((t) => t.key === key) || {};
+const targetShort = (key) => targetView(key).short || key;
+const targetLabel = (key) => targetView(key).label || key;
+
 /* ── 勾选 ───────────────────────────────────────────────── */
 
 function selectedBytes() {
   let sum = 0;
-  for (const f of state.index.files) if (state.selection.has(f.p)) sum += f.s;
+  for (const f of state.index.files) if (state.selection.has(keyOf(f))) sum += f.s;
   return sum;
+}
+
+/* 勾选 → [{app, target, paths}]：一次操作里跨了目标就分几次发，
+   每个目标各自做越界与保护校验，不会因为拼在一起而放宽任何一条。 */
+function selectedByTarget() {
+  const byTarget = new Map();
+  for (const f of state.index.files) {
+    if (!state.selection.has(keyOf(f))) continue;
+    if (!byTarget.has(f.t)) byTarget.set(f.t, []);
+    byTarget.get(f.t).push(f.p);
+  }
+  return [...byTarget.entries()];
 }
 
 /* "在 Finder 中显示"是 macOS 的 open -R。别处没有这个动作，
    服务端会报 canReveal:false，那就干脆不摆这个按钮 —— 摆了也只是让人白按。 */
-const canReveal = () => state.index?.canReveal !== false;
+const canReveal = () => state.scan?.canReveal !== false;
 
 function renderActionbar() {
   const n = state.selection.size;
@@ -337,10 +419,8 @@ function renderActionbar() {
 /* ── 抽屉 ───────────────────────────────────────────────── */
 
 function openDrawer() {
-  const paths = [...state.selection];
-  if (!paths.length) return;
-  const byPath = new Map(state.index.files.map((f) => [f.p, f]));
-  const rows = paths.map((p) => byPath.get(p)).filter(Boolean);
+  const rows = state.index.files.filter((f) => state.selection.has(keyOf(f)));
+  if (!rows.length) return;
   const bytes = rows.reduce((s, f) => s + f.s, 0);
   const biggest = rows.reduce((a, b) => (a.s >= b.s ? a : b), rows[0]);
 
@@ -369,8 +449,8 @@ function openDrawer() {
     const cut = f.p.lastIndexOf('/');
     const dir = cut < 0 ? '' : f.p.slice(0, cut + 1);
     const name = cut < 0 ? f.p : f.p.slice(cut + 1);
-    return `<li title="${esc(f.p)}">
-      <span class="dl-path"><span class="row-dir">${esc(dir)}</span><b>${esc(name)}</b></span>
+    return `<li title="${esc(targetShort(f.t)) + '/' + esc(f.p)}">
+      <span class="dl-path"><span class="row-dir">${esc((multiTarget() ? targetShort(f.t) + '/' : '') + dir)}</span><b>${esc(name)}</b></span>
       <span>${fmtBytes(f.s)}</span></li>`;
   }).join('')
     + (rows.length > 300 ? `<li><span>…还有 ${(rows.length - 300).toLocaleString()} 项按体积排在后面</span><span></span></li>` : '');
@@ -383,7 +463,7 @@ function openDrawer() {
 
   // 两条路各有各的堵法：受保护内容不能彻底删除；非 macOS 没有废纸篓可用。
   const anyProtected = rows.some((f) => catById(f.c).verdict === 'never');
-  const noTrash = state.index.canTrash === false;
+  const noTrash = state.scan.canTrash === false;
   const purgeRadio = document.querySelector('input[name="mode"][value="purge"]');
   const trashRadio = document.querySelector('input[name="mode"][value="trash"]');
   purgeRadio.disabled = anyProtected;
@@ -422,8 +502,9 @@ function syncDrawerMode() {
 }
 
 async function runClean() {
-  const paths = [...state.selection];
+  const batches = selectedByTarget();   // [[target, paths], …] —— 跨目标时分几次发
   const purge = mode() === 'purge';
+  if (!batches.length) return;
   if (purge && els.purgeWord.value !== '彻底删除') {
     els.drawerMsg.textContent = '确认串不正确，请输入「彻底删除」四个字。';
     els.drawerMsg.className = 'drawer-msg is-err';
@@ -435,24 +516,31 @@ async function runClean() {
   els.drawerMsg.className = 'drawer-msg';
 
   try {
-    const res = await fetch(purge ? '/api/purge' : '/api/trash', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(purge ? { paths, confirm: els.purgeWord.value } : { paths }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.statusText);
+    const done = [];
+    const failed = [];
+    for (const [target, paths] of batches) {
+      const res = await fetch(purge ? '/api/purge' : '/api/trash', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(purge
+          ? { app: state.appId, target, paths, confirm: els.purgeWord.value }
+          : { app: state.appId, target, paths }),
+      });
+      const data = await res.json();
+      // 任一批被拒绝就停下：后面的目标还没动，人能看到的是完整结果，不是删了一半的现场
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      done.push(...(data.moved || data.deleted || []));
+      failed.push(...(data.failed || []));
+    }
 
-    const done = (data.moved || data.deleted || []).length;
-    const failed = data.failed || [];
     if (failed.length) {
       els.drawerMsg.className = 'drawer-msg is-err';
-      els.drawerMsg.textContent = `完成 ${done} 项，${failed.length} 项失败：${failed.map((f) => f.path).join('、')}`;
+      els.drawerMsg.textContent = `完成 ${done.length} 项，${failed.length} 项失败：${failed.map((f) => f.path).join('、')}`;
     } else {
       els.drawerMsg.className = 'drawer-msg is-ok';
       els.drawerMsg.textContent = purge
-        ? `已彻底删除 ${done} 项。`
-        : `已把 ${done} 项移入废纸篓，可在 Finder 的「废纸篓」中恢复。`;
+        ? `已彻底删除 ${done.length} 项。`
+        : `已把 ${done.length} 项移入废纸篓，可在 Finder 的「废纸篓」中恢复。`;
     }
     await load(true);
     if (!failed.length) setTimeout(closeDrawer, 1200);
@@ -462,6 +550,16 @@ async function runClean() {
   } finally {
     els.drawerGo.disabled = false;
   }
+}
+
+/** 在 Finder 中显示：reveal 按钮带的是 "目标:路径"，要拆回服务端认的三元组。 */
+async function revealPath(key) {
+  const f = state.index.files.find((x) => keyOf(x) === key);
+  if (!f) return;
+  await fetch('/api/reveal', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ app: state.appId, target: f.t, path: f.p }),
+  });
 }
 
 /* ── 提示气泡 ───────────────────────────────────────────── */
@@ -519,7 +617,7 @@ function renderSplit() {
   const anyPicked = state.selection.size > 0;
   const block = (cls, title, desc, xs, extra, split) => {
     const can = selectable(xs);
-    const picked = can.filter((f) => state.selection.has(f.p));
+    const picked = can.filter((f) => state.selection.has(keyOf(f)));
     const allOn = can.length > 0 && picked.length === can.length;
     const part = picked.length > 0 && !allOn;     // 只勾了这一组的一部分
     const toggle = can.length < xs.length ? '（受保护的几项不会被勾上）' : '';
@@ -551,7 +649,7 @@ function renderSplit() {
   els.split.innerHTML = [
     block('is-orphan', '会话已不存在', '会话库里找不到它，只剩文件残留。可以直接清理。', orphan,
       sids(orphan) ? ` · ${sids(orphan).toLocaleString()} 个会话` : '', 'orphan'),
-    block('is-live', '会话仍在', '这些会话还在 ZCode 里，文件有用，请谨慎。', live,
+    block('is-live', '会话仍在', `这些会话还在 ${esc(state.index.label)} 里，文件有用，请谨慎。`, live,
       sids(live) ? ` · ${sids(live).toLocaleString()} 个会话` : '', 'live'),
     block('is-other', '非会话文件', '日志、缓存、配置等，不属于任何会话。', other, '', 'other'),
   ].join('');
@@ -614,6 +712,17 @@ function renderChips() {
 document.addEventListener('click', async (e) => {
   const t = e.target;
 
+  // 换 app：分类表、清单、历史会话整条线跟着换
+  const tab = t.closest('[data-app]');
+  if (tab) {
+    if (tab.dataset.app === state.appId) return;
+    state.appId = tab.dataset.app;
+    applyApp();
+    loadTasks();
+    document.getElementById('overview').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+
   // "这是什么 / 为什么在这里"的展开开关（跟展开文件列表是两回事）
   const more = t.closest('[data-more]');
   if (more) {
@@ -639,7 +748,7 @@ document.addEventListener('click', async (e) => {
     const checked = gbox.checked;
     // 只动当前看得见的那些行，跟卡片头上那个框自身的勾选状态对得上
     for (const f of filesOf(id).filter(matches)) {
-      checked ? state.selection.add(f.p) : state.selection.delete(f.p);
+      checked ? state.selection.add(keyOf(f)) : state.selection.delete(keyOf(f));
     }
     state.open.add(id);
     renderGroups(); renderActionbar(); renderSplit();
@@ -647,9 +756,9 @@ document.addEventListener('click', async (e) => {
   }
 
   // 单文件
-  const fbox = t.closest('input[data-path]');
+  const fbox = t.closest('input[data-key]');
   if (fbox) {
-    fbox.checked ? state.selection.add(fbox.dataset.path) : state.selection.delete(fbox.dataset.path);
+    fbox.checked ? state.selection.add(fbox.dataset.key) : state.selection.delete(fbox.dataset.key);
     // 三块上的"已选 N"要跟着走 —— 手动取消一项，那块就该显示勾了一半
     renderGroups(); renderActionbar(); renderSplit();
     return;
@@ -657,13 +766,7 @@ document.addEventListener('click', async (e) => {
 
   // 在 Finder 中显示
   const reveal = t.closest('[data-reveal]');
-  if (reveal) {
-    await fetch('/api/reveal', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: reveal.dataset.reveal }),
-    });
-    return;
-  }
+  if (reveal) { await revealPath(reveal.dataset.reveal); return; }
 
   // 状态筛选
   const chip = t.closest('[data-status]');
@@ -681,14 +784,14 @@ document.addEventListener('click', async (e) => {
     const g = sp.dataset.split;
     const protectedIds = new Set(state.index.categories.filter((c) => c.verdict === 'never').map((c) => c.id));
     const mine = state.index.files.filter((f) => groupOf(f) === g && !protectedIds.has(f.c));
-    const allOn = mine.length > 0 && mine.every((f) => state.selection.has(f.p));
+    const allOn = mine.length > 0 && mine.every((f) => state.selection.has(keyOf(f)));
     // 三块互斥：它们是把全部文件劈成三份，一组就是一组。
     // 所以换一组是"换成它"，不是"再加上它" —— 先清干净再勾。
     state.selection.clear();
     if (allOn) {
       state.group = null;                             // 再点一下 = 整组取消
     } else {
-      for (const f of mine) state.selection.add(f.p);
+      for (const f of mine) state.selection.add(keyOf(f));
       state.group = g;
     }
     renderSplit();
@@ -703,10 +806,7 @@ document.addEventListener('click', async (e) => {
   if (t.closest('#abClean')) { openDrawer(); return; }
   if (t.closest('#abReveal')) {
     const first = [...state.selection][0];
-    if (first) await fetch('/api/reveal', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: first }),
-    });
+    if (first) await revealPath(first);
     return;
   }
   if (t.closest('#drawerClose') || t.closest('#drawerCancel') || t === els.scrim) { closeDrawer(); return; }
@@ -731,7 +831,7 @@ document.addEventListener('click', async (e) => {
     state.group = null;   // 先清掉筛选，否则勾中的东西会被筛掉、看不见
     state.selection.clear();
     for (const c of recommendOn()) {
-      for (const f of filesOf(c.id)) state.selection.add(f.p);
+      for (const f of filesOf(c.id)) state.selection.add(keyOf(f));
     }
     renderChips(); renderSplit(); renderGroups(); renderActionbar();
     openDrawer();
@@ -746,7 +846,7 @@ document.addEventListener('click', async (e) => {
   if (t.closest('#fileSelAll')) {
     for (const cat of visibleCategories()) {
       if (cat.verdict === 'never') continue;   // 受保护内容不进全选
-      for (const f of filesOf(cat.id).filter(matches)) state.selection.add(f.p);
+      for (const f of filesOf(cat.id).filter(matches)) state.selection.add(keyOf(f));
     }
     renderSplit(); renderGroups(); renderActionbar(); return;
   }
@@ -825,7 +925,7 @@ window.addEventListener('resize', () => { hideTip(); renderSplit(); });
    ════════════════════════════════════════════════════════════ */
 
 const tEls = {
-  warn: $('taskWarn'), lede: $('taskLede'), dbBar: $('dbBar'),
+  warn: $('taskWarn'), lede: $('taskLede'), dbBar: $('dbBar'), comp: $('taskComp'),
   chips: $('taskChips'), search: $('taskSearch'), sort: $('taskSort'),
   pickAll: $('taskPickAll'), clearSel: $('taskClearSel'),
   list: $('taskList'), empty: $('taskEmpty'), foot: $('taskFoot'),
@@ -838,24 +938,27 @@ const tEls = {
 
 const taskState = { data: null, sel: new Set(), q: '', states: new Set(), sort: 'size', group: false, foldedWs: new Set() };
 
-/* 可清理 = 已删除或已归档。活跃任务还在 ZCode 主列表里，服务端也会拒绝，
-   所以前端从一开始就不让选它，免得选中后才被挡回来。 */
-/* 可清理 = 后端给出了 reason。判定只在服务端做一次，前端照着用。 */
+/* 可清理 = 后端给出了 reason。判定只在服务端做一次，前端照着用。
+   各 app 给出的 reason 不完全一样（ZCode 有"界面已删除"，Codex 没有；Cursor 一个都不给）。 */
 const isPurgeable = (t) => t.reason != null;
 
-/* 可删的原因，每一种都标出来，让人一眼看到"为什么它能删" */
 const REASON_LABEL = {
-  deleted:   '已在界面删除',
-  archived:  '已归档',
-  wsMissing: '工作区已丢失',
-  untracked: '界面不可见',
+  deleted:     '已在界面删除',
+  archived:    '已归档',
+  wsMissing:   '工作区已丢失',
+  untracked:   '界面不可见',
+  bodyMissing: '正文已丢失',
+  empty:       '空文件',
 };
-const REASON_TONE = { deleted: 'st-serious', archived: 'st-warning', wsMissing: 'st-serious', untracked: 'st-serious' };
+const REASON_TONE = {
+  deleted: 'st-serious', archived: 'st-warning', wsMissing: 'st-serious',
+  untracked: 'st-serious', bodyMissing: 'st-serious', empty: 'st-serious',
+};
 
 const stateLabel = (t) => t.reason ? REASON_LABEL[t.reason] : STATE_META_CN[t.state];
 const stateTone = (t) => t.reason ? REASON_TONE[t.reason] : STATE_TONE[t.state];
 
-const STATE_TONE = { deleted: 'st-serious', archived: 'st-warning', active: 'st-good', untracked: 'st-warning' };
+const STATE_TONE = { deleted: 'st-serious', archived: 'st-warning', active: 'st-good', untracked: 'st-warning', empty: 'st-serious' };
 
 const shortPath = (p) => (p || '').replace(/^\/Users\/[^/]+/, '~');
 const fmtDate = (ms) => {
@@ -866,15 +969,31 @@ const fmtDate = (ms) => {
 };
 
 async function loadTasks(refresh = false) {
-  tEls.lede.textContent = '正在读取会话库…（首次约需 8 秒）';
+  const appId = state.appId;
+  const view = state.index;
+  taskState.data = null;
+  taskState.sel.clear();
+  taskState.states.clear();
+  tEls.warn.hidden = true;
+  tEls.comp.hidden = true;
+  tEls.foot.hidden = true;
+  tEls.list.innerHTML = '';
+
+  if (!view.targets.some((t) => t.exists)) {
+    tEls.lede.textContent = `${view.label} 在这台机器上没有数据目录。`;
+    return;
+  }
+  tEls.lede.textContent = `正在读取 ${view.label} 的会话记录…`;
   try {
-    const res = await fetch('/api/tasks' + (refresh ? '?refresh=1' : ''));
+    const res = await fetch(`/api/tasks?app=${encodeURIComponent(appId)}` + (refresh ? '&refresh=1' : ''));
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.statusText);
+    // 换 app 换得快了，晚到的旧响应要丢掉
+    if (state.appId !== appId || data.appId !== appId) return;
     taskState.data = data;
-    taskState.sel.clear();
     renderTasks();
   } catch (err) {
+    if (state.appId !== appId) return;
     tEls.lede.innerHTML = `<b>读取失败：</b>${esc(err.message)}`;
   }
 }
@@ -896,41 +1015,77 @@ const visibleTasks = () => {
   return list;
 };
 
+const fileBasedNote = (who) =>
+  `${icon('doc')}<div>${esc(who)} 的会话正文就是 <code>projects/</code> 下的 <code>.jsonl</code> 文件本身，` +
+  `没有数据库行可删。这里勾选后走<b>文件清理</b>那条线：默认进废纸篓，可随时恢复。</div>`;
+
 function renderTasks() {
   const d = taskState.data;
-  // 选中之后又变成活跃的（比如在 ZCode 里恢复了），不能留在清理范围里
+  // 选中之后又变成活跃的（比如在应用里恢复了），不能留在清理范围里
   if (d) for (const id of [...taskState.sel]) {
     const t = d.tasks.find((x) => x.id === id);
     if (!t || !isPurgeable(t)) taskState.sel.delete(id);
   }
   if (!d || !d.tasks.length) {
-    tEls.lede.textContent = d ? '没有读到任何历史任务。' : tEls.lede.textContent;
+    tEls.lede.textContent = d ? `没有读到任何 ${d.appLabel} 的历史会话。` : tEls.lede.textContent;
     tEls.list.innerHTML = '';
+    tEls.comp.hidden = true;
+    // 上一个 app 的警示条和体积柱得擦干净 —— 切到一个没有历史的工具，
+    // 屏幕上不能还留着别人的数字。
+    tEls.warn.hidden = true;
+    tEls.warn.innerHTML = '';
+    tEls.dbBar.innerHTML = '';
+    tEls.chips.innerHTML = '';
+    renderTaskFoot();
+    renderTaskQuick();
+    // Claude Code 这类"正文就是文件"的工具，就算一条会话没读到，也要说清楚
+    // 为什么这里没有可勾的东西 —— 否则人会以为文件清单里那堆 .jsonl 失踪了。
+    if (d?.fileBased) {
+      tEls.warn.hidden = false;
+      tEls.warn.className = 'app-warn is-ok';
+      tEls.warn.innerHTML = fileBasedNote(d.appLabel);
+    }
     return;
   }
+  const who = d.appLabel;
 
   const del = d.totals.byState.find((g) => g.state === 'deleted');
   const text = d.totals.bytes;
 
-  tEls.lede.innerHTML =
-    `会话库 <b>${fmtBytes(d.db.total)}</b>，装着 <b>${d.totals.count}</b> 个任务、` +
-    `<b>${fmtBytes(text)}</b> 的正文。` +
-    (del
-      ? `其中 <b>${del.count}</b> 个已在界面上删除，仍占 <b>${fmtBytes(del.bytes)}</b>。`
-      : '');
+  // Codex 是两段式存储：库里只有索引和投影，正文在 sessions/ 的 rollout 文件里。
+  // 那句话要是照抄 ZCode 的说法，就成了"158 MB 的库装着 581 MB 的正文"。
+  tEls.lede.innerHTML = d.readOnly
+    ? `${esc(who)} 的会话库 <b>${fmtBytes(d.db.total)}</b>，读到 <b>${d.totals.count}</b> 个会话、` +
+      `<b>${fmtBytes(text)}</b> 的正文。下面按键族摊开这 ${fmtBytes(d.db.total)} 到底是怎么分的。`
+    : d.db.bodies
+      ? `${esc(who)} 的会话分两处存：索引库 <b>${fmtBytes(d.db.total)}</b>，` +
+        `正文文件 <b>${fmtBytes(d.db.bodies.bytes)}</b>（<b>${d.db.bodies.count}</b> 个 rollout 文件）。` +
+        `读到 <b>${d.totals.count}</b> 个会话。`
+      : `会话库 <b>${fmtBytes(d.db.total)}</b>，装着 <b>${d.totals.count}</b> 个任务、` +
+        `<b>${fmtBytes(text)}</b> 的正文。` +
+        (del
+          ? `其中 <b>${del.count}</b> 个已在界面上删除，仍占 <b>${fmtBytes(del.bytes)}</b>。`
+          : '');
 
-  // 运行状态提示：这是能不能动手的前提
-  const app = d.app;
+  // 动手之前的前提，三个 app 三种说法 —— 都从后端的能力标记来，不在前端猜
   tEls.warn.hidden = false;
-  if (app.running) {
+  if (d.readOnly) {
+    tEls.warn.className = 'app-warn';
+    tEls.warn.innerHTML = `${icon('key')}<div><b>${esc(who)} 的会话只读</b>：正文以键值对存在 ` +
+      `<code>state.vscdb</code> 里，由 IDE 独占写入，键之间没有外键可依。要清会话请在 ${esc(who)} 界面里删 —— ` +
+      `这里不代按，也不给勾选。</div>`;
+  } else if (d.fileBased) {
+    tEls.warn.className = 'app-warn is-ok';
+    tEls.warn.innerHTML = fileBasedNote(who);
+  } else if (d.app.running) {
     tEls.warn.className = 'app-warn';
     tEls.warn.innerHTML =
-      `${icon('alert')}<div><b>ZCode 正在运行</b>（${app.hits.map((h) => `${esc(h.name)} ×${h.pids}`).join('、')}）。` +
-      `清理需要往会话库里写数据，必须先<b>完全退出 ZCode</b>，否则可能损坏数据库。` +
+      `${icon('alert')}<div><b>${esc(who)} 正在运行</b>（${d.app.hits.map((h) => `${esc(h.name)} ×${h.pids}`).join('、')}）。` +
+      `清理需要往会话库里写数据，必须先<b>完全退出 ${esc(who)}</b>，否则可能损坏数据库。` +
       `下面可以正常浏览和勾选，只是删除按钮会被拒。</div>`;
   } else {
     tEls.warn.className = 'app-warn is-ok';
-    tEls.warn.innerHTML = `${icon('box')}<div>ZCode 没在运行，可以安全清理。动手前会自动把两个库完整备份到 <code>${esc(shortPath(d.backupDir))}</code>。</div>`;
+    tEls.warn.innerHTML = `${icon('box')}<div>${esc(who)} 没在运行，可以安全清理。动手前会自动把库完整备份到 <code>${esc(shortPath(d.backupDir))}</code>。</div>`;
   }
 
   renderDbBar();
@@ -938,21 +1093,32 @@ function renderTasks() {
   renderTaskList();
   renderTaskFoot();
   renderTaskQuick();
+  renderComposition();
 }
 
-/** 这 1.4 GB 花在哪：按任务状态等比切开，剩下的是索引与开销。 */
+/** 这些体积花在哪：按任务状态等比切开，剩下的是索引与开销。 */
 function renderDbBar() {
   const d = taskState.data;
-  const total = d.db.total || 1;
+  // ZCode / Cursor 的正文就在库里，分母就是库文件大小；Codex 的正文是磁盘上的 rollout
+  // 文件，分母必须把库和文件加起来 —— 否则"活跃任务"那一根会画到 374% 宽。
+  const bodies = d.db.bodies?.bytes || 0;
+  const total = (d.db.total || 1) + bodies;
+  const byState = d.totals.byState.map((g) => ({
+    label: STATE_META_CN[g.state], bytes: g.bytes, tone: STATE_TONE[g.state], key: g.state,
+  }));
+  // 余量按"每一段真正占了分母多少"来算，不能用 totals.bytes —— Codex 的分段里还叠了
+  // 库中的条目体积，减错就会让整排色块加起来超过 100%。
+  const used = byState.reduce((s, g) => s + g.bytes, 0);
   const segs = [
-    ...d.totals.byState.map((g) => ({
-      label: STATE_META_CN[g.state], bytes: g.bytes, tone: STATE_TONE[g.state], key: g.state,
-    })),
+    ...byState,
     {
-      label: '索引与其他开销', bytes: Math.max(0, total - d.totals.bytes), tone: 'is-neutral', key: 'overhead',
+      label: bodies ? '索引库与其余开销' : '索引与其他开销',
+      bytes: Math.max(0, total - used), tone: 'is-neutral', key: 'overhead',
       // 这一块是技术性的：库文件不只有正文。名字写在块上，解释挂在 tooltip 里，
       // 不占版面。
-      tip: '数据库文件里不属于任何任务正文的部分 —— 索引、已释放的空页、页对齐等。删掉任务后它才会跟着缩。',
+      tip: bodies
+        ? '索引库文件里不属于任何会话正文的部分 —— thread_items 的索引、WAL、已释放的空页与页对齐。删掉会话后它才会跟着缩。'
+        : '数据库文件里不属于任何任务正文的部分 —— 索引、已释放的空页、页对齐等。删掉任务后它才会跟着缩。',
     },
   ].filter((s) => s.bytes > 0);
 
@@ -979,8 +1145,27 @@ function renderDbBar() {
     `</div>`;
 }
 
+/** 库里到底装着什么 —— Cursor 只读，所以按键族摊开给你数清楚，而不是给个"不可清理"了事。 */
+function renderComposition() {
+  const d = taskState.data;
+  if (!d || !d.composition) { tEls.comp.hidden = true; return; }
+  const total = d.composition[0]?.bytes || 1;
+  tEls.comp.hidden = false;
+  tEls.comp.innerHTML =
+    `<p class="tcomp-title">${esc(d.appLabel)} 库里装着什么</p>` +
+    d.composition.map((c) => {
+      const pct = total ? Math.round((c.bytes / total) * 100) : 0;
+      return `<div class="tcomp-row${c.family === '' && c.table === 'kvTotal' ? ' is-total' : ''}">
+        <span class="tcomp-label" title="${esc(c.table)}:${esc(c.family)}">${esc(c.label)}</span>
+        <span class="tcomp-bar"><i style="width:${Math.max(1, pct)}%"></i></span>
+        <span class="tcomp-n">${c.count == null ? '' : `${c.count.toLocaleString()} 行 · `}${fmtBytes(c.bytes)}</span>
+      </div>`;
+    }).join('');
+}
+
 const STATE_META_CN = {
-  deleted: '已删除任务', archived: '已归档任务', active: '活跃任务', untracked: '无索引任务',
+  deleted: '已删除任务', archived: '已归档任务', active: '活跃任务',
+  untracked: '界面不可见', empty: '空文件',
 };
 const STATUS_CLASS_TONE = { 'st-serious': 'st-serious', 'st-warning': 'st-warning', 'st-good': 'st-good', 'st-critical': 'st-critical' };
 
@@ -1054,28 +1239,35 @@ function renderTaskList() {
 
 function taskSelTotals() {
   const d = taskState.data;
-  if (!d) return { count: 0, bytes: 0, children: 0 };
+  if (!d) return { count: 0, bytes: 0, children: 0, rows: 0 };
   const picked = d.tasks.filter((t) => taskState.sel.has(t.id));
   return {
     count: picked.length,
     bytes: picked.reduce((s, t) => s + t.bytes, 0),
     children: picked.reduce((s, t) => s + t.children, 0),
+    // Codex 没有子会话这一层，能说的是库里有多少条投影条目
+    rows: picked.reduce((s, t) => s + (t.rows || 0), 0),
     picked,
   };
 }
 
 function renderTaskFoot() {
+  const d = taskState.data;
   const { count, bytes } = taskSelTotals();
-  tEls.foot.hidden = count === 0;
+  // 只读的 app 连"清理"这个入口都不摆 —— 摆了也是必然被拒的按钮
+  tEls.foot.hidden = !d || d.readOnly || count === 0;
   tEls.tfCount.textContent = count.toLocaleString();
   tEls.tfBytes.textContent = fmtBytes(bytes);
+  tEls.purgeBtn.textContent = d?.fileBased ? '按文件清理…' : '清理…';
 
-  // 这个按钮永远可点 —— 它只是打开抽屉。空跑核对是只读的，ZCode 开着也安全，
+  // 这个按钮永远可点 —— 它只是打开抽屉。空跑核对是只读的，应用开着也安全，
   // 拦住用户看清单没有任何好处。真正被拦的是抽屉里那个「删除」。
-  const running = taskState.data?.app?.running;
-  tEls.purgeBtn.title = running
-    ? 'ZCode 正在运行：可以先空跑核对，但要完全退出 ZCode 才能删除'
-    : `清理这 ${count} 个任务；动手前会自动备份`;
+  const running = d?.app?.running;
+  tEls.purgeBtn.title = d?.fileBased
+    ? `把这 ${count} 个会话的正文文件交给文件清理：默认移入废纸篓`
+    : running
+      ? `${d?.appLabel || '应用'} 正在运行：可以先空跑核对，但要完全退出它才能删除`
+      : `清理这 ${count} 个任务；动手前会自动备份`;
 }
 
 /* ── 首屏的任务快捷项 ───────────────────────────────────── */
@@ -1122,7 +1314,7 @@ function renderTaskQuick() {
   const s = taskQuickSet();
   els.tqFigure.textContent = fmtBytes(s.bytes);
   els.tqSub.innerHTML =
-    `ZCode 界面上你删过的 <b>${del.count}</b> 个任务。它的"删除"只是打个标记 —— ` +
+    `${esc(d.appLabel)} 界面上你删过的 <b>${del.count}</b> 个任务。它的"删除"只是打个标记 —— ` +
     `正文一行没少，${fmtBytes(del.bytes)} 还躺在会话库里。`;
 
   els.taskAge.value = String(tq.ageDays);
@@ -1148,22 +1340,73 @@ function renderTaskQuick() {
 
 /* ── 任务清理抽屉 ───────────────────────────────────────── */
 
+/**
+ * 打开清理确认。正文本身就是文件的会话（Claude Code 的全部、Codex 的残骸）没有"行"可删，
+ * 把勾选换成文件、交给文件那条清理线；其余的走按行删除的抽屉。
+ */
+function openTaskAction() {
+  const d = taskState.data;
+  if (!d || d.readOnly) return;
+  const picked = d.tasks.filter((t) => taskState.sel.has(t.id));
+  if (!picked.length) return;
+  const residual = picked.filter((t) => t.residual);
+  if (d.fileBased || residual.length === picked.length) return openTaskAsFiles();
+  if (residual.length) {
+    tEls.warn.className = 'app-warn';
+    tEls.warn.innerHTML = `${icon('alert')}<div>这一批里混了 <b>${residual.length}</b> 个只剩文件的残骸` +
+      `（${fmtBytes(residual.reduce((s, t) => s + t.bytes, 0))}）。它们索引里已经没有行，` +
+      `按行删除碰不到 —— 请单独勾选它们走文件清理，或先把它们从这批里取消。</div>`;
+    return;
+  }
+  openTaskDrawer();
+}
+
+function openTaskAsFiles() {
+  const rootKey = state.index.targets[0].key;
+  const byRel = new Map(state.index.files.filter((f) => f.t === rootKey).map((f) => [f.p, f]));
+  state.selection.clear();
+  for (const x of taskState.data.tasks.filter((t) => taskState.sel.has(t.id))) {
+    const f = byRel.get(x.bodyRel);
+    if (f) state.selection.add(keyOf(f));
+  }
+  if (!state.selection.size) {
+    tEls.warn.className = 'app-warn';
+    tEls.warn.innerHTML = `${icon('alert')}<div>勾上的会话在文件清单里找不到对应正文 —— 目录大概在这期间变了。请点「重新扫描」再来一次。</div>`;
+    return;
+  }
+  renderGroups(); renderActionbar(); renderSplit();
+  openDrawer();
+}
+
 function openTaskDrawer() {
-  const { count, bytes, children, picked } = taskSelTotals();
+  const { count, bytes, children, rows, picked } = taskSelTotals();
   if (!count) return;
   const d = taskState.data;
+  const who = d.appLabel;
 
-  tEls.stats.innerHTML = `
-    <div class="dstat"><span>任务</span><b>${count.toLocaleString()}</b></div>
-    <div class="dstat"><span>正文合计</span><b>${fmtBytes(bytes)}</b></div>
-    <div class="dstat"><span>含子会话</span><b>${children.toLocaleString()}</b></div>`;
+  tEls.stats.innerHTML = d.db?.bodies
+    ? `<div class="dstat"><span>会话</span><b>${count.toLocaleString()}</b></div>
+       <div class="dstat"><span>库里的条目</span><b>${rows.toLocaleString()}</b></div>
+       <div class="dstat"><span>正文文件合计</span><b>${fmtBytes(bytes)}</b></div>`
+    : `<div class="dstat"><span>任务</span><b>${count.toLocaleString()}</b></div>
+       <div class="dstat"><span>正文合计</span><b>${fmtBytes(bytes)}</b></div>
+       <div class="dstat"><span>含子会话</span><b>${children.toLocaleString()}</b></div>`;
 
+  // 会写到哪几个库，由后端报的路径决定 —— 四个工具各不一样，前端不硬编码文件名
+  const dbFiles = (d.db.dbs || [d.db.main, d.db.index].filter(Boolean))
+    .map((x) => shortPath(x.path));
+  const dbsTxt = dbFiles.map((p) => `<code>${esc(p)}</code>`).join(' 和 ');
+  const backupTxt = `动手前会把库完整备份到 <code>${esc(shortPath(d.backupDir))}</code>。`;
   tEls.note.innerHTML = d.app.running
-    ? `<b>ZCode 仍在运行</b>，现在不能删除。请完全退出 ZCode 后重新打开本页。`
-    : `删除会把这些任务的会话、消息、附件数据从 <code>cli/db/db.sqlite</code> 里彻底移除，` +
-      `随后 <code>VACUUM</code> 重建数据库把空间真正交还给磁盘。` +
-      `动手前会把两个库完整备份到 <code>${esc(shortPath(d.backupDir))}</code>。` +
-      `<b>正文合计只是下限</b> —— 实际回收通常更多，因为索引也会一起收缩。`;
+    ? `<b>${esc(who)} 仍在运行</b>，现在不能删除。请完全退出 ${esc(who)} 后重新打开本页。`
+    : `删除会把这些会话的行从 ${dbsTxt} 里彻底移除，` +
+      `随后 <code>VACUUM</code> 重建数据库把空间真正交还给磁盘。${backupTxt}` +
+      // Codex 的正文是磁盘上的 rollout 文件，行级删除碰不到它 —— 不说清楚，
+      // 用户会以为回收的数字偏小是工具没干活。
+      (d.db.bodies
+        ? `但 <b>Codex 的正文不在这些库里</b>：它存在 <code>sessions/</code> 的 rollout 文件里，` +
+          `这里只抹索引行。文件要等索引里再也没有它们，才会变成孤儿、归「文件清单」那条线清理。`
+        : `<b>正文合计只是下限</b> —— 实际回收通常更多，因为索引也会一起收缩。`);
 
   const sorted = picked.slice().sort((a, b) => b.bytes - a.bytes);
   tEls.listD.innerHTML = sorted.slice(0, 200).map((t) =>
@@ -1192,6 +1435,16 @@ const ROW_LABEL = {
   input_history: '输入历史',
 };
 
+/** 删除后的一致性检查：ZCode 一个库给一个结论，Codex 逐库给一组 —— 都说成人能读的一行。 */
+function checkLine(data) {
+  if (!Array.isArray(data.integrity)) {
+    return `完整性 ${data.integrity}，外键违规 ${data.fkViolations}。`;
+  }
+  const bad = data.integrity.filter((r) => r.integrity !== 'ok' || r.fkViolations);
+  if (!bad.length) return `${data.integrity.length} 个库完整性全部 ok，外键违规 0。`;
+  return data.integrity.map((r) => `${r.name} ${r.integrity}/违规 ${r.fkViolations}`).join('，') + '。';
+}
+
 async function callPurge(dryRun) {
   const ids = [...taskState.sel];
   tEls.go.disabled = true;
@@ -1204,26 +1457,38 @@ async function callPurge(dryRun) {
     const res = await fetch('/api/tasks/purge', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(dryRun ? { ids, dryRun: true } : { ids, confirm: tEls.word.value }),
+      body: JSON.stringify(dryRun
+        ? { app: state.appId, ids, dryRun: true }
+        : { app: state.appId, ids, confirm: tEls.word.value }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.statusText);
 
     if (dryRun) {
-      // 空跑：把实际会删掉的行摊开，这是"明明白白"的最后一道
-      const rows = Object.entries(data.counts).filter(([, n]) => n > 0);
+      // 空跑：把实际会删掉的行摊开，这是"明明白白"的最后一道。
+      // ZCode 报的是 {表: 行数}，Codex 跨好几个库、报的是逐库逐表数组 —— 两种都要能读。
+      const rows = Array.isArray(data.perDb)
+        ? data.perDb.map((r) => [`${r.table}（${r.name}）`, r.count ?? r.deleted])
+        : Object.entries(data.counts || {}).filter(([, n]) => n > 0)
+            .map(([k, n]) => [ROW_LABEL[k] || k, n]);
+      const checks = Array.isArray(data.perDb)
+        ? [[`${fmtBytes(data.bodyBytes)} 的正文文件`, '不在这次删除里 —— 它们归「文件清单」那条线清理，那边有保护检查和废纸篓']]
+        : [['孤儿行（应为 0）', data.orphans.message + data.orphans.part]];
       tEls.dryList.innerHTML = rows.map(([k, n]) =>
-        `<li><span>${ROW_LABEL[k] || k}</span><span>${n.toLocaleString()}</span></li>`).join('')
-        + `<li><span>孤儿行（应为 0）</span><span>${data.orphans.message + data.orphans.part}</span></li>`;
+        `<li><span>${esc(k)}</span><span>${n.toLocaleString()}</span></li>`).join('')
+        + checks.map(([k, v]) => `<li><span>${esc(k)}</span><span>${esc(String(v))}</span></li>`).join('');
       tEls.dryWrap.hidden = false;
-      tEls.msg.className = data.orphans.message + data.orphans.part === 0 ? 'drawer-msg is-ok' : 'drawer-msg is-err';
+      // ZCode 的空跑额外看孤儿行；Codex 没有外键级联可依赖，只能靠删除后的 foreign_key_check
+      const orphanN = data.orphans ? data.orphans.message + data.orphans.part : 0;
+      tEls.msg.className = orphanN === 0 ? 'drawer-msg is-ok' : 'drawer-msg is-err';
       tEls.msg.textContent = '空跑完成，数据库没有任何改动。确认无误后输入「清理」再删除。';
     } else {
       const freed = fmtBytes(data.freed);
       tEls.msg.className = 'drawer-msg is-ok';
       tEls.msg.textContent =
         `完成。数据库 ${fmtBytes(data.before.total)} → ${fmtBytes(data.after.total)}，回收 ${freed}。` +
-        `完整性 ${data.integrity}，外键违规 ${data.fkViolations}。备份在 ${data.backup}`;
+        checkLine(data) + `备份在 ${data.backup}` +
+        (data.bodyBytes ? ` 另有 ${fmtBytes(data.bodyBytes)} 正文文件留在磁盘上，请到「文件清单」里清理。` : '');
       await loadTasks(true);
       await load(true);          // db.sqlite 变小了，文件清单也要重算
       renderTasks();
@@ -1302,10 +1567,10 @@ document.addEventListener('click', (e) => {
     taskState.sel.clear();
     for (const x of s.tasks) taskState.sel.add(x.id);
     renderTaskList(); renderTaskFoot();
-    openTaskDrawer();
+    openTaskAction();
     return;
   }
-  if (t.closest('#taskPurgeBtn')) { openTaskDrawer(); return; }
+  if (t.closest('#taskPurgeBtn')) { openTaskAction(); return; }
   if (t.closest('#tdryBtn')) { callPurge(true); return; }
   if (t.closest('#tdrawerGo')) { callPurge(false); return; }
   if (t.closest('#tdrawerClose') || t.closest('#tdrawerCancel') || t === tEls.scrim) { closeTaskDrawer(); return; }
