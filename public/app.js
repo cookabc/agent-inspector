@@ -9,6 +9,12 @@ const $ = (id) => document.getElementById(id);
 const els = {
   rootPath: $('rootPath'), scanNote: $('scanNote'), rescanBtn: $('rescanBtn'), themeBtn: $('themeBtn'),
   appTabs: $('appTabs'),
+  // 全域总览（"全部"模式）
+  all: $('all'), allBytes: $('allBytes'), allSub: $('allSub'),
+  allRecFigure: $('allRecFigure'), allRecBtn: $('allRecBtn'), allRecNote: $('allRecNote'),
+  allApps: $('allApps'),
+  projLede: $('projLede'), projList: $('projList'), projUnres: $('projUnres'),
+  single: $('single'),
   heroBytes: $('heroBytes'), heroSub: $('heroSub'),
   diagnosis: $('diagnosis'), diagLede: $('diagLede'), diagTitleText: $('diagTitleText'),
   rec: $('rec'), recBtn: $('recBtn'), recCap: $('recCap'), recScope: $('recScope'),
@@ -33,9 +39,9 @@ const els = {
 const state = {
   scan: null,            // /api/scan 的原始返回：{ apps: [每个 app 一份视图], grand, ... }
   apps: [],              // 本次扫描到的 app 视图，按注册表顺序
-  appId: null,           // 当前在看哪个 app
-  index: null,           // 当前 app 的那一份视图 —— 下面所有渲染只读它
-  selection: new Set(),  // 勾选的是 "目标:路径"，同一路径在两个目标里不会互相顶掉
+  appId: null,           // 当前在看哪个 app；'' = 全域总览
+  index: null,           // 当前 app 的那一份视图 —— 单工具渲染只读它；全域模式下为 null
+  selection: new Set(),  // 勾选的是 "app/目标:路径"，同一路径在两个目标里不会互相顶掉
   open: new Set(),
   explain: new Set(),    // 展开了"这是什么 / 为什么在这里"的分类
   q: '',
@@ -47,9 +53,12 @@ const state = {
   busy: false,
 };
 
+/** 全域模式：一次看全部四个工具。这个取值不能与任何 app id 撞上。 */
+const ALL = '';
+
 /* 一个 app 可能有多个扫描目标（Cursor 的 ~/.cursor 与 App Support）。
-   勾选、删除都要带上目标，否则两个目标里的同名路径会互相冒名顶替。 */
-const keyOf = (f) => `${f.t}:${f.p}`;
+   勾选、删除都要带上目标与 app，否则两个目标里的同名路径会互相冒名顶替。 */
+const keyOf = (f, appId = state.appId) => `${appId}/${f.t}:${f.p}`;
 
 /* ── 工具 ───────────────────────────────────────────────── */
 
@@ -142,34 +151,44 @@ async function load(refresh = false) {
   applyApp();
 }
 
-/** 默认看谁：上次看的 → 第一个装了的。四个都没装就停在第一个，页面要说"没东西"而不是空白。 */
+/** 默认看谁：全域总览 → 上次看的单工具 → 第一个装了的。四个都没装也停在总览。 */
 function pickApp() {
   try {
     const last = localStorage.getItem(APP_KEY);
-    const hit = state.apps.find((a) => a.app === last && a.totals.files > 0);
-    if (hit) return hit.app;
+    // ''（全域）是有效记忆：默认即管理视角
+    if (last !== null) {
+      if (last === ALL) return ALL;
+      const hit = state.apps.find((a) => a.app === last && a.totals.files > 0);
+      if (hit) return hit.app;
+    }
   } catch {}
-  return (state.apps.find((a) => a.totals.files > 0) || state.apps[0] || {}).app;
+  return ALL;
 }
 
-/** 把渲染层切到当前 app 的那一份视图。 */
+/** 把渲染层切到当前 app 的那一份视图；全域模式下切走单工具视图。 */
 function applyApp() {
-  state.index = state.apps.find((a) => a.app === state.appId);
+  state.index = state.appId === ALL ? null : state.apps.find((a) => a.app === state.appId);
   state.selection.clear();
   state.group = null;   // 换 app，筛选也从头开始
   state.recReady = false;
 
-  // 按分类预分组，避免每次渲染都全量过滤
-  state.byCat = new Map();
-  for (const f of state.index.files) {
-    let arr = state.byCat.get(f.c);
-    if (!arr) state.byCat.set(f.c, (arr = []));
-    arr.push(f);
+  if (state.index) {
+    // 按分类预分组，避免每次渲染都全量过滤
+    state.byCat = new Map();
+    for (const f of state.index.files) {
+      let arr = state.byCat.get(f.c);
+      if (!arr) state.byCat.set(f.c, (arr = []));
+      arr.push(f);
+    }
   }
 
   try { localStorage.setItem(APP_KEY, state.appId); } catch {}
-  els.rootPath.textContent = state.index.targets.filter((t) => t.exists).map((t) => t.short).join(' + ')
-    || `${state.index.label}：这台机器上没有`;
+  if (state.index) {
+    els.rootPath.textContent = state.index.targets.filter((t) => t.exists).map((t) => t.short).join(' + ')
+      || `${state.index.label}：这台机器上没有`;
+  } else {
+    els.rootPath.textContent = '全部工具';
+  }
   els.scanNote.textContent = `扫描用时 ${(state.scan.durationMs / 1000).toFixed(1)}s`;
 
   renderAppTabs();
@@ -179,22 +198,30 @@ function applyApp() {
 const APP_KEY = 'zci-app';
 
 function renderAppTabs() {
-  els.appTabs.innerHTML = state.apps.map((a) => {
-    const on = a.app === state.appId;
-    const empty = a.totals.files === 0;
-    return `<button type="button" class="app-tab ${on ? 'is-on' : ''}${empty ? ' is-empty' : ''}"
+  els.appTabs.innerHTML = `<button type="button" class="app-tab ${state.appId === ALL ? 'is-on' : ''}"
+      role="tab" aria-selected="${state.appId === ALL}" data-app="${ALL}"
+      title="四个工具的总占地、可回收总量与按项目横切">
+      <span class="app-tab-name">全部</span>
+      <span class="app-tab-size">${fmtBytes(state.scan.grand.bytes)}</span>
+    </button>`
+    + state.apps.map((a) => {
+      const on = a.app === state.appId;
+      const empty = a.totals.files === 0;
+      return `<button type="button" class="app-tab ${on ? 'is-on' : ''}${empty ? ' is-empty' : ''}"
       role="tab" aria-selected="${on}" data-app="${esc(a.app)}"
       title="${esc(a.targets.map((t) => `${t.short}${t.exists ? '' : '（没有）'}`).join('、'))} · ${
         a.totals.files.toLocaleString()} 个文件">
       <span class="app-tab-name">${esc(a.label)}</span>
       <span class="app-tab-size">${empty ? '未安装' : fmtBytes(a.totals.bytes)}</span>
     </button>`;
-  }).join('');
+    }).join('');
 }
 
 function catById(id) {
-  return (state.index.catalog || state.index.categories).find((c) => c.id === id)
-    || state.index.catalog[state.index.catalog.length - 1];
+  const view = state.index;
+  if (!view) return { id, label: id, status: 'warning', verdict: 'review' };
+  return (view.catalog || view.categories).find((c) => c.id === id)
+    || view.catalog[view.catalog.length - 1];
 }
 
 function filesOf(catId) {
@@ -202,6 +229,206 @@ function filesOf(catId) {
 }
 
 /* ── 首屏 ───────────────────────────────────────────────── */
+
+/* ── 全域总览 ───────────────────────────────────────────── */
+
+const summary = { data: null, at: 0 };
+const projects = { data: null, at: 0, inflight: null };
+const SUMMARY_MS = 15_000;
+const PROJECTS_MS = 60_000;
+
+/** 全域总量与"可回收"口径：复用 /api/scan 的缓存索引，轻。 */
+async function loadSummary(force = false) {
+  if (!force && summary.data && Date.now() - summary.at < SUMMARY_MS) return summary.data;
+  const res = await fetch('/api/summary' + (force ? '?refresh=1' : ''));
+  if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+  summary.data = await res.json();
+  summary.at = Date.now();
+  return summary.data;
+}
+
+/** 项目横切：四个工具的会话各扫一遍（服务端走缓存），慢，所以懒加载。 */
+function loadProjects(force = false) {
+  if (!force && projects.data && Date.now() - projects.at < PROJECTS_MS) {
+    renderProjects(projects.data);
+    return Promise.resolve(projects.data);
+  }
+  if (projects.inflight) return projects.inflight;
+  projects.inflight = fetch('/api/projects' + (force ? '?refresh=1' : ''))
+    .then(async (res) => {
+      if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+      projects.data = await res.json();
+      projects.at = Date.now();
+      return projects.data;
+    })
+    .finally(() => { projects.inflight = null; });
+  return projects.inflight;
+}
+
+function renderGlobal() {
+  loadSummary().then((s) => {
+    // 换 tab 换得快了，晚到的旧响应要丢掉
+    if (state.appId !== ALL) return;
+    els.allBytes.textContent = fmtBytes(s.grand.bytes);
+    els.allSub.innerHTML =
+      `${s.apps.length} 个工具共 <b>${s.grand.files.toLocaleString()}</b> 个文件、` +
+      `<b>${s.grand.dirs.toLocaleString()}</b> 个目录。`;
+    els.allRecFigure.textContent = fmtBytes(s.reclaimable);
+    els.allRecNote.innerHTML =
+      `另有 <b>${fmtBytes(s.reclaimableExtra)}</b> 可清但默认没勾` +
+      `（体积大或你可能正用着，切到具体工具里放回来）。`;
+    els.allApps.innerHTML = s.apps.map((a) => `
+      <div class="all-app${a.installed ? '' : ' is-empty'}">
+        <span class="all-app-name">${esc(a.label)}</span>
+        <span class="all-app-bar"><i style="width:${s.grand.bytes ? Math.max(1, (a.bytes / s.grand.bytes) * 100) : 0}%"></i></span>
+        <span class="all-app-bytes">${a.installed ? fmtBytes(a.bytes) : '未安装'}</span>
+        <span class="all-app-rec">${a.reclaimable ? '可清 ' + fmtBytes(a.reclaimable) : ''}</span>
+      </div>`).join('');
+  }).catch((err) => {
+    els.allSub.innerHTML = `<b>读取失败：</b>${esc(err.message)}`;
+  });
+
+  // 项目横切懒加载：第一次进入总览才付读取四个会话库的代价
+  if (!projects.data) {
+    els.projLede.textContent = '正在读取各工具的会话…';
+    loadProjects()
+      .then(() => { if (state.appId === ALL) renderProjects(projects.data); })
+      .catch((err) => { els.projLede.innerHTML = `<b>读取失败：</b>${esc(err.message)}`; });
+  } else {
+    renderProjects(projects.data);
+  }
+}
+
+function renderProjects(d) {
+  const total = d.totals;
+  els.projLede.innerHTML =
+    `<b>${total.projects}</b> 个项目、<b>${total.sessions.toLocaleString()}</b> 条会话，` +
+    `正文合计 <b>${fmtBytes(total.bytes)}</b>。同一项目在多个工具里的残留归在一起 —— ` +
+    `点一行展开看是哪些工具、各留了多少。`;
+  if (!d.projects.length) {
+    els.projList.innerHTML = '<p class="empty">没有读到可归属的会话。</p>';
+  } else {
+    els.projList.innerHTML = d.projects.map((p) => `
+      <div class="proj" data-proj="${esc(p.key)}">
+        <button class="proj-head" type="button" aria-expanded="false">
+          <span class="proj-path" title="${esc(p.path || p.label)}">${esc(p.path || p.label)}</span>
+          <span class="proj-apps">${
+            p.apps.map((a) => `<i title="${esc(a.appLabel)}：${a.sessions} 条会话">${esc(a.appId)} ${a.sessions}</i>`).join('')
+          }</span>
+          <span class="proj-bytes">${fmtBytes(p.bytes)}</span>
+          <span class="proj-caret" aria-hidden="true"></span>
+        </button>
+        <div class="proj-body" hidden></div>
+      </div>`).join('');
+  }
+  if (d.unresolvable.length) {
+    els.projUnres.hidden = false;
+    els.projUnres.innerHTML =
+      `<p>另有 <b>${d.unresolvable.length}</b> 组会话无法归并（共 ${fmtBytes(
+        d.unresolvable.reduce((s, u) => s + u.bytes, 0))}）：` +
+      `${d.unresolvable.slice(0, 6).map((u) => esc(u.label)).join('、')}` +
+      `${d.unresolvable.length > 6 ? ' 等' : ''}。` +
+      `Cursor 窗口没开过文件夹、Claude 会话首行读不到 cwd 时就会这样 —— 猜一个项目名比不猜更糟。</p>`;
+  } else {
+    els.projUnres.hidden = true;
+  }
+}
+
+/** 展开一个项目：列出它下面所有工具的会话。展开是纯粹的本地动作，不再打接口。 */
+function toggleProject(key) {
+  const d = projects.data;
+  const p = d && d.projects.find((x) => x.key === key);
+  if (!p) return;
+  const wrap = els.projList.querySelector(`[data-proj="${CSS.escape(key)}"]`);
+  if (!wrap) return;
+  const body = wrap.querySelector('.proj-body');
+  const head = wrap.querySelector('.proj-head');
+  const opening = body.hidden;
+  body.hidden = !opening;
+  head.setAttribute('aria-expanded', String(opening));
+  wrap.classList.toggle('is-open', opening);
+  if (!opening) return;
+
+  // 会话清理分两条线：库里按行删（ZCode/Codex 的会话）与删正文文件
+  // （Claude 的全部、Codex 的残骸）。项目卡片不把两者搅进一个按钮 ——
+  // 这里只列出"能做什么"，每件事都从它自己的入口走。
+  const residual = p.tasks.filter((t) => t.residual);
+  const rows = p.tasks.map((t) => {
+    const clean = t.reason != null;
+    return `<div class="proj-task${clean ? '' : ' is-locked'}">
+      <span class="ptask-app">${esc(t.appLabel)}</span>
+      <span class="ptask-title" title="${esc(t.title)}">${esc(t.title)}</span>
+      <span class="ptask-state">${esc(clean ? (REASON_LABEL[t.reason] || t.reason) : (STATE_META_CN[t.state] || t.state))}</span>
+      <span class="ptask-bytes">${fmtBytes(t.bytes || 0)}</span>
+    </div>`;
+  }).join('');
+
+  const perApp = [...new Set(p.tasks.map((t) => t.appId))]
+    .map((id) => `<button class="btn btn-ghost btn-sm" data-gotoapp="${esc(id)}" type="button">${
+      esc((state.apps.find((a) => a.app === id) || {}).label || id)} 里查看</button>`).join('');
+
+  body.innerHTML = `
+    <div class="proj-tasks">${rows}</div>
+    <div class="proj-actions">
+      ${residual.length
+        ? `<button class="btn btn-ghost btn-sm" data-projfiles="${esc(key)}" type="button">清掉 ${
+            residual.length} 个残留文件（${fmtBytes(residual.reduce((s, t) => s + (t.bytes || 0), 0))}）</button>`
+        : ''}
+      ${perApp}
+    </div>
+    <p class="proj-note">带状态的（已删除 / 已归档 / 残骸）说明界面上已经不用了；仍在用的不提供从这里清理的入口。` +
+      `会话正文在各工具的库里，按行清理要走对应工具的历史任务面板。</p>`;
+}
+
+/** 把一个项目下的残骸会话映射成文件勾选，走文件清理那条线（废纸篓/彻底删除）。 */
+function pickProjectResiduals(key) {
+  const d = projects.data;
+  const p = d && d.projects.find((x) => x.key === key);
+  if (!p) return;
+  state.selection.clear();
+  let n = 0;
+  for (const t of p.tasks) {
+    if (!t.residual || !t.bodyRel) continue;
+    const view = state.apps.find((a) => a.app === t.appId);
+    if (!view) continue;
+    // bodyRel 的基准因 app 而异：Codex 相对 ~/.codex（ sessions/… ），
+    // Claude 的会话视图却把 projects/ 当前缀剥掉了（见 tasks-claude.mjs）——
+    // 两种都试一次，命中哪个用哪个。
+    const rootKey = view.targets[0].key;
+    const f = view.files.find((x) => x.t === rootKey && x.p === t.bodyRel)
+      || view.files.find((x) => x.t === rootKey && x.p === `projects/${t.bodyRel}`);
+    if (f) { state.selection.add(keyOf(f, t.appId)); n += 1; }
+  }
+  if (!n) {
+    els.projLede.innerHTML = '<b>这些残骸在文件清单里找不到对应文件</b> —— 目录大概变了，点「重新扫描」再来。';
+    return;
+  }
+  renderActionbar();
+  openDrawer();
+}
+
+/** 全域"清理推荐"：把四个工具的 recommend 分类文件全勾上，打开同一个确认抽屉。 */
+async function pickAllRecommended() {
+  state.selection.clear();
+  let count = 0;
+  for (const a of state.apps) {
+    if (a.totals.files === 0) continue;
+    // 口径与单工具的"推荐清理"完全一致：recommend && !recommendDefaultOff。
+    // 全域模式下没有 recOff 的覆盖 —— 让人先看见全量再决定，恰是这个按钮的意义。
+    const want = new Set(a.catalog.filter((c) => c.recommend && !c.recommendDefaultOff).map((c) => c.id));
+    for (const f of a.files) {
+      if (!want.has(f.c)) continue;
+      state.selection.add(keyOf(f, a.app));
+      count += 1;
+    }
+  }
+  if (!count) {
+    els.allRecNote.innerHTML = '四个工具都没有可推荐清理的内容。';
+    return;
+  }
+  renderActionbar();
+  openDrawer();
+}
 
 function renderHero() {
   const t = state.index.totals;
@@ -386,22 +613,32 @@ const targetLabel = (key) => targetView(key).label || key;
 
 /* ── 勾选 ───────────────────────────────────────────────── */
 
+/** 全域模式下勾选跨 app；state.index 为空时从各 app 视图里查。 */
+function allFiles() {
+  return state.index ? state.index.files : state.apps.flatMap((a) => a.files);
+}
+
 function selectedBytes() {
   let sum = 0;
-  for (const f of state.index.files) if (state.selection.has(keyOf(f))) sum += f.s;
+  for (const a of state.apps) {
+    for (const f of a.files) if (state.selection.has(keyOf(f, a.app))) sum += f.s;
+  }
   return sum;
 }
 
-/* 勾选 → [{app, target, paths}]：一次操作里跨了目标就分几次发，
+/* 勾选 → [[app, target, paths], …]：一次操作里跨了 app 跨了目标就分几次发，
    每个目标各自做越界与保护校验，不会因为拼在一起而放宽任何一条。 */
 function selectedByTarget() {
-  const byTarget = new Map();
-  for (const f of state.index.files) {
-    if (!state.selection.has(keyOf(f))) continue;
-    if (!byTarget.has(f.t)) byTarget.set(f.t, []);
-    byTarget.get(f.t).push(f.p);
+  const batches = new Map();
+  for (const a of state.apps) {
+    for (const f of a.files) {
+      if (!state.selection.has(keyOf(f, a.app))) continue;
+      const key = `${a.app}\u0000${f.t}`;
+      if (!batches.has(key)) batches.set(key, [a.app, f.t, []]);
+      batches.get(key)[2].push(f.p);
+    }
   }
-  return [...byTarget.entries()];
+  return [...batches.values()];
 }
 
 /* "在 Finder 中显示"是 macOS 的 open -R。别处没有这个动作，
@@ -418,8 +655,25 @@ function renderActionbar() {
 
 /* ── 抽屉 ───────────────────────────────────────────────── */
 
+/** 一行文件属于哪个 app —— 全域模式下勾选是跨 app 的，分类文案要回各自的表里查。 */
+const appIdOfRow = (f) => state.appId !== ALL ? state.appId
+  : (state.apps.find((a) => a.files.includes(f)) || {}).app;
+const appLabelOfRow = (f) => (state.apps.find((a) => a.app === appIdOfRow(f)) || {}).label || '';
+const rowTitle = (f) => {
+  const view = state.apps.find((a) => a.app === appIdOfRow(f));
+  const t = view?.targets.find((x) => x.key === f.t);
+  return `${t ? t.short : ''}/${f.p}`;
+};
+
+/** 按 (app, 行) 取分类元信息：单工具模式查当前 app，全域模式按行所属 app 查。 */
+function catOfRow(f) {
+  const view = state.apps.find((a) => a.app === appIdOfRow(f));
+  const found = (view?.catalog || []).find((c) => c.id === f.c);
+  return found || { id: f.c, label: f.c, status: 'warning', verdict: 'review' };
+}
+
 function openDrawer() {
-  const rows = state.index.files.filter((f) => state.selection.has(keyOf(f)));
+  const rows = allFiles().filter((f) => state.selection.has(keyOf(f, appIdOfRow(f))));
   if (!rows.length) return;
   const bytes = rows.reduce((s, f) => s + f.s, 0);
   const biggest = rows.reduce((a, b) => (a.s >= b.s ? a : b), rows[0]);
@@ -427,12 +681,12 @@ function openDrawer() {
   els.drawerStats.innerHTML = `
     <div class="dstat"><span>条目</span><b>${rows.length.toLocaleString()}</b></div>
     <div class="dstat"><span>合计</span><b>${fmtBytes(bytes)}</b></div>
-    <div class="dstat"><span>最大一项</span><b title="${esc(biggest.p)}">${fmtBytes(biggest.s)}</b></div>`;
+    <div class="dstat"><span>最大一项</span><b title="${esc(rowTitle(biggest))}">${fmtBytes(biggest.s)}</b></div>`;
 
   // 这批里都是些什么 —— 按分类摊开，别只给一个总数
   const mix = new Map();
   for (const f of rows) {
-    const c = catById(f.c);
+    const c = catOfRow(f);
     mix.set(c, (mix.get(c) || 0) + f.s);
   }
   const mixSorted = [...mix.entries()].sort((a, b) => b[1] - a[1]);
@@ -449,8 +703,10 @@ function openDrawer() {
     const cut = f.p.lastIndexOf('/');
     const dir = cut < 0 ? '' : f.p.slice(0, cut + 1);
     const name = cut < 0 ? f.p : f.p.slice(cut + 1);
-    return `<li title="${esc(targetShort(f.t)) + '/' + esc(f.p)}">
-      <span class="dl-path"><span class="row-dir">${esc((multiTarget() ? targetShort(f.t) + '/' : '') + dir)}</span><b>${esc(name)}</b></span>
+    // 跨 app 时必须说清这一行是谁的：不同工具的相同路径名不是同一个东西
+    const appTag = state.appId === ALL ? appLabelOfRow(f) + '/' : '';
+    return `<li title="${esc(rowTitle(f))}">
+      <span class="dl-path"><span class="row-dir">${esc(appTag + dir)}</span><b>${esc(name)}</b></span>
       <span>${fmtBytes(f.s)}</span></li>`;
   }).join('')
     + (rows.length > 300 ? `<li><span>…还有 ${(rows.length - 300).toLocaleString()} 项按体积排在后面</span><span></span></li>` : '');
@@ -462,7 +718,7 @@ function openDrawer() {
   els.drawerGo.disabled = false;
 
   // 两条路各有各的堵法：受保护内容不能彻底删除；非 macOS 没有废纸篓可用。
-  const anyProtected = rows.some((f) => catById(f.c).verdict === 'never');
+  const anyProtected = rows.some((f) => catOfRow(f).verdict === 'never');
   const noTrash = state.scan.canTrash === false;
   const purgeRadio = document.querySelector('input[name="mode"][value="purge"]');
   const trashRadio = document.querySelector('input[name="mode"][value="trash"]');
@@ -518,13 +774,13 @@ async function runClean() {
   try {
     const done = [];
     const failed = [];
-    for (const [target, paths] of batches) {
+    for (const [appId, target, paths] of batches) {
       const res = await fetch(purge ? '/api/purge' : '/api/trash', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(purge
-          ? { app: state.appId, target, paths, confirm: els.purgeWord.value }
-          : { app: state.appId, target, paths }),
+          ? { app: appId, target, paths, confirm: els.purgeWord.value }
+          : { app: appId, target, paths }),
       });
       const data = await res.json();
       // 任一批被拒绝就停下：后面的目标还没动，人能看到的是完整结果，不是删了一半的现场
@@ -552,13 +808,13 @@ async function runClean() {
   }
 }
 
-/** 在 Finder 中显示：reveal 按钮带的是 "目标:路径"，要拆回服务端认的三元组。 */
+/** 在 Finder 中显示：key 带的是 "app/目标:路径"，要拆回服务端认的三元组。 */
 async function revealPath(key) {
-  const f = state.index.files.find((x) => keyOf(x) === key);
+  const f = allFiles().find((x) => keyOf(x, appIdOfRow(x)) === key);
   if (!f) return;
   await fetch('/api/reveal', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ app: state.appId, target: f.t, path: f.p }),
+    body: JSON.stringify({ app: appIdOfRow(f), target: f.t, path: f.p }),
   });
 }
 
@@ -580,6 +836,11 @@ const hideTip = () => { els.tooltip.hidden = true; };
 /* ── 渲染总入口 ─────────────────────────────────────────── */
 
 function renderAll() {
+  // 全域模式与单工具模式渲染的是两套 DOM：前者是总量 + 项目横切，
+  // 后者是某一个工具的分类表与清单。二者不会同时可见。
+  els.all.hidden = state.appId !== ALL;
+  els.single.hidden = state.appId === ALL;
+  if (state.appId === ALL) { renderGlobal(); renderActionbar(); return; }
   if (!state.recReady) { state.recOff = loadRecOff(); state.recReady = true; }
   renderHero();
   renderRecommend();
@@ -712,16 +973,34 @@ function renderChips() {
 document.addEventListener('click', async (e) => {
   const t = e.target;
 
-  // 换 app：分类表、清单、历史会话整条线跟着换
+  // 换 app / 切全域：分类表、清单、历史会话整条线跟着换
   const tab = t.closest('[data-app]');
   if (tab) {
     if (tab.dataset.app === state.appId) return;
     state.appId = tab.dataset.app;
     applyApp();
     loadTasks();
-    document.getElementById('overview').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById(state.appId === ALL ? 'all' : 'overview')
+      .scrollIntoView({ behavior: 'smooth', block: 'start' });
     return;
   }
+
+  // 全域"清理推荐"：四个工具的 recommend 全勾上进抽屉
+  if (t.closest('#allRecBtn')) { pickAllRecommended(); return; }
+
+  // 项目横切：展开/收起一行的会话明细
+  const projHead = t.closest('.proj-head');
+  if (projHead) { toggleProject(projHead.closest('[data-proj]').dataset.proj); return; }
+
+  // 项目内：跳到对应工具看它的会话；或把残骸勾上进文件清理
+  const gotoApp = t.closest('[data-gotoapp]');
+  if (gotoApp) {
+    const tab = els.appTabs.querySelector(`[data-app="${CSS.escape(gotoApp.dataset.gotoapp)}"]`);
+    if (tab) tab.click();
+    return;
+  }
+  const projFiles = t.closest('[data-projfiles]');
+  if (projFiles) { pickProjectResiduals(projFiles.dataset.projfiles); return; }
 
   // "这是什么 / 为什么在这里"的展开开关（跟展开文件列表是两回事）
   const more = t.closest('[data-more]');
@@ -978,6 +1257,16 @@ async function loadTasks(refresh = false) {
   tEls.comp.hidden = true;
   tEls.foot.hidden = true;
   tEls.list.innerHTML = '';
+
+  // 全域模式没有"某一个工具"的会话面板：任务区直接说去看哪个工具
+  if (!view) {
+    tEls.lede.textContent = '总览模式下不读会话库 —— 切到具体工具后这里显示它的历史会话。';
+    tEls.dbBar.innerHTML = '';
+    tEls.chips.innerHTML = '';
+    renderTaskFoot();
+    renderTaskQuick();
+    return;
+  }
 
   if (!view.targets.some((t) => t.exists)) {
     tEls.lede.textContent = `${view.label} 在这台机器上没有数据目录。`;

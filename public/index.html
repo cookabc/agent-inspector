@@ -29,7 +29,6 @@
     <a class="nav-a" href="#files">文件</a>
     <a class="nav-a" href="#tasks">任务</a>
   </nav>
-
   <div class="topbar-actions">
     <span class="scan-note" id="scanNote"></span>
     <button class="btn btn-ghost" id="rescanBtn" type="button">重新扫描</button>
@@ -49,11 +48,50 @@
        每个标签上直接写它自己占多少 —— 换着看之前，先知道该看哪个。 -->
   <div class="app-tabs" id="appTabs" role="tablist" aria-label="选择要审计的工具"></div>
 
+  <!-- ── 全域总览：四个工具加起来，一次管完 ───────────────
+       这是管理视角的默认屏：总占地是分母，可回收是分子，下面是按项目横切。
+       具体某一个工具的分类表还在下面 —— 顶栏标签切过去即可。 -->
+  <section class="all" id="all" hidden>
+    <div class="all-head">
+      <p class="eyebrow">全部工具</p>
+      <p class="hero-figure" id="allBytes">—</p>
+      <p class="hero-sub" id="allSub">正在扫描…</p>
+    </div>
+
+    <div class="all-lanes">
+      <article class="lane">
+        <header class="lane-head">
+          <span class="lane-name">一处清掉所有推荐项</span>
+          <span class="lane-figure" id="allRecFigure">—</span>
+        </header>
+        <p class="lane-desc" id="allRecDesc">四个工具的日志、缓存与系统垃圾 —— 不动会话、配置与凭据。</p>
+        <div class="lane-actions">
+          <button class="btn btn-primary" id="allRecBtn" type="button">勾选并核对…</button>
+        </div>
+        <p class="lane-note" id="allRecNote"></p>
+      </article>
+
+      <article class="lane">
+        <header class="lane-head">
+          <span class="lane-name">各工具占地</span>
+        </header>
+        <div class="all-apps" id="allApps"></div>
+      </article>
+    </div>
+
+    <h2 class="section-title">按项目横切</h2>
+    <p class="lede" id="projLede">正在读取各工具的会话…</p>
+    <div class="proj-list" id="projList"></div>
+    <div class="proj-unres" id="projUnres" hidden></div>
+  </section>
+
+  <!-- ── 单工具视图：app 标签选中某一个时才显示 ─────────── -->
+  <div class="single" id="single">
+
   <!-- ── 总览：先说总量，再说这里面能清掉什么 ───────────────
        这两件事本来就是一句话的两半 —— 上面那个数是分母，下面两条清理线是分子。
        拆成两张卡反而要人自己把它们接起来。 -->
-  <section class="hero" id="overview" aria-labelledby="heroTitle">
-    <div class="hero-head">
+  <section class="hero" id="overview" aria-labelledby="heroTitle">    <div class="hero-head">
       <p class="eyebrow" id="heroTitle">磁盘占用</p>
       <p class="hero-figure" id="heroBytes">—</p>
       <p class="hero-sub" id="heroSub">正在扫描 <code>~/.zcode</code> …</p>
@@ -214,6 +252,7 @@
       <button class="btn btn-primary" id="taskPurgeBtn" type="button">清理…</button>
     </div>
   </section>
+  </div><!-- /#single -->
 
   <footer class="foot">
     <p>文件清单只读取大小与时间，从不读取内容；历史会话面板读会话库走的是只读连接。清理默认移入废纸篓，可随时恢复。</p>

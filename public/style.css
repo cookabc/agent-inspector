@@ -223,6 +223,114 @@ p { margin: 0; }
 .app-tab-size { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .app-tab.is-on .app-tab-size { color: var(--accent); font-weight: 550; }
 
+/* ── 全域总览（"全部"模式）─────────────────────────────
+   管理视角的默认屏：总量一句、可回收一条、各工具一行、按项目横切一列。
+   视觉与单工具的 hero / lanes 同源，不引入新色。 */
+
+.all { display: flex; flex-direction: column; gap: 14px; }
+.all[hidden] { display: none; }
+
+.all-head { display: flex; flex-direction: column; gap: 6px; }
+
+.all-lanes {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 12px;
+}
+
+/* 各工具一行：名字 + 等比条 + 占地 + 可清。读法与上面的总量一致。 */
+.all-apps { display: flex; flex-direction: column; gap: 7px; padding: 4px 0 2px; }
+.all-app {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+.all-app.is-empty { opacity: .55; }
+.all-app-name { color: var(--ink-2); font-weight: 550; white-space: nowrap; }
+.all-app-bar { height: 7px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.all-app-bar i { display: block; height: 100%; border-radius: 999px; background: var(--line-strong); }
+.all-app-bytes { color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.all-app-rec { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 76px; text-align: right; }
+
+/* 按项目横切：一行一个项目，展开后是各工具的会话明细。 */
+.proj-list { display: flex; flex-direction: column; gap: 6px; }
+
+.proj {
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  overflow: hidden;
+}
+.proj.is-open { border-color: var(--line-strong); }
+
+.proj-head {
+  font: inherit;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto 14px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.proj-head:hover { background: var(--surface-2); }
+
+.proj-path {
+  font-size: 13px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.proj-apps { display: flex; gap: 6px; flex-wrap: wrap; }
+.proj-apps i {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border-radius: 999px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.proj-bytes { font-size: 12px; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.proj-caret {
+  width: 7px; height: 7px;
+  border-right: 1.5px solid var(--muted);
+  border-bottom: 1.5px solid var(--muted);
+  transform: rotate(45deg);
+  transition: transform .14s ease;
+}
+.proj.is-open .proj-caret { transform: rotate(225deg); }
+
+.proj-body { border-top: 1px solid var(--line); padding: 10px 14px 12px; }
+.proj-body[hidden] { display: none; }
+
+.proj-tasks { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
+.proj-task {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 6px;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+}
+.proj-task:hover { background: var(--surface-2); }
+.proj-task.is-locked { opacity: .55; }
+.ptask-app { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ptask-title { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ptask-state { color: var(--muted); white-space: nowrap; }
+.ptask-bytes { color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.proj-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.proj-note { margin-top: 8px; font-size: 11.5px; color: var(--muted); }
+.proj-unres p { font-size: 12px; color: var(--muted); }
+
 /* ── 按钮 ───────────────────────────────────────────────── */
 
 .btn {
