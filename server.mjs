@@ -27,12 +27,14 @@ import { Worker } from 'node:worker_threads';
 /* 自己的模块用动态 import：本地这几个都依赖内置的 node:sqlite，
    而它是 Node 22.5 才有的。更早的版本上静态 import 会在任何提示之前直接崩掉，
    用户只看到一句 "Cannot find module 'node:sqlite'"。这里接住它，说人话。 */
-let APPS, getApp, planApps, appSummaries, scanApps, appRunning, rowPurgeBlocked;
+let APPS, getApp, planApps, appSummaries, scanApps, appRunning, rowPurgeBlocked, projectsFrom;
 try {
-  [{ APPS, getApp, planApps, appSummaries }, { scanApps }, { appRunning, rowPurgeBlocked }] = await Promise.all([
+  [{ APPS, getApp, planApps, appSummaries }, { scanApps }, { appRunning, rowPurgeBlocked },
+    { projectsFrom }] = await Promise.all([
     import('./lib/apps/index.mjs'),
     import('./lib/scan.mjs'),
     import('./lib/tasks.mjs'),
+    import('./lib/projects.mjs'),
   ]);
 } catch (err) {
   const msg = err?.message || String(err);
@@ -133,9 +135,59 @@ function getTasks(appId, force = false) {
   return run;
 }
 
-/** worker 只要纯数据，别把函数和 app 对象塞进去。 */
+/** worker 只要纯数据，别把函数和 app 对象塞过去。 */
 function stripTarget(t) {
   return { key: t.key, kind: t.kind, path: t.path, short: t.short, label: t.label, exists: t.exists };
+}
+
+/* ── 全域聚合 ───────────────────────────────────────────────── */
+
+/**
+ * 所有 app 的会话数据。缺一个 app 不致命：那台机器上没装就直接返回空 tasks，
+ * 项目横切少一行而已 —— 但 problems 要如实记下来。
+ */
+async function getAllTasks() {
+  const byApp = [];
+  for (const plan of plans) {
+    if (!plan.targets.some((t) => t.exists)) continue;    // 没装：不是错误
+    try {
+      const data = await getTasks(plan.app.id);
+      byApp.push({ appId: plan.app.id, appLabel: plan.app.label, tasks: data.tasks || [] });
+    } catch { /* 读不了就跳过这个 app，不让一个坏库拖垮整个总览 */ }
+  }
+  return byApp;
+}
+
+/**
+ * 全域可回收总量。口径与前端"推荐清理"默认勾选完全一致：
+ * recommend 且没标 recommendDefaultOff 的分类 —— 日志、缓存、系统垃圾。
+ * 另给出含默认排除项（如 Computer Use 副本身份、旧版本运行时）的口径做参照。
+ */
+function computeSummary(index) {
+  let reclaimable = 0, reclaimableFiles = 0, extra = 0;
+  const perApp = index.apps.map((a) => {
+    const cats = a.catalog || [];
+    const on = cats.filter((c) => c.recommend && !c.recommendDefaultOff);
+    const off = cats.filter((c) => c.recommend && c.recommendDefaultOff);
+    const bytes = on.reduce((s, c) => s + c.bytes, 0);
+    const count = on.reduce((s, c) => s + c.count, 0);
+    reclaimable += bytes;
+    reclaimableFiles += count;
+    extra += off.reduce((s, c) => s + c.bytes, 0);
+    return {
+      id: a.app, label: a.label, writable: a.writable,
+      bytes: a.totals.bytes, files: a.totals.files,
+      installed: a.totals.files > 0 || a.targets.some((t) => t.exists),
+      reclaimable: bytes, reclaimableFiles: count,
+    };
+  });
+  return {
+    grand: index.grand,
+    reclaimable,
+    reclaimableFiles,
+    reclaimableExtra: extra,      // 默认没勾、但点一下就能放回来清的部分
+    apps: perApp,
+  };
 }
 
 /* ── 安全 ─────────────────────────────────────────────────── */
@@ -371,6 +423,19 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/apps') {
       return sendJSON(req, res, 200, { apps: SUMMARIES, trash: TRASH, canTrash: MACOS, canReveal: MACOS });
+    }
+
+    if (p === '/api/summary') {
+      // 全域总览的总量与可回收口径。复用 /api/scan 的缓存索引，不重扫目录。
+      const index = await getIndex(url.searchParams.get('refresh') === '1');
+      return sendJSON(req, res, 200, computeSummary(index));
+    }
+
+    if (p === '/api/projects') {
+      // 按项目横切：四个 app 的会话各扫一遍（走 taskCache），归并后返回。
+      // 这一步要读会话库，可能几秒 —— 但它是懒加载的，只有人真的去看时才付这个代价。
+      const byApp = await getAllTasks();
+      return sendJSON(req, res, 200, projectsFrom(byApp));
     }
 
     if (p === '/api/scan') {
