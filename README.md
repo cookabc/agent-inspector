@@ -94,8 +94,28 @@ node server.mjs
 
 ## 界面
 
-页面四条：总览、清理、文件、任务；顶部一排标签切换工具，每个标签上写着它占多少、
-装没装（没装的那一个压暗，但仍然可以点进去确认它真的没落盘）。
+页面默认进「全部」：四个工具合计占多少、其中多少可一处清掉、按项目横切一列。
+顶部标签最前面是「全部」，后面跟着各工具（写着它占多少、装没装 —— 没装的那一个
+压暗，但仍然可以点进去确认它真的没落盘）；点进某个工具后才是它自己的四条：
+总览、清理、文件、任务。
+
+### 全部：管理视角
+
+- **一处清掉所有推荐项** —— 把四个工具的日志、缓存与系统垃圾全部勾上，
+  进同一个确认抽屉（3,300+ 项这种量级，抽屉里可以改），按工具分批发送。
+- **各工具占地** —— 一行一个工具：等比条 + 占地 + 可清多少。
+- **按项目横切** —— 同一个 repo 在所有 agent 里的残留归在一起。
+  ZCode / Codex 的会话带着工作区绝对路径；Cursor 的不透明 workspace UUID
+  从 `workspaceStorage/<uuid>/workspace.json` 反查成路径；Claude 读 .jsonl
+  首行的 cwd，读不到时宁可单独成桶也不猜。展开一行看各工具留了多少，
+  残骸（索引已删、文件还在）可以就地交给文件清理那条线。
+- 无法归并的会话（Cursor 没开过文件夹的窗口、读不到 cwd 的 Claude 会话）
+  折叠在底部并说明原因；某个工具的会话库读不出来时也会在那里点名，
+  不让总量静默变小。
+
+### 单工具视图
+
+页面四条：总览、清理、文件、任务。
 首屏是一张卡：左边当前工具的总字节数，右边能清掉什么，底下一行四个工具加起来的总量。
 这两件事本来是一句话的两半（左边是分母，右边是分子），拆成两张卡反而要人自己接起来。
 
@@ -263,6 +283,7 @@ lib/tasks-zcode.mjs    ZCode：db.sqlite + tasks-index，按任务删
 lib/tasks-codex.mjs    Codex：三库按线程删，正文文件交给文件线
 lib/tasks-claude.mjs   Claude Code：按文件的历史视图
 lib/tasks-cursor.mjs   Cursor：只读，按键族统计
+lib/projects.mjs       按项目横切：四工具的会话归并成项目桶（能确定才归并）
 lib/sqlite-open.mjs    只读打开：必要时连侧文件一起复制到副本上再开
 lib/db-worker.mjs      数据库操作在 worker 线程里跑
 public/index.html      页面骨架
@@ -270,6 +291,7 @@ public/style.css       设计令牌与全部样式
 public/app.js          渲染、勾选、清理流程
 test/server.test.mjs   临时 HOME 中的 HTTP 删除边界回归测试
 test/codex-tasks.test.mjs  Codex 三库夹具：空跑、跨库删除、备份、残骸交接
+test/global-tasks.test.mjs 全域视图：项目归并、Cursor 反查、并发一致性
 ```
 
 ### 验证

@@ -370,11 +370,19 @@ const skeletonRows = (n) => Array.from({ length: Math.min(n + 2, 6) },
 
 function renderProjects(d) {
   const total = d.totals;
+  // 哪个工具的会话库读不出来，总量就会静默少一块 —— 这件事在任何
+  // 渲染分支里都不能漏说，包括"一条会话都没有"的早退分支。
+  const warnHtml = d.problems?.length
+    ? d.problems.map((m) => `<p class="is-warn">${esc(m)}</p>`).join('')
+    : '';
   // 一条会话都没读到：说清是"没有历史"而不是"归并失败"，这两件事该分开。
   if (!d.projects.length && !d.unresolvable.length) {
-    els.projLede.innerHTML = '没有读到任何会话。这些工具是装过的，但里面还没有可归并的历史记录。';
+    els.projLede.innerHTML = warnHtml
+      ? '没有读到任何会话 —— 见下面的原因。'
+      : '没有读到任何会话。这些工具是装过的，但里面还没有可归并的历史记录。';
     els.projList.innerHTML = '';
-    els.projUnres.hidden = true;
+    els.projUnres.hidden = !warnHtml;
+    els.projUnres.innerHTML = warnHtml;
     return;
   }
   els.projLede.innerHTML =
@@ -410,6 +418,11 @@ function renderProjects(d) {
       `Cursor 窗口没开过文件夹、Claude 会话首行读不到 cwd 时就会这样 —— 猜一个项目名比不猜更糟。</p>`;
   } else {
     els.projUnres.hidden = true;
+  }
+  // 某个工具的会话库读不出来时，总量会静默变小 —— 必须让人知道少了谁。
+  if (warnHtml) {
+    els.projUnres.hidden = false;
+    els.projUnres.innerHTML += warnHtml;
   }
 }
 

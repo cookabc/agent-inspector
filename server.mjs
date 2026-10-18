@@ -148,19 +148,26 @@ function stripTarget(t) {
  *
  * 四个 app 并发读：每次扫描都是一个独立 worker，串行等待只会把
  * 首屏拖成四倍（实测串行 4.2s vs 并发 2.0s）。
+ *
+ * @returns {{byApp: Array, problems: string[]}} 读失败的 app 进 problems，
+ *   接口原样带给前端 —— 静默少一个工具的数据，比报错更害人。
  */
 async function getAllTasks() {
+  const problems = [];
   const jobs = [];
   for (const plan of plans) {
     if (!plan.targets.some((t) => t.exists)) continue;    // 没装：不是错误
     jobs.push(
       getTasks(plan.app.id)
         .then((data) => ({ appId: plan.app.id, appLabel: plan.app.label, tasks: data.tasks || [] }))
-        .catch(() => null),   // 读不了就跳过这个 app，不让一个坏库拖垮整个总览
+        .catch((err) => {
+          problems.push(`${plan.app.label} 的会话读不出来：${err.message}`);
+          return null;
+        }),
     );
   }
   const results = await Promise.all(jobs);
-  return results.filter(Boolean);
+  return { byApp: results.filter(Boolean), problems };
 }
 
 /**
@@ -439,8 +446,8 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/projects') {
       // 按项目横切：四个 app 的会话各扫一遍（走 taskCache），归并后返回。
       // 这一步要读会话库，可能几秒 —— 但它是懒加载的，只有人真的去看时才付这个代价。
-      const byApp = await getAllTasks();
-      return sendJSON(req, res, 200, projectsFrom(byApp));
+      const { byApp, problems } = await getAllTasks();
+      return sendJSON(req, res, 200, { ...projectsFrom(byApp), problems });
     }
 
     if (p === '/api/scan') {
