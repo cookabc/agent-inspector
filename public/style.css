@@ -343,6 +343,29 @@ p { margin: 0; }
 .proj-unres p { font-size: 12px; color: var(--muted); }
 .proj-unres p.is-warn { color: var(--st-serious); }
 
+/* 跨 app 空跑分组行与逐工具结果：在抽屉的行列表里立起"哪个工具"的分隔。 */
+.dryrun li.dry-head {
+  font-weight: 600;
+  color: var(--ink);
+  border-bottom: 1px solid var(--line);
+  padding-top: 10px;
+}
+.dryrun li.dry-head:first-child { padding-top: 0; }
+.cross-result {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.cross-result li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+}
+.cross-result li span:last-child { font-variant-numeric: tabular-nums; color: var(--muted); }
+
 /* 全域模式下导航那四条没有落点 —— 它们指向的单工具区块整块隐藏着。 */
 body[data-mode="all"] .nav { display: none; }
 

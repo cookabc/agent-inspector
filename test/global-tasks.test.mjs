@@ -86,17 +86,30 @@ async function fixture(t) {
 
 /* ── 夹具数据 ─────────────────────────────────────────────── */
 
-/** ZCode：会话库里一条 deleted、一条 active，任务索引各一行。 */
+/** ZCode：会话库里一条 deleted、一条 active，任务索引各一行。
+ *  除 session/message/part 外还要建齐 purge 会碰到的全部表 ——
+ *  逐表 DELETE 用的是"库里有啥清啥"的探测，但 previewPurge 的
+ *  COUNTED_TABLES 是固定清单，缺一张表整个删除就 500。 */
 function seedZcode(home) {
   const main = path.join(home, '.zcode', 'cli', 'db', 'db.sqlite');
   const db = new DatabaseSync(main);
   db.exec('CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, title TEXT, directory TEXT, time_created INTEGER, time_updated INTEGER, task_type TEXT)');
-  db.exec('CREATE TABLE message (session_id TEXT, data TEXT)');
-  db.exec('CREATE TABLE part (session_id TEXT, data TEXT)');
+  db.exec('CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)');
+  // part 引用 message（真实 schema 里有 ON DELETE CASCADE，孤儿检查也数它）
+  db.exec('CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT)');
+  db.exec('CREATE TABLE model_usage (session_id TEXT, data TEXT)');
+  db.exec('CREATE TABLE turn_usage (session_id TEXT, data TEXT)');
+  db.exec('CREATE TABLE tool_usage (session_id TEXT, data TEXT)');
+  db.exec('CREATE TABLE todo (session_id TEXT, data TEXT)');
+  db.exec('CREATE TABLE session_entry (session_id TEXT, data TEXT)');
+  db.exec('CREATE TABLE session_input (session_id TEXT, data TEXT)');
+  db.exec('CREATE TABLE session_target (session_id TEXT, data TEXT)');
+  db.exec('CREATE TABLE session_task_link (child_session_id TEXT, data TEXT)');
+  db.exec('CREATE TABLE input_history (session_id TEXT, data TEXT)');
   db.exec("INSERT INTO session VALUES ('sess_a', NULL, 'ZCode 的已删会话', '" + WS + "', 1, 2, 'interactive')");
   db.exec("INSERT INTO session VALUES ('sess_b', NULL, 'ZCode 的活跃会话', '" + WS + "', 1, 2, 'interactive')");
-  db.exec("INSERT INTO message VALUES ('sess_a', '" + 'x'.repeat(2048) + "')");
-  db.exec("INSERT INTO message VALUES ('sess_b', '" + 'y'.repeat(1024) + "')");
+  db.exec("INSERT INTO message VALUES ('msg_a', 'sess_a', '" + 'x'.repeat(2048) + "')");
+  db.exec("INSERT INTO message VALUES ('msg_b', 'sess_b', '" + 'y'.repeat(1024) + "')");
   db.close();
 
   const index = path.join(home, '.zcode', 'v2', 'tasks-index.sqlite');
@@ -308,8 +321,79 @@ test('反查不到时 Cursor 会话保持 UUID，不猜项目', async (t) => {
   assert.equal(tasks.body.tasks[0].workspaceOpaque, true);
 });
 
-test('/api/projects 并发读四个 app 时不互相踩临时副本', async (t) => {
+/* ── 跨工具行级清理：项目卡片编排的服务端前提 ─────────────── */
+
+test('项目横切给出的可清会话，逐 app 过 /api/tasks/purge 的四道闸', async (t) => {
   const f = await fixture(t);
+  seedZcode(f.home);          // ZCode：sess_a（deleted=1 可清）+ sess_b（active 不可清），同一 cwd
+
+  // Codex：同 cwd 的一条 archived 线程 —— 归并进同一项目，也能按行清
+  const codexUuid = '01ab0000-0000-0000-0000-000000000001';
+  const wsBody = `sessions/2026/10/01/rollout-2026-10-01T00-00-00-${codexUuid}.jsonl`;
+  await fs.mkdir(path.join(f.home, '.codex', 'sessions', '2026', '10', '01'), { recursive: true });
+  await fs.writeFile(path.join(f.home, '.codex', wsBody), '正文'.repeat(64));
+  const codexDb = new DatabaseSync(path.join(f.home, '.codex', 'state_5.sqlite'));
+  codexDb.exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT, name TEXT, cwd TEXT, rollout_path TEXT,
+    created_at INTEGER, updated_at INTEGER, archived INTEGER, archived_at INTEGER,
+    is_pinned INTEGER, tokens_used INTEGER, model TEXT, model_provider TEXT,
+    history_mode TEXT, thread_source TEXT, preview TEXT)`);
+  codexDb.prepare('INSERT INTO threads VALUES (?, ?, NULL, ?, ?, 1, 2, 1, 3, 0, 0, ?, ?, ?, ?, ?)')
+    .run(codexUuid, 'Codex 的归档会话', WS, path.join(f.home, '.codex', wsBody), 'gpt', 'openai', 'paginated', 'user', 'p');
+  codexDb.close();
+
+  // 1) 项目横切把两个工具的会话归并到同一项目，且各自带 reason
+  const proj = await f.get('/api/projects');
+  assert.equal(proj.status, 200);
+  const hit = proj.body.projects.find((p) => p.path === WS);
+  assert.ok(hit, '两工具同 cwd 应归并成一个项目');
+  const cleanable = hit.tasks.filter((x) => x.reason != null);
+  assert.deepEqual(cleanable.map((x) => x.appId).sort(), ['codex', 'zcode', 'zcode'],
+    '两个工具各贡献可清会话 —— 这就是项目卡片「按行清理」按钮的数据来源。' +
+    'ZCode 是两条：deleted 一条、active 但工作区目录不存在（wsMissing）一条');
+
+  // 2) 逐 app 批次真的能各自走完四道闸：dryRun 两个 app，互不干扰
+  const zcodeIds = cleanable.filter((x) => x.appId === 'zcode').map((x) => x.id);
+  const codexIds = cleanable.filter((x) => x.appId === 'codex').map((x) => x.id);
+  assert.equal(zcodeIds.length, 2);
+  assert.equal(codexIds.length, 1);
+
+  const [dz, dc] = await Promise.all([
+    f.post('/api/tasks/purge', { app: 'zcode', ids: zcodeIds, dryRun: true }),
+    f.post('/api/tasks/purge', { app: 'codex', ids: codexIds, dryRun: true }),
+  ]);
+  assert.equal(dz.status, 200, JSON.stringify(dz.body));
+  assert.equal(dc.status, 200, JSON.stringify(dc.body));
+  assert.ok(dz.body.counts, 'ZCode 空跑报逐表行数');
+  assert.ok(Array.isArray(dc.body.perDb), 'Codex 空跑报逐库逐表数组');
+  assert.ok(dz.body.counts.session >= 1);
+  assert.ok(dc.body.perDb.some((r) => r.count > 0));
+
+  // 3) 真删：逐批调用（编排由前端做），两边的行都消失、正文文件留下。
+  //    但这台机器可能正开着 ZCode/Codex —— 进程闸会正确拒绝（409）。
+  //    闸生效本身就是一次验证：跳过真删断言，不假装它跑过。
+  const pz = await f.post('/api/tasks/purge', { app: 'zcode', ids: zcodeIds, confirm: '清理' });
+  if (pz.status === 409) {
+    assert.match(pz.body.error, /正在运行/, '进程闸拒绝时必须说清是谁在跑');
+  } else {
+    assert.equal(pz.status, 200, JSON.stringify(pz.body));
+    assert.ok(pz.body.freed >= 0);
+    const afterZ = await f.get('/api/tasks?app=zcode');
+    assert.equal(afterZ.body.tasks.length, 0, '两条可清会话都已删除');
+  }
+  const pc = await f.post('/api/tasks/purge', { app: 'codex', ids: codexIds, confirm: '清理' });
+  if (pc.status === 409) {
+    assert.match(pc.body.error, /正在运行/);
+  } else {
+    assert.equal(pc.status, 200, JSON.stringify(pc.body));
+    assert.ok(pc.body.freed >= 0);
+    const afterC = await f.get('/api/tasks?app=codex');
+    assert.equal(afterC.body.tasks.filter((x) => x.state === 'archived').length, 0, '归档线程已清');
+    // 正文文件在磁盘上（Codex 的行级删除不碰文件 —— 那是文件线的活）
+    await fs.access(path.join(f.home, '.codex', wsBody));
+  }
+});
+
+test('/api/projects 并发读四个 app 时不互相踩临时副本', async (t) => {  const f = await fixture(t);
   const ide = f.cursorIde;
   const uuid = '99998888-7777-6666-5555-444433332222';
   await fs.mkdir(path.join(ide, 'User', 'workspaceStorage', uuid), { recursive: true });

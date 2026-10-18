@@ -459,17 +459,97 @@ function toggleProject(key) {
     .map((id) => `<button class="btn btn-ghost btn-sm" data-gotoapp="${esc(id)}" type="button">${
       esc((state.apps.find((a) => a.app === id) || {}).label || id)} 里查看</button>`).join('');
 
+  // 行级清理的候选：带 reason 的 ZCode/Codex 会话（库里真有行可删）。
+  // Claude 全部、Cursor 全部、残骸都不在此列 —— 它们没有"行"，各走各的线。
+  const rowPurgeable = p.tasks.filter((t) => t.reason != null && !t.residual &&
+    rowPurgeableLine(t.appId) === 'db');
+  const rowBytes = rowPurgeable.reduce((s, t) => s + (t.bytes || 0), 0);
+
   body.innerHTML = `
     <div class="proj-tasks">${rows}</div>
     <div class="proj-actions">
+      ${rowPurgeable.length
+        ? `<button class="btn btn-primary btn-sm" data-projrows="${esc(key)}" type="button">按行清理会话库（${
+            rowPurgeable.length} 条 · ${fmtBytes(rowBytes)}）</button>`
+        : ''}
       ${residual.length
         ? `<button class="btn btn-ghost btn-sm" data-projfiles="${esc(key)}" type="button">清掉 ${
             residual.length} 个残留文件（${fmtBytes(residual.reduce((s, t) => s + (t.bytes || 0), 0))}）</button>`
         : ''}
       ${perApp}
     </div>
-    <p class="proj-note">带状态的（已删除 / 已归档 / 残骸）说明界面上已经不用了；仍在用的不提供从这里清理的入口。` +
-      `会话正文在各工具的库里，按行清理要走对应工具的历史任务面板。</p>`;
+    <p class="proj-note">带状态的（已删除 / 已归档 / 残骸）说明界面上已经不用了。` +
+      `「按行清理」跨工具编排进一个确认流：进程探测、备份、事务删除、VACUUM 与自检` +
+      `照单工具同一套四道闸走，逐工具分批执行。</p>`;
+}
+
+/** 这个 app 的会话清理走哪条线：'db' = 库里有行可删，'files' = 正文即文件，null = 只读。 */
+function rowPurgeableLine(appId) {
+  const a = state.apps.find((x) => x.app === appId);
+  if (!a) return null;
+  if (a.writable === false) return null;
+  return a.history === 'claude-files' ? 'files' : 'db';
+}
+
+/**
+ * 把一个项目里各工具可按行清理的会话，编排进同一个任务抽屉。
+ *
+ * taskState.data 换成一个合成的跨 app 视图：tasks 来自多个工具、
+ * 按 app 分组挂在 batches 上。抽屉的文案、空跑、确认串全部复用 ——
+ * 只有 callPurge 知道要按 app 分批发请求。
+ */
+function pickProjectRows(key) {
+  const d = projects.data;
+  const p = d && d.projects.find((x) => x.key === key);
+  if (!p) return;
+
+  const picked = p.tasks.filter((t) => t.reason != null && !t.residual &&
+    rowPurgeableLine(t.appId) === 'db');
+  if (!picked.length) return;
+
+  // 按 app 分组，保留每个工具自己的 db 形状（ZCode 的 main/index、Codex 的 dbs/bodies）
+  const byApp = new Map();
+  for (const t of picked) {
+    if (!byApp.has(t.appId)) byApp.set(t.appId, []);
+    byApp.get(t.appId).push(t);
+  }
+
+  const label = p.path ? p.path.split('/').pop() || p.path : (p.label || '该项目');
+  taskState.data = {
+    // 合成视图的标记：callPurge 看到它就走多 app 分批；单工具路径不变
+    crossApp: true,
+    projectKey: key,
+    appId: [...byApp.keys()].join('+'),
+    appLabel: [...new Set(picked.map((t) => t.appLabel))].join('、'),
+    backupDir: null,       // 由每个 app 的 /api/tasks 返回自带
+    db: {},                // 逐 app 的库信息在抽屉文案里按 app 拼
+    batches: [...byApp.entries()].map(([appId, tasks]) => ({
+      appId,
+      appLabel: tasks[0].appLabel,
+      ids: tasks.map((t) => t.id),
+      count: tasks.length,
+      bytes: tasks.reduce((s, t) => s + (t.bytes || 0), 0),
+    })),
+    tasks: picked,
+    totals: {
+      count: picked.length,
+      bytes: picked.reduce((s, t) => s + (t.bytes || 0), 0),
+      rows: picked.reduce((s, t) => s + (t.rows || 0), 0),
+      byState: [],
+    },
+    app: { running: false, hits: [] },   // 逐 app 探测在 callPurge 内做；这里只影响按钮初态
+    readOnly: false,
+    fileBased: false,
+    projectName: label,
+  };
+  taskState.sel = new Set(picked.map((t) => t.id));
+
+  openTaskDrawer();
+  // 任务面板的 lede/warn 是按单工具写的；项目卡片借走时同步成编排的说法，
+  // 否则屏幕上还是"总览模式下不读会话库"那句旧话。
+  renderTasks();
+  // 抽屉的"运行中"判断读 taskState.data.app.running —— 合成视图先按未运行渲染，
+  // 真实探测结果由空跑/删除前的逐 app 检查给出并回填。
 }
 
 /** 把一个项目下的残骸会话映射成文件勾选，走文件清理那条线（废纸篓/彻底删除）。 */
@@ -1099,7 +1179,7 @@ document.addEventListener('click', async (e) => {
   const projHead = t.closest('.proj-head');
   if (projHead) { toggleProject(projHead.closest('[data-proj]').dataset.proj); return; }
 
-  // 项目内：跳到对应工具看它的会话；或把残骸勾上进文件清理
+  // 项目内：跳到对应工具看它的会话；或把残骸勾上进文件清理；或跨工具按行清理
   const gotoApp = t.closest('[data-gotoapp]');
   if (gotoApp) {
     const tab = els.appTabs.querySelector(`[data-app="${CSS.escape(gotoApp.dataset.gotoapp)}"]`);
@@ -1108,6 +1188,8 @@ document.addEventListener('click', async (e) => {
   }
   const projFiles = t.closest('[data-projfiles]');
   if (projFiles) { pickProjectResiduals(projFiles.dataset.projfiles); return; }
+  const projRows = t.closest('[data-projrows]');
+  if (projRows) { pickProjectRows(projRows.dataset.projrows); return; }
 
   // "这是什么 / 为什么在这里"的展开开关（跟展开文件列表是两回事）
   const more = t.closest('[data-more]');
@@ -1459,6 +1541,28 @@ function renderTasks() {
   const del = d.totals.byState.find((g) => g.state === 'deleted');
   const text = d.totals.bytes;
 
+  // 跨 app 合成视图：这一屏的任务面板被项目卡片借去展示编排批次，
+  // 说法与单工具不同 —— 它不是"某个工具的会话库"，是"这个项目在各工具里的残留"。
+  if (d.crossApp) {
+    tEls.lede.innerHTML =
+      `<b>${esc(d.projectName)}</b> 在 ${d.batches.length} 个工具里共 ` +
+      `<b>${d.totals.count}</b> 条可清理会话、<b>${fmtBytes(d.totals.bytes)}</b> 正文。` +
+      `仍被工具界面使用的不会出现在这里。`;
+    tEls.warn.hidden = false;
+    tEls.warn.className = 'app-warn is-ok';
+    tEls.warn.innerHTML = `${icon('box')}<div>跨工具清理按工具<b>逐个</b>执行：每个工具独立过` +
+      `进程探测 → 备份 → 事务删除 → VACUUM → 自检。哪个工具正开着，就只卡那一步，` +
+      `其余照常完成。</div>`;
+    tEls.dbBar.innerHTML = '';
+    tEls.comp.hidden = true;
+    renderTaskChips();
+    renderTaskList();
+    renderTaskFoot();
+    renderTaskQuick();
+    renderComposition();
+    return;
+  }
+
   // Codex 是两段式存储：库里只有索引和投影，正文在 sessions/ 的 rollout 文件里。
   // 那句话要是照抄 ZCode 的说法，就成了"158 MB 的库装着 581 MB 的正文"。
   tEls.lede.innerHTML = d.readOnly
@@ -1670,11 +1774,13 @@ function renderTaskFoot() {
   // 这个按钮永远可点 —— 它只是打开抽屉。空跑核对是只读的，应用开着也安全，
   // 拦住用户看清单没有任何好处。真正被拦的是抽屉里那个「删除」。
   const running = d?.app?.running;
-  tEls.purgeBtn.title = d?.fileBased
-    ? `把这 ${count} 个会话的正文文件交给文件清理：默认移入废纸篓`
-    : running
-      ? `${d?.appLabel || '应用'} 正在运行：可以先空跑核对，但要完全退出它才能删除`
-      : `清理这 ${count} 个任务；动手前会自动备份`;
+  tEls.purgeBtn.title = d?.crossApp
+    ? `跨 ${d.batches.length} 个工具按行清理这 ${count} 条会话：逐工具探测进程、备份、删除、自检`
+    : d?.fileBased
+      ? `把这 ${count} 个会话的正文文件交给文件清理：默认移入废纸篓`
+      : running
+        ? `${d?.appLabel || '应用'} 正在运行：可以先空跑核对，但要完全退出它才能删除`
+        : `清理这 ${count} 个任务；动手前会自动备份`;
 }
 
 /* ── 首屏的任务快捷项 ───────────────────────────────────── */
@@ -1795,29 +1901,39 @@ function openTaskDrawer() {
     ? `<div class="dstat"><span>会话</span><b>${count.toLocaleString()}</b></div>
        <div class="dstat"><span>库里的条目</span><b>${rows.toLocaleString()}</b></div>
        <div class="dstat"><span>正文文件合计</span><b>${fmtBytes(bytes)}</b></div>`
-    : `<div class="dstat"><span>任务</span><b>${count.toLocaleString()}</b></div>
-       <div class="dstat"><span>正文合计</span><b>${fmtBytes(bytes)}</b></div>
-       <div class="dstat"><span>含子会话</span><b>${children.toLocaleString()}</b></div>`;
+    : `<div class="dstat"><span>会话</span><b>${count.toLocaleString()}</b></div>
+       <div class="dstat"><span>涉及工具</span><b>${d.crossApp ? d.batches.length : 1}</b></div>
+       <div class="dstat"><span>正文合计</span><b>${fmtBytes(bytes)}</b></div>`;
 
   // 会写到哪几个库，由后端报的路径决定 —— 四个工具各不一样，前端不硬编码文件名
-  const dbFiles = (d.db.dbs || [d.db.main, d.db.index].filter(Boolean))
-    .map((x) => shortPath(x.path));
-  const dbsTxt = dbFiles.map((p) => `<code>${esc(p)}</code>`).join(' 和 ');
-  const backupTxt = `动手前会把库完整备份到 <code>${esc(shortPath(d.backupDir))}</code>。`;
-  tEls.note.innerHTML = d.app.running
-    ? `<b>${esc(who)} 仍在运行</b>，现在不能删除。请完全退出 ${esc(who)} 后重新打开本页。`
-    : `删除会把这些会话的行从 ${dbsTxt} 里彻底移除，` +
-      `随后 <code>VACUUM</code> 重建数据库把空间真正交还给磁盘。${backupTxt}` +
-      // Codex 的正文是磁盘上的 rollout 文件，行级删除碰不到它 —— 不说清楚，
-      // 用户会以为回收的数字偏小是工具没干活。
-      (d.db.bodies
-        ? `但 <b>Codex 的正文不在这些库里</b>：它存在 <code>sessions/</code> 的 rollout 文件里，` +
-          `这里只抹索引行。文件要等索引里再也没有它们，才会变成孤儿、归「文件清单」那条线清理。`
-        : `<b>正文合计只是下限</b> —— 实际回收通常更多，因为索引也会一起收缩。`);
+  if (d.crossApp) {
+    // 跨 app：逐工具说一句写哪里、备份到哪。库路径要等各 app 的 /api/tasks
+    // 才有 —— 合成视图里没有，就按工具名给原则，细节空跑时摊开。
+    tEls.note.innerHTML =
+      `这一批横跨 <b>${d.batches.length}</b> 个工具（${esc(d.batches.map((b) => b.appLabel).join('、'))}），` +
+      `将按工具<b>逐个</b>执行：每个工具独立过进程探测 → 备份 → 事务删除 → VACUUM → 自检，` +
+      `任何一个被拒绝（比如它还开着）就停在那里，已完成的工具不受影响。` +
+      `确认串只需要输一次。`;
+  } else {
+    const dbFiles = (d.db.dbs || [d.db.main, d.db.index].filter(Boolean))
+      .map((x) => shortPath(x.path));
+    const dbsTxt = dbFiles.map((p) => `<code>${esc(p)}</code>`).join(' 和 ');
+    const backupTxt = `动手前会把库完整备份到 <code>${esc(shortPath(d.backupDir))}</code>。`;
+    tEls.note.innerHTML = d.app.running
+      ? `<b>${esc(who)} 仍在运行</b>，现在不能删除。请完全退出 ${esc(who)} 后重新打开本页。`
+      : `删除会把这些会话的行从 ${dbsTxt} 里彻底移除，` +
+        `随后 <code>VACUUM</code> 重建数据库把空间真正交还给磁盘。${backupTxt}` +
+        // Codex 的正文是磁盘上的 rollout 文件，行级删除碰不到它 —— 不说清楚，
+        // 用户会以为回收的数字偏小是工具没干活。
+        (d.db.bodies
+          ? `但 <b>Codex 的正文不在这些库里</b>：它存在 <code>sessions/</code> 的 rollout 文件里，` +
+            `这里只抹索引行。文件要等索引里再也没有它们，才会变成孤儿、归「文件清单」那条线清理。`
+          : `<b>正文合计只是下限</b> —— 实际回收通常更多，因为索引也会一起收缩。`);
+  }
 
   const sorted = picked.slice().sort((a, b) => b.bytes - a.bytes);
   tEls.listD.innerHTML = sorted.slice(0, 200).map((t) =>
-    `<li title="${esc(t.title)}"><span>${esc(t.title)}</span><span>${fmtBytes(t.bytes)}</span></li>`).join('')
+    `<li title="${esc(t.title)}"><span>${esc(t.appLabel)} · ${esc(t.title)}</span><span>${fmtBytes(t.bytes)}</span></li>`).join('')
     + (sorted.length > 200 ? `<li><span>…还有 ${(sorted.length - 200).toLocaleString()} 个</span><span></span></li>` : '');
   tEls.countD.textContent = `${count.toLocaleString()} 个`;
 
@@ -1826,7 +1942,8 @@ function openTaskDrawer() {
   tEls.confirmBox.hidden = false;
   tEls.msg.textContent = '';
   tEls.msg.className = 'drawer-msg';
-  tEls.go.disabled = !!d.app.running;
+  tEls.go.disabled = false;
+  tEls.go.textContent = '删除';
   tEls.dryBtn.disabled = false;
 
   tEls.scrim.hidden = false;
@@ -1852,8 +1969,18 @@ function checkLine(data) {
   return data.integrity.map((r) => `${r.name} ${r.integrity}/违规 ${r.fkViolations}`).join('，') + '。';
 }
 
+/**
+ * 执行删除（或空跑）。单工具走一条请求；跨 app 合成视图按批次逐个发 ——
+ * 每批独立过服务端的四道闸（进程探测 → 备份 → 事务+外键 → VACUUM+自检），
+ * 任一批被拒就停下：后面的工具还没动，人看到的是"走到哪、卡在哪"。
+ */
 async function callPurge(dryRun) {
-  const ids = [...taskState.sel];
+  const d = taskState.data;
+  const batches = d.crossApp
+    ? d.batches
+    : [{ appId: state.appId, appLabel: d.appLabel, ids: [...taskState.sel] }];
+  const idsOf = (b) => d.crossApp ? b.ids : [...taskState.sel];
+
   tEls.go.disabled = true;
   tEls.dryBtn.disabled = true;
   tEls.msg.className = 'drawer-msg';
@@ -1861,54 +1988,109 @@ async function callPurge(dryRun) {
   if (!dryRun) tEls.go.textContent = '处理中…';
 
   try {
-    const res = await fetch('/api/tasks/purge', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(dryRun
-        ? { app: state.appId, ids, dryRun: true }
-        : { app: state.appId, ids, confirm: tEls.word.value }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.statusText);
-
-    if (dryRun) {
-      // 空跑：把实际会删掉的行摊开，这是"明明白白"的最后一道。
-      // ZCode 报的是 {表: 行数}，Codex 跨好几个库、报的是逐库逐表数组 —— 两种都要能读。
-      const rows = Array.isArray(data.perDb)
-        ? data.perDb.map((r) => [`${r.table}（${r.name}）`, r.count ?? r.deleted])
-        : Object.entries(data.counts || {}).filter(([, n]) => n > 0)
-            .map(([k, n]) => [ROW_LABEL[k] || k, n]);
-      const checks = Array.isArray(data.perDb)
-        ? [[`${fmtBytes(data.bodyBytes)} 的正文文件`, '不在这次删除里 —— 它们归「文件清单」那条线清理，那边有保护检查和废纸篓']]
-        : [['孤儿行（应为 0）', data.orphans.message + data.orphans.part]];
-      tEls.dryList.innerHTML = rows.map(([k, n]) =>
-        `<li><span>${esc(k)}</span><span>${n.toLocaleString()}</span></li>`).join('')
-        + checks.map(([k, v]) => `<li><span>${esc(k)}</span><span>${esc(String(v))}</span></li>`).join('');
-      tEls.dryWrap.hidden = false;
-      // ZCode 的空跑额外看孤儿行；Codex 没有外键级联可依赖，只能靠删除后的 foreign_key_check
-      const orphanN = data.orphans ? data.orphans.message + data.orphans.part : 0;
-      tEls.msg.className = orphanN === 0 ? 'drawer-msg is-ok' : 'drawer-msg is-err';
-      tEls.msg.textContent = '空跑完成，数据库没有任何改动。确认无误后输入「清理」再删除。';
-    } else {
-      const freed = fmtBytes(data.freed);
-      tEls.msg.className = 'drawer-msg is-ok';
-      tEls.msg.textContent =
-        `完成。数据库 ${fmtBytes(data.before.total)} → ${fmtBytes(data.after.total)}，回收 ${freed}。` +
-        checkLine(data) + `备份在 ${data.backup}` +
-        (data.bodyBytes ? ` 另有 ${fmtBytes(data.bodyBytes)} 正文文件留在磁盘上，请到「文件清单」里清理。` : '');
-      await loadTasks(true);
-      await load(true);          // db.sqlite 变小了，文件清单也要重算
-      renderTasks();
-      setTimeout(closeTaskDrawer, 2500);
+    const results = [];
+    for (const b of batches) {
+      const res = await fetch('/api/tasks/purge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dryRun
+          ? { app: b.appId, ids: idsOf(b), dryRun: true }
+          : { app: b.appId, ids: idsOf(b), confirm: tEls.word.value }),
+      });
+      const data = await res.json();
+      // 任一批被拒就停：后面的工具还没动。报错里带上工具名，人知道卡在谁那里。
+      if (!res.ok) {
+        if (results.length) {
+          results.push({ appLabel: b.appLabel, ok: false, error: data.error || res.statusText });
+          throw new CrossAppError(results, b.appLabel);
+        }
+        throw new Error(data.error || res.statusText);
+      }
+      results.push({ appLabel: b.appLabel, appId: b.appId, ok: true, data });
+      // 已完成一批就更新进度，几十秒的等待里让人看见走到哪了
+      tEls.msg.textContent = dryRun
+        ? `空跑核对中… ${results.filter(r => r.ok).length}/${batches.length}（${b.appLabel} 完成）`
+        : `处理中… ${results.filter(r => r.ok).length}/${batches.length}（${b.appLabel} 完成）`;
     }
+
+    if (dryRun) renderCrossDryRun(results);
+    else await finishCrossPurge(results);
   } catch (err) {
     tEls.msg.className = 'drawer-msg is-err';
-    tEls.msg.textContent = err.message;
+    if (err instanceof CrossAppError) {
+      const done = err.results.filter((r) => r.ok);
+      tEls.msg.innerHTML = err.dryRun
+        ? `空跑在 <b>${esc(err.stoppedAt)}</b> 处停下：${esc(err.lastError)}<br>` +
+          (done.length ? `此前已核对：${done.map((r) => esc(r.appLabel)).join('、')}（无任何改动）。` : '')
+        : `<b>${esc(err.stoppedAt)} 被拒绝</b>：${esc(err.lastError)}<br>` +
+          (done.length
+            ? `已完成的：${done.map((r) => esc(r.appLabel)).join('、')}（各自备份、各自自检）。` +
+              `刷新后再来，已完成的那几个不会再出现在候选里。`
+            : '第一个工具就被拒绝，没有任何改动。');
+    } else {
+      tEls.msg.textContent = err.message;
+    }
   } finally {
-    tEls.go.disabled = !!taskState.data?.app?.running;
+    tEls.go.disabled = false;
     tEls.dryBtn.disabled = false;
     tEls.go.textContent = '删除';
   }
+}
+
+/** 跨 app 批处理的中途失败：带着已完成的部分与卡住的位置抛出。 */
+class CrossAppError extends Error {
+  constructor(results, stoppedAt) {
+    super(`在 ${stoppedAt} 处被拒`);
+    this.results = results;
+    this.stoppedAt = stoppedAt;
+    this.lastError = results[results.length - 1]?.error || '';
+    this.dryRun = false;
+  }
+}
+
+/** 跨 app 空跑：逐工具摊开各自会删的行，与单工具同一版面。 */
+function renderCrossDryRun(results) {
+  let html = '';
+  let totalRows = 0;
+  for (const r of results) {
+    const { data } = r;
+    const rows = Array.isArray(data.perDb)
+      ? data.perDb.map((x) => [`${x.table}（${x.name}）`, x.count ?? x.deleted])
+      : Object.entries(data.counts || {}).filter(([, n]) => n > 0)
+          .map(([k, n]) => [ROW_LABEL[k] || k, n]);
+    const n = rows.reduce((s, [, c]) => s + c, 0);
+    totalRows += n;
+    html += `<li class="dry-head"><span>${esc(r.appLabel)}：${n.toLocaleString()} 行</span><span></span></li>`
+      + rows.map(([k, c]) => `<li><span>　${esc(k)}</span><span>${c.toLocaleString()}</span></li>`).join('');
+  }
+  tEls.dryList.innerHTML = html;
+  tEls.dryWrap.hidden = false;
+  tEls.msg.className = 'drawer-msg is-ok';
+  tEls.msg.textContent = `空跑完成：${results.length} 个工具共 ${totalRows.toLocaleString()} 行，数据库没有任何改动。确认无误后输入「清理」再删除。`;
+}
+
+/** 跨 app 删除完成：逐工具汇报回收量与完整性，然后刷新两边的视图。 */
+async function finishCrossPurge(results) {
+  const perApp = results.map((r) => {
+    const { data } = r;
+    return `<li><span>${esc(r.appLabel)}</span><span>${
+      fmtBytes(data.before.total)} → ${fmtBytes(data.after.total)}，回收 ${fmtBytes(data.freed)}</span></li>`;
+  }).join('');
+  const totalFreed = results.reduce((s, r) => s + (r.data.freed || 0), 0);
+  tEls.msg.className = 'drawer-msg is-ok';
+  tEls.msg.innerHTML =
+    `完成，回收 <b>${fmtBytes(totalFreed)}</b>。<ul class="cross-result">${perApp}</ul>` +
+    `每个工具各自备份、各自过完整性检查。`;
+  await loadTasks(true);
+  await load(true);          // 库变小了，文件清单也要重算
+  // 项目横切的数据也过时了：作废缓存，下次进总览重算
+  projects.data = null;
+  projects.at = 0;
+  summary.data = null;
+  summary.at = 0;
+  if (state.appId === ALL) renderGlobal();
+  renderTasks();
+  setTimeout(closeTaskDrawer, 3000);
 }
 
 /* 任务面板事件 */
