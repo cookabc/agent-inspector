@@ -308,6 +308,47 @@ test('反查不到时 Cursor 会话保持 UUID，不猜项目', async (t) => {
   assert.equal(tasks.body.tasks[0].workspaceOpaque, true);
 });
 
+test('/api/projects 并发读四个 app 时不互相踩临时副本', async (t) => {
+  const f = await fixture(t);
+  const ide = f.cursorIde;
+  const uuid = '99998888-7777-6666-5555-444433332222';
+  await fs.mkdir(path.join(ide, 'User', 'workspaceStorage', uuid), { recursive: true });
+  await fs.writeFile(path.join(ide, 'User', 'workspaceStorage', uuid, 'workspace.json'),
+    JSON.stringify({ folder: 'file://' + WS }));
+
+  // WAL 模式的库（带 -wal/-shm）打不开只读时会走 copyAside 那条路 ——
+  // 四个 worker 并发时，各自的临时目录前缀必须不同，否则会互相覆盖/删除。
+  const dbPath = path.join(ide, 'User', 'globalStorage', 'state.vscdb');
+  const db = new DatabaseSync(dbPath);
+  db.exec('PRAGMA journal_mode=WAL');
+  db.exec('CREATE TABLE composerHeaders (composerId TEXT, workspaceId TEXT, createdAt INTEGER, lastUpdatedAt INTEGER, isArchived INTEGER, isSubagent INTEGER, recency INTEGER)');
+  db.exec('CREATE TABLE cursorDiskKV (key TEXT, value BLOB)');
+  const cid = 'dddd4444-5555-6666-7777-888899990000';
+  db.prepare('INSERT INTO composerHeaders VALUES (?, ?, 1, 2, 0, 0, 3)').run(cid, uuid);
+  db.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)').run(`bubbleId:${cid}:b1`, '正文');
+  db.close();
+
+  seedZcode(f.home);
+
+  // 同时打两次：第一次读四个 app，第二次撞缓存；再并发打 summary。
+  // 只要任何一个 worker 删了别人的副本，这里就会出问题（读不到会话或报错）。
+  const [p1, p2, s1] = await Promise.all([
+    f.get('/api/projects'),
+    f.get('/api/projects'),
+    f.get('/api/summary'),
+  ]);
+  assert.equal(p1.status, 200, JSON.stringify(p1.body));
+  assert.equal(p2.status, 200, JSON.stringify(p2.body));
+  assert.equal(s1.status, 200, JSON.stringify(s1.body));
+
+  const hit = p1.body.projects.find((p) => p.path === WS);
+  assert.ok(hit, 'Cursor 的会话要能在并发下读到');
+  assert.deepEqual(hit.apps.map((a) => a.appId).sort(), ['cursor', 'zcode']);
+  // 两次结果必须一致 —— 副本被抽走会导致其中一次少数据
+  assert.equal(p1.body.totals.sessions, p2.body.totals.sessions);
+  assert.equal(p1.body.totals.bytes, p2.body.totals.bytes);
+});
+
 test('全域删除边界：未知 app 与空 app 仍是客户端错误', async (t) => {
   const f = await fixture(t);
   seedZcode(f.home);

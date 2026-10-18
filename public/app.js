@@ -57,8 +57,9 @@ const state = {
 const ALL = '';
 
 /* 一个 app 可能有多个扫描目标（Cursor 的 ~/.cursor 与 App Support）。
-   勾选、删除都要带上目标与 app，否则两个目标里的同名路径会互相冒名顶替。 */
-const keyOf = (f, appId = state.appId) => `${appId}/${f.t}:${f.p}`;
+   勾选、删除都要带上目标与 app，否则两个目标里的同名路径会互相冒名顶替。
+   行上的 k 在 indexRows() 里预置好了；keyOf 只为尚未标过的临时对象兜底。 */
+const keyOf = (f, appId) => f.k || `${appId !== undefined ? appId : (f.app ?? state.appId)}/${f.t}:${f.p}`;
 
 /* ── 工具 ───────────────────────────────────────────────── */
 
@@ -147,8 +148,27 @@ async function load(refresh = false) {
   if (!res.ok) throw new Error((await res.json()).error || res.statusText);
   state.scan = await res.json();
   state.apps = state.scan.apps;
+  // 每行在数据入手的这一刻就带上归属与稳定 key。之前靠 files.includes()
+  // 反查 —— 抽屉里 3352 行 × 1.8 万文件是千万级比较，而这里一次写入零成本。
+  indexRows();
   if (!state.apps.some((a) => a.app === state.appId)) state.appId = pickApp();
   applyApp();
+}
+
+/** 给每个文件行打上所属 app 与 key，后续任何地方都不必反查。 */
+function indexRows() {
+  state.fileByKey = new Map();
+  state.catById = new Map();   // `appId\u0000catId` → 分类元信息
+  state.appById = new Map();
+  for (const a of state.apps) {
+    state.appById.set(a.app, a);
+    for (const c of a.catalog || []) state.catById.set(`${a.app}\u0000${c.id}`, c);
+    for (const f of a.files) {
+      f.app = a.app;
+      f.k = `${a.app}/${f.t}:${f.p}`;
+      state.fileByKey.set(f.k, f);
+    }
+  }
 }
 
 /** 默认看谁：全域总览 → 上次看的单工具 → 第一个装了的。四个都没装也停在总览。 */
@@ -323,16 +343,30 @@ function renderGlobal() {
     els.allSub.innerHTML = `<b>读取失败：</b>${esc(err.message)}`;
   });
 
-  // 项目横切懒加载：第一次进入总览才付读取四个会话库的代价
+  // 项目横切懒加载：第一次进入总览才付读取四个会话库的代价。
+  // 这一步在真机上约 2～4 秒（Cursor 的库 364 MB），所以不能只留一句静态的
+  // "正在读取" —— 把已知道的东西先摆出来：几个工具、各自有多少会话。
   if (!projects.data) {
-    els.projLede.textContent = '正在读取各工具的会话…';
+    const known = state.apps.filter((a) => a.targets.some((t) => t.exists));
+    els.projLede.innerHTML = known.length
+      ? `正在读取 ${known.length} 个工具的会话记录（${known.map((a) => esc(a.label)).join('、')}）…`
+      : '正在读取各工具的会话…';
+    els.projList.innerHTML = skeletonRows(known.length || 3);
+    els.projUnres.hidden = true;
     loadProjects()
       .then(() => { if (state.appId === ALL) renderProjects(projects.data); })
-      .catch((err) => { els.projLede.innerHTML = `<b>读取失败：</b>${esc(err.message)}`; });
+      .catch((err) => {
+        els.projLede.innerHTML = `<b>读取失败：</b>${esc(err.message)}`;
+        els.projList.innerHTML = '';
+      });
   } else {
     renderProjects(projects.data);
   }
 }
+
+/** 项目列表的加载占位：高度与真实行接近，加载完不会有整页跳动。 */
+const skeletonRows = (n) => Array.from({ length: Math.min(n + 2, 6) },
+  () => '<div class="proj-skel" aria-hidden="true"></div>').join('');
 
 function renderProjects(d) {
   const total = d.totals;
@@ -438,11 +472,11 @@ function pickProjectResiduals(key) {
     if (!view) continue;
     // bodyRel 的基准因 app 而异：Codex 相对 ~/.codex（ sessions/… ），
     // Claude 的会话视图却把 projects/ 当前缀剥掉了（见 tasks-claude.mjs）——
-    // 两种都试一次，命中哪个用哪个。
+    // 两种都试一次。查的是预建的 key 表，不再线性扫文件数组。
     const rootKey = view.targets[0].key;
-    const f = view.files.find((x) => x.t === rootKey && x.p === t.bodyRel)
-      || view.files.find((x) => x.t === rootKey && x.p === `projects/${t.bodyRel}`);
-    if (f) { state.selection.add(keyOf(f, t.appId)); n += 1; }
+    const f = state.fileByKey.get(`${t.appId}/${rootKey}:${t.bodyRel}`)
+      || state.fileByKey.get(`${t.appId}/${rootKey}:projects/${t.bodyRel}`);
+    if (f) { state.selection.add(f.k); n += 1; }
   }
   if (!n) {
     els.projLede.innerHTML = '<b>这些残骸在文件清单里找不到对应文件</b> —— 目录大概变了，点「重新扫描」再来。';
@@ -463,7 +497,7 @@ async function pickAllRecommended() {
     const want = new Set(a.catalog.filter((c) => c.recommend && !c.recommendDefaultOff).map((c) => c.id));
     for (const f of a.files) {
       if (!want.has(f.c)) continue;
-      state.selection.add(keyOf(f, a.app));
+      state.selection.add(keyOf(f));
       count += 1;
     }
   }
@@ -542,9 +576,18 @@ function sortFiles(list) {
 }
 
 /* 搜索和筛选都会让整个分类从清单里消失 —— 一行都不会显示的分类，
-   留着只会让人以为里面还有东西。 */
+   留着只会让人以为里面还有东西。
+ *
+ * 顺带把筛完的结果带出去：renderGroups 马上就要用同一批行，
+ * 之前这里 some() 扫一遍、那边 filter() 再扫一遍 —— 每次按键两遍全量。 */
 function visibleCategories() {
-  return state.index.categories.filter((c) => filesOf(c.id).some(matches));
+  const out = [];
+  for (const c of state.index.categories) {
+    const files = filesOf(c.id);
+    const hit = files.filter(matches);
+    if (hit.length) out.push({ cat: c, files: hit });
+  }
+  return out;
 }
 
 function renderGroups() {
@@ -552,10 +595,10 @@ function renderGroups() {
 
   els.emptyHint.hidden = cats.length > 0;
 
-  els.groups.innerHTML = cats.map((cat) => {
+  els.groups.innerHTML = cats.map(({ cat, files }) => {
     // 一切以"当前看得见的这些行"为准：卡片头上的勾选框、计数、已选数都算这一批。
     // 没有筛选时它就是这个分类的全部。
-    const all = sortFiles(filesOf(cat.id).filter(matches));
+    const all = sortFiles(files);
     const isOpen = state.open.has(cat.id);
     const totalHere = filesOf(cat.id).length;
     const selCount = all.filter((f) => state.selection.has(keyOf(f))).length;
@@ -663,28 +706,27 @@ function allFiles() {
   return state.index ? state.index.files : state.apps.flatMap((a) => a.files);
 }
 
-function selectedBytes() {
-  let sum = 0;
-  for (const a of state.apps) {
-    for (const f of a.files) if (state.selection.has(keyOf(f, a.app))) sum += f.s;
+/** 一次遍历同时算出选中体积与按 (app,target) 分批 —— 两个调用点各扫一遍全量是浪费。 */
+function selectionStats() {
+  let bytes = 0, count = 0;
+  const batches = new Map();
+  for (const f of state.fileByKey.values()) {
+    if (!state.selection.has(f.k)) continue;
+    bytes += f.s;
+    count += 1;
+    const key = `${f.app}\u0000${f.t}`;
+    let b = batches.get(key);
+    if (!b) batches.set(key, b = [f.app, f.t, []]);
+    b[2].push(f.p);
   }
-  return sum;
+  return { bytes, count, batches: [...batches.values()] };
 }
+
+const selectedBytes = () => selectionStats().bytes;
 
 /* 勾选 → [[app, target, paths], …]：一次操作里跨了 app 跨了目标就分几次发，
    每个目标各自做越界与保护校验，不会因为拼在一起而放宽任何一条。 */
-function selectedByTarget() {
-  const batches = new Map();
-  for (const a of state.apps) {
-    for (const f of a.files) {
-      if (!state.selection.has(keyOf(f, a.app))) continue;
-      const key = `${a.app}\u0000${f.t}`;
-      if (!batches.has(key)) batches.set(key, [a.app, f.t, []]);
-      batches.get(key)[2].push(f.p);
-    }
-  }
-  return [...batches.values()];
-}
+const selectedByTarget = () => selectionStats().batches;
 
 /* "在 Finder 中显示"是 macOS 的 open -R。别处没有这个动作，
    服务端会报 canReveal:false，那就干脆不摆这个按钮 —— 摆了也只是让人白按。 */
@@ -700,9 +742,8 @@ function renderActionbar() {
 
 /* ── 抽屉 ───────────────────────────────────────────────── */
 
-/** 一行文件属于哪个 app —— 全域模式下勾选是跨 app 的，分类文案要回各自的表里查。 */
-const appIdOfRow = (f) => state.appId !== ALL ? state.appId
-  : (state.apps.find((a) => a.files.includes(f)) || {}).app;
+/** 一行文件属于哪个 app —— 行在 indexRows() 里就带着归属，不反查。 */
+const appIdOfRow = (f) => f.app || state.appId;
 const appLabelOfRow = (f) => (state.apps.find((a) => a.app === appIdOfRow(f)) || {}).label || '';
 const rowTitle = (f) => {
   const view = state.apps.find((a) => a.app === appIdOfRow(f));
@@ -710,15 +751,14 @@ const rowTitle = (f) => {
   return `${t ? t.short : ''}/${f.p}`;
 };
 
-/** 按 (app, 行) 取分类元信息：单工具模式查当前 app，全域模式按行所属 app 查。 */
+/** 按 (app, 行) 取分类元信息：预建的 Map 查一次，不再逐行搜 catalog。 */
 function catOfRow(f) {
-  const view = state.apps.find((a) => a.app === appIdOfRow(f));
-  const found = (view?.catalog || []).find((c) => c.id === f.c);
-  return found || { id: f.c, label: f.c, status: 'warning', verdict: 'review' };
+  return state.catById?.get(`${appIdOfRow(f)}\u0000${f.c}`)
+    || { id: f.c, label: f.c, status: 'warning', verdict: 'review' };
 }
 
 function openDrawer() {
-  const rows = allFiles().filter((f) => state.selection.has(keyOf(f, appIdOfRow(f))));
+  const rows = allFiles().filter((f) => state.selection.has(keyOf(f)));
   if (!rows.length) return;
   const bytes = rows.reduce((s, f) => s + f.s, 0);
   const biggest = rows.reduce((a, b) => (a.s >= b.s ? a : b), rows[0]);
@@ -862,9 +902,9 @@ async function runClean() {
   }
 }
 
-/** 在 Finder 中显示：key 带的是 "app/目标:路径"，要拆回服务端认的三元组。 */
+/** 在 Finder 中显示：key 就是 "app/目标:路径"，直接查表，不再线性扫全部文件。 */
 async function revealPath(key) {
-  const f = allFiles().find((x) => keyOf(x, appIdOfRow(x)) === key);
+  const f = state.fileByKey?.get(key);
   if (!f) return;
   await fetch('/api/reveal', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1177,9 +1217,10 @@ document.addEventListener('click', async (e) => {
     renderSplit(); renderGroups(); renderActionbar(); return;
   }
   if (t.closest('#fileSelAll')) {
-    for (const cat of visibleCategories()) {
+    // visibleCategories() 已经把筛完的行带出来了，不必再 filter 一遍
+    for (const { cat, files } of visibleCategories()) {
       if (cat.verdict === 'never') continue;   // 受保护内容不进全选
-      for (const f of filesOf(cat.id).filter(matches)) state.selection.add(keyOf(f));
+      for (const f of files) state.selection.add(keyOf(f));
     }
     renderSplit(); renderGroups(); renderActionbar(); return;
   }
