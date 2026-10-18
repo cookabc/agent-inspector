@@ -183,6 +183,9 @@ function applyApp() {
   }
 
   try { localStorage.setItem(APP_KEY, state.appId); } catch {}
+  // 导航那四条指向单工具的区块（总览/清理/文件/任务）。全域模式下它们
+  // 全部隐藏 —— 留着只会让人点进一片空白。
+  document.body.dataset.mode = state.appId === ALL ? 'all' : 'single';
   if (state.index) {
     els.rootPath.textContent = state.index.targets.filter((t) => t.exists).map((t) => t.short).join(' + ')
       || `${state.index.label}：这台机器上没有`;
@@ -269,21 +272,53 @@ function renderGlobal() {
   loadSummary().then((s) => {
     // 换 tab 换得快了，晚到的旧响应要丢掉
     if (state.appId !== ALL) return;
+
+    // 四个工具一个都没落盘：这屏不该显示 0 B 和一堆空条，而要直说"没有可审计的东西"。
+    if (!s.apps.some((a) => a.installed)) {
+      els.allBytes.textContent = '—';
+      els.allSub.innerHTML =
+        '这台机器上没找到任何一个 coding agent 的数据目录。' +
+        '装过其中一个之后刷新，它们的落盘位置会出现在上面的标签里。';
+      els.allRecFigure.textContent = '—';
+      els.allRecNote.textContent = '';
+      els.allRecBtn.disabled = true;
+      els.allApps.innerHTML = s.apps.map((a) => `
+        <div class="all-app is-empty">
+          <span class="all-app-name">${esc(a.label)}</span>
+          <span class="all-app-bar"><i style="width:0"></i></span>
+          <span class="all-app-bytes">未安装</span>
+          <span class="all-app-rec"></span>
+        </div>`).join('');
+      els.projLede.textContent = '没有数据目录可读取，因此没有可归并的会话。';
+      els.projList.innerHTML = '';
+      els.projUnres.hidden = true;
+      return;
+    }
+
+    els.allRecBtn.disabled = false;
     els.allBytes.textContent = fmtBytes(s.grand.bytes);
     els.allSub.innerHTML =
       `${s.apps.length} 个工具共 <b>${s.grand.files.toLocaleString()}</b> 个文件、` +
       `<b>${s.grand.dirs.toLocaleString()}</b> 个目录。`;
     els.allRecFigure.textContent = fmtBytes(s.reclaimable);
-    els.allRecNote.innerHTML =
-      `另有 <b>${fmtBytes(s.reclaimableExtra)}</b> 可清但默认没勾` +
-      `（体积大或你可能正用着，切到具体工具里放回来）。`;
-    els.allApps.innerHTML = s.apps.map((a) => `
+    els.allRecNote.innerHTML = s.reclaimableExtra > 0
+      ? `另有 <b>${fmtBytes(s.reclaimableExtra)}</b> 可清但默认没勾` +
+        `（体积大或你可能正用着，切到具体工具里放回来）。`
+      : '';
+    els.allApps.innerHTML = s.apps.map((a) => {
+      // 占比极小（Claude 的 28 MB 对 5 GB 就是 0.5%）时，纯按比例画会短到看不见。
+      // 给一个 1.2% 的下限让"有这么一点"可被看见，但真实数值始终写在右边 ——
+      // 条是示意，数字是事实。
+      const pct = s.grand.bytes ? (a.bytes / s.grand.bytes) * 100 : 0;
+      const width = a.installed && a.bytes > 0 ? Math.max(1.2, pct) : 0;
+      return `
       <div class="all-app${a.installed ? '' : ' is-empty'}">
         <span class="all-app-name">${esc(a.label)}</span>
-        <span class="all-app-bar"><i style="width:${s.grand.bytes ? Math.max(1, (a.bytes / s.grand.bytes) * 100) : 0}%"></i></span>
+        <span class="all-app-bar"><i style="width:${width.toFixed(2)}%"></i></span>
         <span class="all-app-bytes">${a.installed ? fmtBytes(a.bytes) : '未安装'}</span>
         <span class="all-app-rec">${a.reclaimable ? '可清 ' + fmtBytes(a.reclaimable) : ''}</span>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }).catch((err) => {
     els.allSub.innerHTML = `<b>读取失败：</b>${esc(err.message)}`;
   });
@@ -301,19 +336,29 @@ function renderGlobal() {
 
 function renderProjects(d) {
   const total = d.totals;
+  // 一条会话都没读到：说清是"没有历史"而不是"归并失败"，这两件事该分开。
+  if (!d.projects.length && !d.unresolvable.length) {
+    els.projLede.innerHTML = '没有读到任何会话。这些工具是装过的，但里面还没有可归并的历史记录。';
+    els.projList.innerHTML = '';
+    els.projUnres.hidden = true;
+    return;
+  }
   els.projLede.innerHTML =
     `<b>${total.projects}</b> 个项目、<b>${total.sessions.toLocaleString()}</b> 条会话，` +
     `正文合计 <b>${fmtBytes(total.bytes)}</b>。同一项目在多个工具里的残留归在一起 —— ` +
     `点一行展开看是哪些工具、各留了多少。`;
   if (!d.projects.length) {
-    els.projList.innerHTML = '<p class="empty">没有读到可归属的会话。</p>';
+    els.projList.innerHTML = '<p class="empty">没有能按项目归并的会话 —— 它们都缺工作区信息，见下面那一段。</p>';
   } else {
     els.projList.innerHTML = d.projects.map((p) => `
       <div class="proj" data-proj="${esc(p.key)}">
         <button class="proj-head" type="button" aria-expanded="false">
           <span class="proj-path" title="${esc(p.path || p.label)}">${esc(p.path || p.label)}</span>
           <span class="proj-apps">${
-            p.apps.map((a) => `<i title="${esc(a.appLabel)}：${a.sessions} 条会话">${esc(a.appId)} ${a.sessions}</i>`).join('')
+            // 用 app 的显示名而不是内部 id：这一行读起来是"ZCode 23 · Codex 5"，
+            // 和页面其它地方对得上。
+            p.apps.map((a) => `<i title="${esc(a.appLabel)}：${a.sessions} 条会话">${
+              esc(a.appLabel)} ${a.sessions}</i>`).join('')
           }</span>
           <span class="proj-bytes">${fmtBytes(p.bytes)}</span>
           <span class="proj-caret" aria-hidden="true"></span>
@@ -681,19 +726,24 @@ function openDrawer() {
   els.drawerStats.innerHTML = `
     <div class="dstat"><span>条目</span><b>${rows.length.toLocaleString()}</b></div>
     <div class="dstat"><span>合计</span><b>${fmtBytes(bytes)}</b></div>
-    <div class="dstat"><span>最大一项</span><b title="${esc(rowTitle(biggest))}">${fmtBytes(biggest.s)}</b></div>`;
+    <div class="dstat"><span>最大一项</span><b title="${esc(
+      (state.appId === ALL ? appLabelOfRow(biggest) + ' · ' : '') + rowTitle(biggest))}">${fmtBytes(biggest.s)}</b></div>`;
 
   // 这批里都是些什么 —— 按分类摊开，别只给一个总数
+  // 跨 app 时同名分类（各工具都有一类"缓存"）是不同的元信息对象，
+  // 按对象 identity 求 key 会把同一类拆成好几项。按分类 id 合并。
   const mix = new Map();
   for (const f of rows) {
     const c = catOfRow(f);
-    mix.set(c, (mix.get(c) || 0) + f.s);
+    const hit = mix.get(c.id);
+    if (hit) hit.bytes += f.s;
+    else mix.set(c.id, { cat: c, bytes: f.s });
   }
-  const mixSorted = [...mix.entries()].sort((a, b) => b[1] - a[1]);
+  const mixSorted = [...mix.values()].sort((a, b) => b.bytes - a.bytes);
   const head = mixSorted.slice(0, 5);
-  els.drawerMix.innerHTML = '包含 ' + head.map(([c, s]) =>
+  els.drawerMix.innerHTML = '包含 ' + head.map(({ cat: c, bytes }) =>
     `<span class="mix-item ${STATUS_CLASS[c.status]}">
-       <span class="swatch"></span>${esc(c.label)} <em>${fmtBytes(s)}</em>
+       <span class="swatch"></span>${esc(c.label)} <em>${fmtBytes(bytes)}</em>
      </span>`).join('')
     + (mixSorted.length > head.length
         ? `<span>…共 ${mixSorted.length} 类</span>` : '');
@@ -709,7 +759,11 @@ function openDrawer() {
       <span class="dl-path"><span class="row-dir">${esc(appTag + dir)}</span><b>${esc(name)}</b></span>
       <span>${fmtBytes(f.s)}</span></li>`;
   }).join('')
-    + (rows.length > 300 ? `<li><span>…还有 ${(rows.length - 300).toLocaleString()} 项按体积排在后面</span><span></span></li>` : '');
+    + (rows.length > 300
+        // 截断的只是这张预览表，不是删除范围 —— 不写清楚，人会以为剩下的不删。
+        ? `<li class="drawer-more"><span>下面还有 ${(rows.length - 300).toLocaleString()} 项没列出来` +
+          `（这张表只列最大的 300 项），<b>它们同样在这次的删除范围里</b>。</span><span></span></li>`
+        : '');
   els.drawerListCount.textContent = `${rows.length.toLocaleString()} 项`;
 
   els.drawerMsg.textContent = '';
@@ -1131,8 +1185,13 @@ document.addEventListener('click', async (e) => {
   }
   if (t.closest('#rescanBtn')) {
     els.rescanBtn.disabled = true;
+    // 全域视图的两份数据各有自己的 TTL；重新扫描必须把它们一起作废，
+    // 否则总览上的数字会比下面的清单旧一分钟。
+    summary.data = null;
+    projects.data = null;
     await load(true);
     await loadTasks(true);
+    if (state.appId === ALL) renderAll();
     els.rescanBtn.disabled = false;
     return;
   }
@@ -1176,12 +1235,17 @@ document.addEventListener('scroll', hideTip, true);
 
 // 键盘
 document.addEventListener('keydown', (e) => {
-  if (e.key === '/' && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
+  // 全域模式下文件清单整块隐藏着，聚焦一个看不见的输入框只会让人困惑。
+  const inSingle = state.appId !== ALL;
+  if (e.key === '/' && inSingle && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
     e.preventDefault(); els.search.focus(); els.search.select();
   }
   if (e.key === 'Escape') {
     if (!els.drawer.hidden) closeDrawer();
-    else if (document.activeElement === els.search) { els.search.value = ''; state.q = ''; els.search.blur(); renderGroups(); }
+    else if (!tEls.drawer.hidden) closeTaskDrawer();
+    else if (inSingle && document.activeElement === els.search) {
+      els.search.value = ''; state.q = ''; els.search.blur(); renderGroups();
+    }
   }
 
   // 分组头是 role=button，回车 / 空格要能折叠，和点击行为一致
