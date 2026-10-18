@@ -39,6 +39,7 @@ async function fixture(t) {
   await fs.mkdir(path.join(home, '.codex'), { recursive: true });
   await fs.mkdir(path.join(home, '.claude'), { recursive: true });
   await fs.mkdir(path.join(home, '.cursor'), { recursive: true });
+  await fs.mkdir(path.join(home, '.gemini', 'antigravity'), { recursive: true });
   const cursorIde = path.join(home, 'Library', 'Application Support', 'Cursor');
   await fs.mkdir(path.join(cursorIde, 'User', 'globalStorage'), { recursive: true });
   await fs.writeFile(path.join(home, '.claude.json'), '{}');
@@ -391,6 +392,73 @@ test('项目横切给出的可清会话，逐 app 过 /api/tasks/purge 的四道
     // 正文文件在磁盘上（Codex 的行级删除不碰文件 —— 那是文件线的活）
     await fs.access(path.join(f.home, '.codex', wsBody));
   }
+});
+
+/* ── Gemini / Antigravity：第五个工具 ────────────────────── */
+
+test('Gemini 摘要库只读列出会话，工作区 URI 还原成路径供项目归并', async (t) => {
+  const f = await fixture(t);
+  const db = new DatabaseSync(path.join(f.home, '.gemini', 'antigravity', 'conversation_summaries.db'));
+  db.exec(`CREATE TABLE conversation_summaries (
+    conversation_id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', preview TEXT NOT NULL DEFAULT '',
+    step_count INTEGER NOT NULL DEFAULT 0, last_modified_time datetime NOT NULL,
+    last_user_input_time datetime NOT NULL, workspace_uris TEXT NOT NULL, status TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '', project_id TEXT NOT NULL DEFAULT '', agent_name TEXT NOT NULL DEFAULT '',
+    parent_conversation_id TEXT NOT NULL DEFAULT '', nesting_depth INTEGER NOT NULL DEFAULT 0,
+    battle_id TEXT NOT NULL DEFAULT '', winning_conversation_id TEXT NOT NULL DEFAULT '',
+    not_fully_idle numeric NOT NULL DEFAULT false, killed numeric NOT NULL DEFAULT false,
+    app_data_dir TEXT NOT NULL DEFAULT '', raw_summary blob, group_id TEXT NOT NULL DEFAULT '')`);
+  // 两条会话：一条带 file:// 工作区（应还原成路径）、一条坏了的 URI（留空不猜）
+  db.prepare(`INSERT INTO conversation_summaries
+    (conversation_id, title, step_count, last_modified_time, last_user_input_time, workspace_uris, nesting_depth, killed)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run('conv-1', 'Gemini 的会话', 12, '2026-10-18 10:00:00', '2026-10-18 10:00:00',
+      JSON.stringify(['file://' + WS]), 0, 0);
+  db.prepare(`INSERT INTO conversation_summaries
+    (conversation_id, title, step_count, last_modified_time, last_user_input_time, workspace_uris, nesting_depth, killed)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run('conv-2', '坏的 URI', 1, '2026-10-18 09:00:00', '2026-10-18 09:00:00', 'not-json', 0, 0);
+  db.close();
+
+  seedZcode(f.home);   // ZCode 占同一个工作区 —— 项目横切应归并
+
+  const d = await f.get('/api/projects');
+  assert.equal(d.status, 200);
+  const hit = d.body.projects.find((p) => p.path === WS);
+  assert.ok(hit, 'Gemini 的 file:// 工作区应还原成路径并归并进项目');
+  assert.deepEqual(hit.apps.map((a) => a.appId).sort(), ['gemini', 'zcode']);
+
+  // 单 app 视图：只读、无 reason（正文在云端，删摘要 = 半删）
+  const tasks = await f.get('/api/tasks?app=gemini');
+  assert.equal(tasks.status, 200);
+  assert.equal(tasks.body.readOnly, true);
+  assert.equal(tasks.body.tasks.length, 2);
+  const withWs = tasks.body.tasks.find((x) => x.id === 'conv-1');
+  assert.equal(withWs.workspace, WS);
+  assert.equal(withWs.reason, null);
+  // 坏 URI 的会话留空，不猜
+  assert.equal(tasks.body.tasks.find((x) => x.id === 'conv-2').workspace, '');
+
+  // 行级删除在任何进程检查之前就被静态拒绝
+  const purge = await f.post('/api/tasks/purge', { app: 'gemini', ids: ['conv-1'] });
+  assert.equal(purge.status, 403);
+  assert.match(purge.body.error, /半删/);
+});
+
+test('Gemini 分类规则：摘要库归 transcript（锁定），CLI 经典布局归对类', async (t) => {
+  const f = await fixture(t);
+  // 夹具里放几个真实形态的文件
+  await fs.mkdir(path.join(f.home, '.gemini', 'antigravity', 'cache', 'm'), { recursive: true });
+  await fs.writeFile(path.join(f.home, '.gemini', 'antigravity', 'cache', 'm', 'marketplace.json'), '{}');
+  await fs.writeFile(path.join(f.home, '.gemini', 'jetski-standalone-oauth-token'), 'tok');
+
+  const scan = await f.get('/api/scan');
+  const g = scan.body.apps.find((a) => a.app === 'gemini');
+  assert.ok(g, 'scan 里有 gemini');
+  assert.equal(g.installed !== false, true, '夹具装了 .gemini');
+  // 凭据受保护
+  const proj = await f.post('/api/purge', { app: 'gemini', paths: ['jetski-standalone-oauth-token'], confirm: '彻底删除' });
+  assert.equal(proj.status, 403, JSON.stringify(proj.body));
 });
 
 test('/api/projects 并发读四个 app 时不互相踩临时副本', async (t) => {  const f = await fixture(t);

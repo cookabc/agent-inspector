@@ -327,13 +327,14 @@ for (const route of ['/api/purge', '/api/trash']) {
   }
 }
 
-test('/api/apps lists all four apps with their targets', async t => {
+test('/api/apps lists all five apps with their targets', async t => {
   const f = await fixture(t);
   const { body } = await f.get('/api/apps');
-  assert.deepEqual(body.apps.map(a => a.id), ['zcode', 'codex', 'claude', 'cursor']);
+  assert.deepEqual(body.apps.map(a => a.id), ['zcode', 'codex', 'claude', 'cursor', 'gemini']);
   for (const a of body.apps) assert.ok(a.targets.length, a.id);
   assert.equal(body.apps.find(a => a.id === 'cursor').writable, false, 'Cursor 只读');
   assert.equal(body.apps.find(a => a.id === 'claude').writable, true);
+  assert.equal(body.apps.find(a => a.id === 'gemini').writable, false, 'Gemini 摘要库只读');
 });
 
 /**

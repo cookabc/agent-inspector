@@ -53,7 +53,7 @@ const state = {
   busy: false,
 };
 
-/** 全域模式：一次看全部四个工具。这个取值不能与任何 app id 撞上。 */
+/** 全域模式：一次看全部工具。这个取值不能与任何 app id 撞上。 */
 const ALL = '';
 
 /* 一个 app 可能有多个扫描目标（Cursor 的 ~/.cursor 与 App Support）。
@@ -223,7 +223,7 @@ const APP_KEY = 'zci-app';
 function renderAppTabs() {
   els.appTabs.innerHTML = `<button type="button" class="app-tab ${state.appId === ALL ? 'is-on' : ''}"
       role="tab" aria-selected="${state.appId === ALL}" data-app="${ALL}"
-      title="四个工具的总占地、可回收总量与按项目横切">
+      title="所有工具的总占地、可回收总量与按项目横切">
       <span class="app-tab-name">全部</span>
       <span class="app-tab-size">${fmtBytes(state.scan.grand.bytes)}</span>
     </button>`
@@ -270,7 +270,7 @@ async function loadSummary(force = false) {
   return summary.data;
 }
 
-/** 项目横切：四个工具的会话各扫一遍（服务端走缓存），慢，所以懒加载。 */
+/** 项目横切：各工具的会话各扫一遍（服务端走缓存），慢，所以懒加载。 */
 function loadProjects(force = false) {
   if (!force && projects.data && Date.now() - projects.at < PROJECTS_MS) {
     renderProjects(projects.data);
@@ -293,7 +293,7 @@ function renderGlobal() {
     // 换 tab 换得快了，晚到的旧响应要丢掉
     if (state.appId !== ALL) return;
 
-    // 四个工具一个都没落盘：这屏不该显示 0 B 和一堆空条，而要直说"没有可审计的东西"。
+    // 所有工具一个都没落盘：这屏不该显示 0 B 和一堆空条，而要直说"没有可审计的东西"。
     if (!s.apps.some((a) => a.installed)) {
       els.allBytes.textContent = '—';
       els.allSub.innerHTML =
@@ -579,7 +579,7 @@ function pickProjectResiduals(key) {
   openDrawer();
 }
 
-/** 全域"清理推荐"：把四个工具的 recommend 分类文件全勾上，打开同一个确认抽屉。 */
+/** 全域"清理推荐"：把各工具的 recommend 分类文件全勾上，打开同一个确认抽屉。 */
 async function pickAllRecommended() {
   state.selection.clear();
   let count = 0;
@@ -595,7 +595,7 @@ async function pickAllRecommended() {
     }
   }
   if (!count) {
-    els.allRecNote.innerHTML = '四个工具都没有可推荐清理的内容。';
+    els.allRecNote.innerHTML = '所有工具都没有可推荐清理的内容。';
     return;
   }
   renderActionbar();
@@ -615,7 +615,7 @@ function renderHero() {
   const shape = `${esc(state.index.label)} 共 <b>${t.files.toLocaleString()}</b> 个文件、<b>${t.dirs.toLocaleString()}</b> 个目录。`;
   const others = state.apps.filter((a) => a.app !== state.appId && a.totals.bytes > 0);
   const grand = others.length
-    ? `四个工具加起来 <b>${fmtBytes(state.scan.grand.bytes)}</b>，另有 ${
+    ? `${state.apps.length} 个工具加起来 <b>${fmtBytes(state.scan.grand.bytes)}</b>，另有 ${
         others.map((a) => `${esc(a.label)} ${fmtBytes(a.totals.bytes)}`).join('、')}。`
     : '';
   els.heroSub.innerHTML = runawayBytes > 0
@@ -1172,7 +1172,7 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
-  // 全域"清理推荐"：四个工具的 recommend 全勾上进抽屉
+  // 全域"清理推荐"：各工具的 recommend 全勾上进抽屉
   if (t.closest('#allRecBtn')) { pickAllRecommended(); return; }
 
   // 项目横切：展开/收起一行的会话明细
@@ -1566,8 +1566,13 @@ function renderTasks() {
   // Codex 是两段式存储：库里只有索引和投影，正文在 sessions/ 的 rollout 文件里。
   // 那句话要是照抄 ZCode 的说法，就成了"158 MB 的库装着 581 MB 的正文"。
   tEls.lede.innerHTML = d.readOnly
-    ? `${esc(who)} 的会话库 <b>${fmtBytes(d.db.total)}</b>，读到 <b>${d.totals.count}</b> 个会话、` +
-      `<b>${fmtBytes(text)}</b> 的正文。下面按键族摊开这 ${fmtBytes(d.db.total)} 到底是怎么分的。`
+    ? (d.composition
+        // Cursor：正文在库里，按键族摊开
+        ? `${esc(who)} 的会话库 <b>${fmtBytes(d.db.total)}</b>，读到 <b>${d.totals.count}</b> 个会话、` +
+          `<b>${fmtBytes(text)}</b> 的正文。下面按键族摊开这 ${fmtBytes(d.db.total)} 到底是怎么分的。`
+        // Gemini：正文在云端，本机只有摘要索引
+        : `${esc(who)} 的会话索引 <b>${fmtBytes(d.db.total)}</b>，读到 <b>${d.totals.count}</b> 条会话的摘要。` +
+          `正文在云端，本机没有可回收的会话数据 —— 这里只告诉你有什么、归哪个项目。`)
     : d.db.bodies
       ? `${esc(who)} 的会话分两处存：索引库 <b>${fmtBytes(d.db.total)}</b>，` +
         `正文文件 <b>${fmtBytes(d.db.bodies.bytes)}</b>（<b>${d.db.bodies.count}</b> 个 rollout 文件）。` +
@@ -1581,10 +1586,10 @@ function renderTasks() {
   // 动手之前的前提，三个 app 三种说法 —— 都从后端的能力标记来，不在前端猜
   tEls.warn.hidden = false;
   if (d.readOnly) {
+    // 只读的理由由各适配器给（Cursor 与 Gemini 的"为什么不能删"完全不同），
+    // 前端不按 app 名硬编码。
     tEls.warn.className = 'app-warn';
-    tEls.warn.innerHTML = `${icon('key')}<div><b>${esc(who)} 的会话只读</b>：正文以键值对存在 ` +
-      `<code>state.vscdb</code> 里，由 IDE 独占写入，键之间没有外键可依。要清会话请在 ${esc(who)} 界面里删 —— ` +
-      `这里不代按，也不给勾选。</div>`;
+    tEls.warn.innerHTML = `${icon('key')}<div><b>${esc(who)} 的会话只读</b>：${esc(d.readOnlyNote || '这个工具的会话数据不提供写路径。')}</div>`;
   } else if (d.fileBased) {
     tEls.warn.className = 'app-warn is-ok';
     tEls.warn.innerHTML = fileBasedNote(who);
@@ -1905,7 +1910,7 @@ function openTaskDrawer() {
        <div class="dstat"><span>涉及工具</span><b>${d.crossApp ? d.batches.length : 1}</b></div>
        <div class="dstat"><span>正文合计</span><b>${fmtBytes(bytes)}</b></div>`;
 
-  // 会写到哪几个库，由后端报的路径决定 —— 四个工具各不一样，前端不硬编码文件名
+  // 会写到哪几个库，由后端报的路径决定 —— 各工具不一样，前端不硬编码文件名
   if (d.crossApp) {
     // 跨 app：逐工具说一句写哪里、备份到哪。库路径要等各 app 的 /api/tasks
     // 才有 —— 合成视图里没有，就按工具名给原则，细节空跑时摊开。
