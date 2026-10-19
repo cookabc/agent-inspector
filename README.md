@@ -8,11 +8,16 @@
 | ZCode | `~/.zcode` | 文件 + 会话库里的**按任务删除**（事务 + VACUUM，先备份） |
 | Codex | `~/.codex` | 文件 + 会话库里的**按线程删除**；正文是磁盘上的 rollout 文件，那部分归文件清单 |
 | Claude Code | `~/.claude`、`~/.claude.json` | 文件 —— 它的会话正文本身就是 `.jsonl`，没有库行可删 |
-| Cursor | `~/.cursor`、`~/Library/Application Support/Cursor` | **只读分析** —— 库里按键族摊开给你数清楚，不代按删除 |
+| Cursor | `~/.cursor`、`~/Library/Application Support/Cursor` | **只读分析** + **孤儿会话回灌** —— 不按行删；界面看不到、transcript 还在的会话可以补回去（只新增，不覆盖） |
 | Gemini | `~/.gemini`、`~/Library/Application Support/Antigravity` | **只读分析** —— 正文在云端，本机只有摘要索引；删摘要只会制造"半删" |
 
 还额外做一件这些工具自己都没做的事：把界面上**早已删掉、正文却还留在磁盘上**的历史会话清干净。
 ZCode 的"删除任务"只是把 `tasks.deleted` 置 1，一行正文都没少。
+
+Cursor 是一个反向的例子：会话列表只认 `state.vscdb` 里的 `composerHeaders`，而正文的
+`.jsonl` transcript 在 `~/.cursor/projects/` 下另存一份，两者没有同步机制。配置目录被重建、
+迁移失败或清理过后，头没了、正文还在 —— 会话就从界面里消失了。这个工具能把这类**孤儿会话
+只新增地回灌**回 `state.vscdb`（见 [Cursor：把界面看不到的会话找回来](#cursor把界面看不到的会话找回来)）。
 
 零依赖，只用 Node 内置模块。文件扫描只读 `stat`，**从不读取文件内容**；
 读会话库走的是独立副本上的只读连接。
@@ -138,6 +143,7 @@ Electron 自建的状态文件（`Cookies`、`shared_proto_db/`）、各工具�
 勾选范围按工具分别记住，切回去还是你上次调成的样子。
 「一键清理」默认跳过近期还在用的任务（默认 30 天）—— 那是"已删除"但你可能还想回头翻的旧对话。
 Cursor 没有这一条：它对会话库只读，页面直接把库的构成摊开，而不是给一个按不动的按钮。
+不过它有一个独立的**回灌**入口（见下），方向相反 —— 不是删，而是把丢失的会话补回来。
 
 ### 文件清单
 
@@ -203,6 +209,42 @@ Cursor 没有这一条：它对会话库只读，页面直接把库的构成摊�
 - **空跑核对**：不放心就先跑一次只读预览，它会把**实际会删掉的行数**逐库逐表列出来。
   这一步不开事务、不加任何写锁，**应用开着跑也绝对安全**。
 
+### Cursor：把界面看不到的会话找回来
+
+Cursor 有两份存储，彼此不同步：
+
+| | 在哪 | 作用 |
+|---|---|---|
+| 会话头 | `state.vscdb` 的 `composerHeaders` | 界面会话列表**只认这里**；没有行就不显示 |
+| 正文 | `~/.cursor/projects/<workspace>/agent-transcripts/<id>/<id>.jsonl` | Agent 实际写下的逐轮记录 |
+
+所以"界面上看不到"有两种完全不同的情况：正文被删了（真的没了），或**头没了、正文还在**（孤儿）。
+任务面板为 Cursor 多渲染一块「界面里看不到的会话」，把后者列出来：标题、工作区、日期、
+消息数、工具调用次数、文件体积。扫描只读，且只读副本。
+
+选中后按「回灌到 Cursor…」，会写回三组行，结构与 Cursor 自己生成的一致：
+
+- `composerHeaders` —— 一条会话头（标题、时间、工作区）
+- `cursorDiskKV` 的 `composerData:<id>` —— 会话元数据与气泡索引
+- `cursorDiskKV` 的 `bubbleId:<id>:<bid>` —— 每条用户/助手消息一个气泡
+
+写之前有四道闸：
+
+1. **Cursor 必须完全退出**（`pgrep` 探测 `Cursor` / `cursor-agent` / `cursor-mcp` / Helper）。
+   库由 IDE 独占写入，开着写会抢锁甚至损坏数据。空跑不受这条限制。
+2. **先整库备份**到 `backups/<时间戳>-cursor-recover/`（连同 `-wal` / `-shm`）。
+3. **事务内完成**：`BEGIN IMMEDIATE` → 三组 `INSERT` → `COMMIT`，失败整体回滚。
+4. **写完自检**：`PRAGMA quick_check` 的结果如实返回，并 `wal_checkpoint(TRUNCATE)` 收尾。
+
+回灌**只新增、不覆盖**：每一条都先查 `composerHeaders`，已存在的会话直接跳过；
+所以对同一批会话重复执行是幂等的，不会产生重复气泡，也不会改动任何现有会话。
+
+它恢复的是**文本正文与工具调用的一行引用**。检查点（`checkpointId`，文件快照）、
+内容寻址 blob（`agentKv`，工具结果原文）和改动前的文件状态没有可重建的来源，
+不伪造 —— 所以恢复后会话能读、能搜、能继续，但那几次对话里的"回退到某一步"不会回来。
+工作区路径还原不出来的会话（原项目目录已删除）会落到模板会话的工作区，
+列表里标注「路径未还原」，而不是把 slug 猜成一个不存在的路径。
+
 ## 安全边界
 
 - 服务只监听 `127.0.0.1`，校验本地 Host 与请求来源；API 写请求必须使用 `application/json`，拒绝跨站请求。
@@ -217,6 +259,9 @@ Cursor 没有这一条：它对会话库只读，页面直接把库的构成摊�
 - 批量请求先检查全部目标，检查通过才开始删除；执行时逐项再次检查。文件系统执行错误仍可能产生部分成功，结果中的 `failed` 会列出失败项。
 - 「这个工具到底能不能按行清会话」是**静态能力判断**，在服务端 `rowPurgeBlocked()` 一处说了算，
   并且排在进程探测之前 —— Cursor 的拒绝理由是"它没有行可删"，跟 Cursor 当时开没开无关。
+- **Cursor 的回灌是唯一会写会话库的路径**，因此它的闸门也写在服务端：必须退出应用、
+  确认串（`回灌`）正确、先整库备份、事务写入、写完自检；只 `INSERT`，不 `DELETE`、不覆盖。
+  它不经过按行删除的权限模型，也不会因为 `writable: false` 而被放宽 —— 两条路径互不影响。
 - 前端也把受保护类锁住勾选框、并排除出「全选」，但那只是顺手，真正的闸在服务端。
 
 清文件有两种执行方式，在确认抽屉里选：
@@ -289,6 +334,7 @@ lib/tasks-zcode.mjs    ZCode：db.sqlite + tasks-index，按任务删
 lib/tasks-codex.mjs    Codex：三库按线程删，正文文件交给文件线
 lib/tasks-claude.mjs   Claude Code：按文件的历史视图
 lib/tasks-cursor.mjs   Cursor：只读，按键族统计
+lib/cursor-recover.mjs Cursor：孤儿会话扫描与回灌（唯一写 state.vscdb 的路径）
 lib/tasks-gemini.mjs   Gemini/Antigravity：只读摘要，正文在云端
 lib/projects.mjs       按项目横切：五个工具的会话归并成项目桶（能确定才归并）
 lib/sqlite-open.mjs    只读打开：必要时连侧文件一起复制到副本上再开
@@ -299,6 +345,7 @@ public/app.js          渲染、勾选、清理流程
 test/server.test.mjs   临时 HOME 中的 HTTP 删除边界回归测试
 test/codex-tasks.test.mjs  Codex 三库夹具：空跑、跨库删除、备份、残骸交接
 test/global-tasks.test.mjs 全域视图：项目归并、Cursor 反查、并发一致性
+test/cursor-recover.test.mjs 孤儿会话：扫描、空跑、回灌、幂等、服务端确认闸门
 ```
 
 ### 验证
@@ -307,6 +354,8 @@ test/global-tasks.test.mjs 全域视图：项目归并、Cursor 反查、并发�
 不读取真实会话数据，也不操作真实废纸篓。它覆盖：五个工具的扫描与历史面板、
 删除边界（根目录 / 绝对路径 / `..` / 符号链接 / 大小写别名 / 单文件目标 / 未知 app）、
 批量请求的原子性、废纸篓往返，以及"Cursor 与 Claude 的按行删除在任何进程检查之前就被拒"。
+Cursor 回灌那份夹具会核对三组行确实补齐、备份里是回灌前的库、第二次执行导入 0 条，
+以及确认串错误时请求在碰库之前就返回 400、空跑在应用运行中也允许。
 Codex 那份夹具把三个库都建出来 —— 其中两个**没有** `threads` 表，逐库删除必须跳过它们；
 它同时验证"行删完、正文文件还在，并以下一个编号出现在残骸里"这条交接。
 CI 在 Linux、macOS 及 Node 22.5 / 24 上执行；Linux 跳过 macOS 废纸篓测试。

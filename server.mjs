@@ -27,14 +27,15 @@ import { Worker } from 'node:worker_threads';
 /* 自己的模块用动态 import：本地这几个都依赖内置的 node:sqlite，
    而它是 Node 22.5 才有的。更早的版本上静态 import 会在任何提示之前直接崩掉，
    用户只看到一句 "Cannot find module 'node:sqlite'"。这里接住它，说人话。 */
-let APPS, getApp, planApps, appSummaries, scanApps, appRunning, rowPurgeBlocked, projectsFrom;
+let APPS, getApp, planApps, appSummaries, scanApps, appRunning, rowPurgeBlocked, projectsFrom, CURSOR_CONFIRM;
 try {
   [{ APPS, getApp, planApps, appSummaries }, { scanApps }, { appRunning, rowPurgeBlocked },
-    { projectsFrom }] = await Promise.all([
+    { projectsFrom }, { CONFIRM_WORD: CURSOR_CONFIRM }] = await Promise.all([
     import('./lib/apps/index.mjs'),
     import('./lib/scan.mjs'),
     import('./lib/tasks.mjs'),
     import('./lib/projects.mjs'),
+    import('./lib/cursor-recover.mjs'),
   ]);
 } catch (err) {
   const msg = err?.message || String(err);
@@ -459,6 +460,32 @@ const server = http.createServer(async (req, res) => {
       const data = await getTasks(appId, url.searchParams.get('refresh') === '1');
       const app = await appRunning(plan.app);
       return sendJSON(req, res, 200, { ...data, app, appId, appLabel: plan.app.label, backupDir: BACKUP_DIR });
+    }
+
+    /* Cursor 的两条专用入口：只针对"界面里看不到、.jsonl 还在"的孤儿会话。
+       列表只读；回灌是受控写入 —— 退出应用、确认串、整库备份、事务、自检，
+       全在这一条路径上，不影响其它工具，也不覆盖任何已有会话。 */
+    if (p === '/api/tasks/cursor/orphans' && req.method === 'GET') {
+      const plan = planFor('cursor');
+      const data = await runDb('cursor-orphans', 'cursor', plan.targets.map(stripTarget));
+      const app = await appRunning(plan.app);
+      return sendJSON(req, res, 200, { ...data, app, appId: 'cursor', appLabel: plan.app.label, backupDir: BACKUP_DIR, confirmWord: CURSOR_CONFIRM });
+    }
+
+    if (p === '/api/tasks/cursor/recover' && req.method === 'POST') {
+      const { ids = [], dryRun = false, confirm } = await readBody(req);
+      if (!Array.isArray(ids) || ids.some((x) => typeof x !== 'string')) {
+        throw httpError(400, 'ids 必须是会话 id 的字符串数组');
+      }
+      const plan = planFor('cursor');
+      // 空跑是只读的，应用开着也安全；真正写入前必须退出，避免和 IDE 抢写。
+      if (!dryRun && confirm !== CURSOR_CONFIRM) throw httpError(400, `确认串不正确（应为「${CURSOR_CONFIRM}」）`);
+      const running = await appRunning(plan.app);
+      if (running.running && !dryRun) throw appMustQuit(running);
+      const result = await runDb('cursor-recover', 'cursor', plan.targets.map(stripTarget),
+        [ids, { backupDir: BACKUP_DIR, dryRun }]);
+      if (!dryRun) taskCache.delete('cursor');
+      return sendJSON(req, res, 200, result);
     }
 
     if (p === '/api/tasks/orphans' && req.method === 'POST') {

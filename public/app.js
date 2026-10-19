@@ -1410,6 +1410,18 @@ const tEls = {
 
 const taskState = { data: null, sel: new Set(), q: '', states: new Set(), sort: 'size', group: false, foldedWs: new Set() };
 
+/* Cursor 孤儿会话回灌。与上面的"清理"是两条完全不同的线：
+   这里只新增行，不删任何东西；选中集合也单独放，避免和清理勾选串台。 */
+const rEls = {
+  panel: $('recoverPanel'), lede: $('recoverLede'), warn: $('recoverWarn'),
+  list: $('recoverList'), foot: $('recoverFoot'), count: $('recoverCount'),
+  bubbles: $('recoverBubbles'), pickAll: $('recoverPickAll'), clear: $('recoverClear'),
+  btn: $('recoverBtn'), confirm: $('recoverConfirm'), note: $('recoverConfNote'),
+  word: $('recoverWord'), wordHint: $('recoverWordHint'), go: $('recoverGo'),
+  dry: $('recoverDry'), cancel: $('recoverCancel'), msg: $('recoverMsg'),
+};
+const recoverState = { data: null, sel: new Set(), open: false };
+
 /* 可清理 = 后端给出了 reason。判定只在服务端做一次，前端照着用。
    各 app 给出的 reason 不完全一样（ZCode 有"界面已删除"，Codex 没有；Cursor 一个都不给）。 */
 const isPurgeable = (t) => t.reason != null;
@@ -1450,9 +1462,11 @@ async function loadTasks(refresh = false) {
   tEls.comp.hidden = true;
   tEls.foot.hidden = true;
   tEls.list.innerHTML = '';
+  if (appId !== 'cursor') hideRecoverable();
 
   // 全域模式没有"某一个工具"的会话面板：任务区直接说去看哪个工具
   if (!view) {
+    hideRecoverable();
     tEls.lede.textContent = '总览模式下不读会话库 —— 切到具体工具后这里显示它的历史会话。';
     tEls.dbBar.innerHTML = '';
     tEls.chips.innerHTML = '';
@@ -1462,6 +1476,7 @@ async function loadTasks(refresh = false) {
   }
 
   if (!view.targets.some((t) => t.exists)) {
+    hideRecoverable();
     tEls.lede.textContent = `${view.label} 在这台机器上没有数据目录。`;
     return;
   }
@@ -1474,11 +1489,194 @@ async function loadTasks(refresh = false) {
     if (state.appId !== appId || data.appId !== appId) return;
     taskState.data = data;
     renderTasks();
+    // Cursor 另外有一条"界面看不到的会话"线，独立懒加载
+    if (appId === 'cursor') loadRecoverable();
   } catch (err) {
     if (state.appId !== appId) return;
     tEls.lede.innerHTML = `<b>读取失败：</b>${esc(err.message)}`;
   }
 }
+
+/* ── Cursor：界面看不到的会话 ───────────────────────────── */
+
+function hideRecoverable() {
+  if (!rEls.panel) return;
+  rEls.panel.hidden = true;
+  rEls.list.innerHTML = '';
+  rEls.warn.hidden = true;
+  rEls.foot.hidden = true;
+  rEls.confirm.hidden = true;
+  recoverState.data = null;
+  recoverState.sel.clear();
+  recoverState.open = false;
+}
+
+async function loadRecoverable() {
+  if (state.appId !== 'cursor' || !rEls.panel) { hideRecoverable(); return; }
+  rEls.panel.hidden = false;
+  rEls.lede.textContent = '正在找界面里看不到的会话…';
+  rEls.list.innerHTML = '';
+  rEls.warn.hidden = true;
+  rEls.foot.hidden = true;
+  rEls.confirm.hidden = true;
+  rEls.msg.textContent = '';
+  recoverState.open = false;
+
+  try {
+    const res = await fetch('/api/tasks/cursor/orphans');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    if (state.appId !== 'cursor') return;
+    recoverState.data = data;
+    // 上次勾了、这次已经回灌掉的会话不能继续留在选择集里
+    const ids = new Set((data.sessions || []).map((s) => s.id));
+    for (const id of [...recoverState.sel]) if (!ids.has(id)) recoverState.sel.delete(id);
+    renderRecoverable();
+  } catch (err) {
+    if (state.appId !== 'cursor') return;
+    recoverState.data = null;
+    rEls.panel.hidden = false;
+    rEls.lede.innerHTML = `<b>读取失败：</b>${esc(err.message)}`;
+  }
+}
+
+function renderRecoverable() {
+  const d = recoverState.data;
+  if (!d) return;
+  const sessions = d.sessions || [];
+  const total = d.total || 0;
+
+  rEls.lede.innerHTML = total
+    ? `在 transcript 文件里找到 <b>${total}</b> 个会话，Cursor 的 <code>composerHeaders</code> 里没有对应记录 —— ` +
+      `界面看不到它们，但 <b>${fmtBytes(d.orphanBytes)}</b> 的正文还在磁盘上。回灌会把正文补回客户端；` +
+      `只新增、不覆盖，已存在的会话一律跳过。`
+    : `没有发现孤儿会话：所有 transcript 都能在 Cursor 的会话头里找到。`;
+
+  // 运行状态 / 读取问题
+  const warns = [];
+  if (d.app?.running) {
+    warns.push(`<b>Cursor 正在运行</b>（${(d.app.hits || []).map((h) => `${esc(h.name)} ×${h.pids}`).join('、')}）。` +
+      `回灌会写 <code>state.vscdb</code>，必须先<b>完全退出 Cursor</b>；现在可以浏览和空跑，写入会被拒绝。`);
+  } else {
+    warns.push(`Cursor 没在运行，可以安全回灌。动手前会把 <code>state.vscdb</code> 完整备份到 ` +
+      `<code>${esc(shortPath(d.backupDir || 'backups'))}</code>。`);
+  }
+  for (const p of d.problems || []) warns.push(esc(p));
+  if (warns.length) {
+    rEls.warn.hidden = false;
+    rEls.warn.className = d.app?.running ? 'app-warn' : 'app-warn is-ok';
+    rEls.warn.innerHTML = `${icon(d.app?.running ? 'alert' : 'box')}<div>${warns.join('<br>')}</div>`;
+  } else {
+    rEls.warn.hidden = true;
+  }
+
+  rEls.list.innerHTML = sessions.map((s) => {
+    const sel = recoverState.sel.has(s.id);
+    const meta = [
+      s.workspace,
+      fmtDate(s.date),
+      `${s.messages} 条消息`,
+      s.tools ? `${s.tools} 次工具调用` : '',
+      s.workspaceResolved ? '' : '路径未还原',
+    ].filter(Boolean).join(' · ');
+    return `<label class="recover-row ${sel ? 'is-on' : ''}" data-recover-row="${esc(s.id)}">
+      <input type="checkbox" data-recover-id="${esc(s.id)}" ${sel ? 'checked' : ''}
+        aria-label="选择会话 ${esc(s.title)}">
+      <span class="recover-main">
+        <span class="recover-title" title="${esc(s.title)}">${esc(s.title)}</span>
+        <span class="recover-meta" title="${esc(meta)}">${esc(meta)}</span>
+      </span>
+      <span class="recover-size">${fmtBytes(s.bytes)}</span>
+    </label>`;
+  }).join('');
+
+  const picked = sessions.filter((s) => recoverState.sel.has(s.id));
+  rEls.foot.hidden = picked.length === 0;
+  rEls.count.textContent = picked.length.toLocaleString();
+  rEls.bubbles.textContent = picked.reduce((n, s) => n + s.bubbles, 0).toLocaleString();
+
+  const running = Boolean(d.app?.running);
+  rEls.confirm.hidden = !recoverState.open;
+  if (recoverState.open) {
+    rEls.wordHint.textContent = d.confirmWord || '回灌';
+    rEls.go.disabled = running || picked.length === 0;
+    rEls.note.innerHTML = running
+      ? `Cursor 仍在运行，现在不能写入。请完全退出后刷新本页再试。`
+      : `将新增 <b>${picked.length}</b> 条会话头、<b>${picked.reduce((n, s) => n + s.bubbles, 0)}</b> 条气泡，` +
+        `不动任何已有会话。写入前会备份到 <code>${esc(shortPath(d.backupDir || 'backups'))}</code>。`;
+  }
+}
+
+async function callRecover(dryRun) {
+  const d = recoverState.data;
+  const ids = [...recoverState.sel];
+  if (!d || !ids.length) return;
+  rEls.go.disabled = true;
+  rEls.dry.disabled = true;
+  rEls.msg.className = 'drawer-msg';
+  rEls.msg.textContent = dryRun ? '正在空跑核对…' : '正在备份并写入 state.vscdb…';
+  try {
+    const res = await fetch('/api/tasks/cursor/recover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, dryRun, confirm: rEls.word.value }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+
+    if (dryRun) {
+      rEls.msg.className = 'drawer-msg is-ok';
+      rEls.msg.innerHTML = `空跑：将回灌 <b>${data.imported}</b> 个会话、<b>${data.bubbles}</b> 条气泡。` +
+        `没有写任何东西。`;
+    } else {
+      // 已回灌的会话从本地列表里移除，不用整页重扫
+      const done = new Set((data.sessions || []).map((s) => s.id));
+      if (d.sessions) d.sessions = d.sessions.filter((s) => !done.has(s.id));
+      d.total = d.sessions?.length || 0;
+      recoverState.sel.clear();
+      rEls.word.value = '';
+      rEls.msg.className = 'drawer-msg is-ok';
+      rEls.msg.innerHTML = `已回灌 <b>${data.imported}</b> 个会话、<b>${data.bubbles}</b> 条气泡。` +
+        (data.backup ? `备份在 <code>${esc(shortPath(data.backup))}</code>。` : '') +
+        `重启 Cursor 后，它们会出现在会话列表里。`;
+      renderRecoverable();
+    }
+  } catch (err) {
+    rEls.msg.className = 'drawer-msg is-err';
+    rEls.msg.textContent = err.message;
+  } finally {
+    rEls.go.disabled = false;
+    rEls.dry.disabled = false;
+  }
+}
+
+rEls.pickAll?.addEventListener('click', () => {
+  for (const s of recoverState.data?.sessions || []) recoverState.sel.add(s.id);
+  renderRecoverable();
+});
+rEls.clear?.addEventListener('click', () => {
+  recoverState.sel.clear();
+  renderRecoverable();
+});
+rEls.list?.addEventListener('change', (e) => {
+  const box = e.target.closest('[data-recover-id]');
+  if (!box) return;
+  if (box.checked) recoverState.sel.add(box.dataset.recoverId);
+  else recoverState.sel.delete(box.dataset.recoverId);
+  renderRecoverable();
+});
+rEls.btn?.addEventListener('click', () => {
+  recoverState.open = true;
+  rEls.msg.textContent = '';
+  renderRecoverable();
+});
+rEls.cancel?.addEventListener('click', () => {
+  recoverState.open = false;
+  rEls.msg.textContent = '';
+  renderRecoverable();
+});
+rEls.dry?.addEventListener('click', () => callRecover(true));
+rEls.go?.addEventListener('click', () => callRecover(false));
 
 const visibleTasks = () => {
   const d = taskState.data;

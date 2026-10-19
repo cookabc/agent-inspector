@@ -1224,6 +1224,93 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
 }
 .task-foot .ab-summary strong { font-size: 18px; }
 
+/* ── Cursor 孤儿会话回灌 ───────────────────────────────── */
+.recover {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.recover-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.recover-head h3 { font-size: 14px; font-weight: 600; margin: 0 0 4px; }
+.recover-lede { margin: 0; font-size: 12.5px; color: var(--ink-2); line-height: 1.55; max-width: 76ch; }
+.recover-lede b { color: var(--ink); }
+.recover-picks { display: flex; gap: 6px; flex: none; }
+.recover-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.recover-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  cursor: default;
+}
+.recover-row:last-child { border-bottom: 0; }
+.recover-row:hover { background: var(--surface-2); }
+.recover-row.is-on { background: var(--accent-soft); }
+.recover-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.recover-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recover-meta {
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recover-meta .is-warn { color: var(--st-serious); }
+.recover-size {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.recover-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.recover-foot b { color: var(--ink); }
+.recover-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 13px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface-2);
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.recover-confirm p { margin: 0; line-height: 1.55; }
+.recover-confirm code { font-size: 11.5px; word-break: break-all; }
+.recover-confirm-btns { display: flex; justify-content: flex-end; gap: 8px; }
+
+
 .trow-pill {
   font-size: 11px;
   padding: 2px 7px;

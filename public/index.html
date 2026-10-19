@@ -252,6 +252,38 @@
       </div>
       <button class="btn btn-primary" id="taskPurgeBtn" type="button">清理…</button>
     </div>
+
+    <!-- Cursor 专用：界面看不到、transcript 还在的会话 -->
+    <div class="recover" id="recoverPanel" hidden>
+      <div class="recover-head">
+        <div>
+          <h3>界面里看不到的会话</h3>
+          <p class="recover-lede" id="recoverLede"></p>
+        </div>
+        <div class="recover-picks">
+          <button class="btn btn-ghost btn-sm" id="recoverPickAll" type="button">全选</button>
+          <button class="btn btn-ghost btn-sm" id="recoverClear" type="button">取消</button>
+        </div>
+      </div>
+      <div class="app-warn" id="recoverWarn" hidden></div>
+      <div class="recover-list" id="recoverList"></div>
+      <div class="recover-foot" id="recoverFoot" hidden>
+        <span>已选 <b id="recoverCount">0</b> 个会话 · <b id="recoverBubbles">0</b> 条消息</span>
+        <button class="btn btn-primary btn-sm" id="recoverBtn" type="button">回灌到 Cursor…</button>
+      </div>
+      <div class="recover-confirm" id="recoverConfirm" hidden>
+        <p id="recoverConfNote"></p>
+        <label class="purge-confirm">输入 <b id="recoverWordHint">回灌</b> 确认
+          <input id="recoverWord" autocomplete="off" spellcheck="false">
+        </label>
+        <div class="recover-confirm-btns">
+          <button class="btn btn-ghost btn-sm" id="recoverCancel" type="button">取消</button>
+          <button class="btn btn-ghost btn-sm" id="recoverDry" type="button">空跑核对</button>
+          <button class="btn btn-primary btn-sm" id="recoverGo" type="button">确认回灌</button>
+        </div>
+        <p class="drawer-msg" id="recoverMsg"></p>
+      </div>
+    </div>
   </section>
   </div><!-- /#single -->
 
