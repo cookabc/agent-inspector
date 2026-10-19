@@ -445,23 +445,48 @@ test('Gemini 摘要库只读列出会话，工作区 URI 还原成路径供项�
   assert.match(purge.body.error, /半删/);
 });
 
-test('Gemini 分类规则：摘要库归 transcript（锁定），CLI 经典布局归对类', async (t) => {
+test('Gemini 分类规则：摘要库锁定、缓存可清、CLI 经典布局归对类', async (t) => {
   const f = await fixture(t);
   // 夹具里放几个真实形态的文件
   await fs.mkdir(path.join(f.home, '.gemini', 'antigravity', 'cache', 'm'), { recursive: true });
   await fs.writeFile(path.join(f.home, '.gemini', 'antigravity', 'cache', 'm', 'marketplace.json'), '{}');
   await fs.writeFile(path.join(f.home, '.gemini', 'jetski-standalone-oauth-token'), 'tok');
+  const summary = path.join(f.home, '.gemini', 'antigravity', 'conversation_summaries.db');
+  await fs.writeFile(summary, 'SQLite format 3');
 
   const scan = await f.get('/api/scan');
   const g = scan.body.apps.find((a) => a.app === 'gemini');
   assert.ok(g, 'scan 里有 gemini');
   assert.equal(g.installed !== false, true, '夹具装了 .gemini');
+  // 分类表里每个 id 只能出现一次 —— shared(key, ...) 的 id 取自第一个参数，
+  // 写成 shared('database', ...) 挂在 summaryIndex 下会静默产生两个 database、丢掉 summaryIndex。
+  const ids = g.catalog.map((c) => c.id);
+  assert.equal(new Set(ids).size, ids.length, `分类表 id 重复：${ids.join(', ')}`);
+  const idx = g.catalog.find((c) => c.id === 'summaryIndex');
+  assert.ok(idx, '摘要库要有自己的分类 id');
+  assert.equal(idx.locked, true);
+  assert.equal(g.files.find((x) => x.p === 'antigravity/conversation_summaries.db').c, 'summaryIndex');
+
+  // 摘要库是本机唯一的会话入口：整文件锁定，'彻底删除' 也拒绝，且不留半成品
+  const del = await f.post('/api/purge', { app: 'gemini', paths: ['antigravity/conversation_summaries.db'], confirm: '彻底删除', force: true });
+  assert.equal(del.status, 403, JSON.stringify(del.body));
+  assert.equal(await fs.readFile(summary, 'utf8'), 'SQLite format 3');
+  // 也不能靠删父目录绕过
+  const viaParent = await f.post('/api/purge', { app: 'gemini', paths: ['antigravity'], confirm: '彻底删除', force: true });
+  assert.equal(viaParent.status, 403, JSON.stringify(viaParent.body));
+  assert.equal(await fs.readFile(summary, 'utf8'), 'SQLite format 3');
+
   // 凭据受保护
   const proj = await f.post('/api/purge', { app: 'gemini', paths: ['jetski-standalone-oauth-token'], confirm: '彻底删除' });
   assert.equal(proj.status, 403, JSON.stringify(proj.body));
+
+  // 但不是一刀切：缓存照样能清
+  const cache = await f.post('/api/purge', { app: 'gemini', paths: ['antigravity/cache'], confirm: '彻底删除' });
+  assert.equal(cache.status, 200, JSON.stringify(cache.body));
+  await assert.rejects(fs.access(path.join(f.home, '.gemini', 'antigravity', 'cache')));
 });
 
-test('/api/projects 并发读四个 app 时不互相踩临时副本', async (t) => {  const f = await fixture(t);
+test('/api/projects 并发读五个 app 时不互相踩临时副本', async (t) => {  const f = await fixture(t);
   const ide = f.cursorIde;
   const uuid = '99998888-7777-6666-5555-444433332222';
   await fs.mkdir(path.join(ide, 'User', 'workspaceStorage', uuid), { recursive: true });

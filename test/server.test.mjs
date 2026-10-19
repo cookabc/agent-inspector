@@ -22,6 +22,7 @@ const LOC = {
   'claude/dotfile': '',                       // 单文件目标：<home>/.claude.json
   'cursor/cli': '.cursor',
   'cursor/ide': 'Library/Application Support/Cursor',
+  'gemini/root': '.gemini',
 };
 
 // 每个 app 里必须"删不掉"的东西：库、凭据、配置
@@ -35,6 +36,8 @@ const PROTECTED = {
   'cursor/cli': ['mcp.json', 'cli-config.json'],
   'cursor/ide': ['User/globalStorage/state.vscdb', 'User/globalStorage/conversation-search.db',
                  'User/settings.json', 'ai-tracking/events.sqlite'],
+  'gemini/root': ['antigravity/conversation_summaries.db', 'jetski-standalone-oauth-token',
+                  'config/config.json'],
 };
 
 /** 每个 app 里明确可删的安全内容，用来确认保护没有一刀切。 */
@@ -44,6 +47,7 @@ const SAFE = {
   'claude/home': 'cache/x/blob.bin',
   'cursor/cli': 'projects/ws/keep.log',
   'cursor/ide': 'logs/window1/main.log',
+  'gemini/root': 'antigravity/cache/x/marketplace.json',
 };
 
 async function fixture(t) {
@@ -361,9 +365,9 @@ test('/api/tasks/orphans is a ZCode-only entry', async t => {
   }
 });
 
-test('the four history panels scan read-only and report their own shape', async t => {
+test('every history panel scans and reports its own shape', async t => {
   const f = await fixture(t);
-  for (const app of ['zcode', 'codex', 'claude', 'cursor']) {
+  for (const app of ['zcode', 'codex', 'claude', 'cursor', 'gemini']) {
     const { status, body } = await f.get('/api/tasks?app=' + app);
     assert.equal(status, 200, app);
     assert.ok(Array.isArray(body.tasks), app);
