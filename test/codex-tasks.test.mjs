@@ -90,6 +90,10 @@ test('Codex 的历史视图把三个库和磁盘正文对齐', async (t) => {
   assert.ok(residual, '没有索引行认领的 rollout 文件要作为残骸出现');
   assert.ok(residual.id.startsWith('file:'), `残骸的编号用文件路径：${residual.id}`);
   assert.equal(residual.residual, true);
+  // threads 的时间戳是 Unix 秒；原样交给前端会全部显示成 1970 年
+  const archived = d.tasks.find((x) => x.id === ARCHIVED_ID);
+  assert.equal(archived.createdAt, 1000);
+  assert.equal(archived.updatedAt, 3000, '归档时间优先，单位换成毫秒');
   // 正文合计必须等于磁盘上 rollout 文件的总和 —— 少算的那块在界面上永远找不回来
   assert.equal(d.totals.bytes, d.db.bodies.bytes);
 });
