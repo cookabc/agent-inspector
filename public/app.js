@@ -9,11 +9,6 @@ const $ = (id) => document.getElementById(id);
 const els = {
   rootPath: $('rootPath'), scanNote: $('scanNote'), rescanBtn: $('rescanBtn'), themeBtn: $('themeBtn'),
   appTabs: $('appTabs'),
-  // 全域总览（"全部"模式）
-  all: $('all'), allBytes: $('allBytes'), allSub: $('allSub'),
-  allRecFigure: $('allRecFigure'), allRecBtn: $('allRecBtn'), allRecNote: $('allRecNote'),
-  allApps: $('allApps'),
-  projLede: $('projLede'), projList: $('projList'), projUnres: $('projUnres'),
   single: $('single'),
   heroBytes: $('heroBytes'), heroSub: $('heroSub'),
   diagnosis: $('diagnosis'), diagLede: $('diagLede'), diagTitleText: $('diagTitleText'),
@@ -39,8 +34,8 @@ const els = {
 const state = {
   scan: null,            // /api/scan 的原始返回：{ apps: [每个 app 一份视图], grand, ... }
   apps: [],              // 本次扫描到的 app 视图，按注册表顺序
-  appId: null,           // 当前在看哪个 app；'' = 全域总览
-  index: null,           // 当前 app 的那一份视图 —— 单工具渲染只读它；全域模式下为 null
+  appId: null,           // 当前在看哪个 app
+  index: null,           // 当前 app 的那一份视图 —— 渲染只读它
   selection: new Set(),  // 勾选的是 "app/目标:路径"，同一路径在两个目标里不会互相顶掉
   open: new Set(),
   explain: new Set(),    // 展开了"这是什么 / 为什么在这里"的分类
@@ -52,9 +47,6 @@ const state = {
   recReady: false,
   busy: false,
 };
-
-/** 全域模式：一次看全部工具。这个取值不能与任何 app id 撞上。 */
-const ALL = '';
 
 /* 一个 app 可能有多个扫描目标（Cursor 的 ~/.cursor 与 App Support）。
    勾选、删除都要带上目标与 app，否则两个目标里的同名路径会互相冒名顶替。
@@ -171,23 +163,26 @@ function indexRows() {
   }
 }
 
-/** 默认看谁：全域总览 → 上次看的单工具 → 第一个装了的。一个都没装也停在总览。 */
+/** 顶部标签的展示顺序：按 Agent 名称的字母顺序，与注册表顺序解耦。 */
+const sortedApps = () =>
+  [...state.apps].sort((a, b) => a.label.localeCompare(b.label, 'en'));
+
+/** 默认看谁：上次看的那个 → 字母序第一个装了的 → 字母序第一个。 */
 function pickApp() {
+  const sorted = sortedApps();
   try {
     const last = localStorage.getItem(APP_KEY);
-    // ''（全域）是有效记忆：默认即管理视角
-    if (last !== null) {
-      if (last === ALL) return ALL;
-      const hit = state.apps.find((a) => a.app === last && a.totals.files > 0);
+    if (last) {
+      const hit = sorted.find((a) => a.app === last && a.totals.files > 0);
       if (hit) return hit.app;
     }
   } catch {}
-  return ALL;
+  return (sorted.find((a) => a.totals.files > 0) || sorted[0])?.app || null;
 }
 
-/** 把渲染层切到当前 app 的那一份视图；全域模式下切走单工具视图。 */
+/** 把渲染层切到当前 app 的那一份视图。 */
 function applyApp() {
-  state.index = state.appId === ALL ? null : state.apps.find((a) => a.app === state.appId);
+  state.index = state.apps.find((a) => a.app === state.appId) || null;
   state.selection.clear();
   state.group = null;   // 换 app，筛选也从头开始
   state.recReady = false;
@@ -203,14 +198,11 @@ function applyApp() {
   }
 
   try { localStorage.setItem(APP_KEY, state.appId); } catch {}
-  // 导航那四条指向单工具的区块（总览/清理/文件/任务）。全域模式下它们
-  // 全部隐藏 —— 留着只会让人点进一片空白。
-  document.body.dataset.mode = state.appId === ALL ? 'all' : 'single';
   if (state.index) {
     els.rootPath.textContent = state.index.targets.filter((t) => t.exists).map((t) => t.short).join(' + ')
       || `${state.index.label}：这台机器上没有`;
   } else {
-    els.rootPath.textContent = '全部工具';
+    els.rootPath.textContent = 'Agent Inspector';
   }
   els.scanNote.textContent = `扫描用时 ${(state.scan.durationMs / 1000).toFixed(1)}s`;
 
@@ -221,23 +213,18 @@ function applyApp() {
 const APP_KEY = 'zci-app';
 
 function renderAppTabs() {
-  els.appTabs.innerHTML = `<button type="button" class="app-tab ${state.appId === ALL ? 'is-on' : ''}"
-      role="tab" aria-selected="${state.appId === ALL}" data-app="${ALL}"
-      title="所有工具的总占地、可回收总量与按项目横切">
-      <span class="app-tab-name">全部</span>
-      <span class="app-tab-size">${fmtBytes(state.scan.grand.bytes)}</span>
-    </button>`
-    + state.apps.map((a) => {
-      const on = a.app === state.appId;
-      const empty = a.totals.files === 0;
-      return `<button type="button" class="app-tab ${on ? 'is-on' : ''}${empty ? ' is-empty' : ''}"
+  els.appTabs.innerHTML = sortedApps().map((a) => {
+    const on = a.app === state.appId;
+    const empty = a.totals.files === 0;
+    // 标签上只写名字：体积字数不一样，塞进来会让相邻的名字跟着左右挪。
+    // 数值放进 title，鼠标停上去仍然看得到。
+    return `<button type="button" class="app-tab ${on ? 'is-on' : ''}${empty ? ' is-empty' : ''}"
       role="tab" aria-selected="${on}" data-app="${esc(a.app)}"
       title="${esc(a.targets.map((t) => `${t.short}${t.exists ? '' : '（没有）'}`).join('、'))} · ${
-        a.totals.files.toLocaleString()} 个文件">
+        empty ? '未安装' : `${fmtBytes(a.totals.bytes)} · ${a.totals.files.toLocaleString()} 个文件`}">
       <span class="app-tab-name">${esc(a.label)}</span>
-      <span class="app-tab-size">${empty ? '未安装' : fmtBytes(a.totals.bytes)}</span>
     </button>`;
-    }).join('');
+  }).join('');
 }
 
 function filesOf(catId) {
@@ -245,355 +232,6 @@ function filesOf(catId) {
 }
 
 /* ── 首屏 ───────────────────────────────────────────────── */
-
-/* ── 全域总览 ───────────────────────────────────────────── */
-
-const summary = { data: null, at: 0 };
-const projects = { data: null, at: 0, inflight: null };
-const SUMMARY_MS = 15_000;
-const PROJECTS_MS = 60_000;
-
-/** 全域总量与"可回收"口径：复用 /api/scan 的缓存索引，轻。 */
-async function loadSummary(force = false) {
-  if (!force && summary.data && Date.now() - summary.at < SUMMARY_MS) return summary.data;
-  const res = await fetch('/api/summary' + (force ? '?refresh=1' : ''));
-  if (!res.ok) throw new Error((await res.json()).error || res.statusText);
-  summary.data = await res.json();
-  summary.at = Date.now();
-  return summary.data;
-}
-
-/** 项目横切：各工具的会话各扫一遍（服务端走缓存），慢，所以懒加载。 */
-function loadProjects(force = false) {
-  if (!force && projects.data && Date.now() - projects.at < PROJECTS_MS) {
-    renderProjects(projects.data);
-    return Promise.resolve(projects.data);
-  }
-  if (projects.inflight) return projects.inflight;
-  projects.inflight = fetch('/api/projects' + (force ? '?refresh=1' : ''))
-    .then(async (res) => {
-      if (!res.ok) throw new Error((await res.json()).error || res.statusText);
-      projects.data = await res.json();
-      projects.at = Date.now();
-      return projects.data;
-    })
-    .finally(() => { projects.inflight = null; });
-  return projects.inflight;
-}
-
-function renderGlobal() {
-  loadSummary().then((s) => {
-    // 换 tab 换得快了，晚到的旧响应要丢掉
-    if (state.appId !== ALL) return;
-
-    // 所有工具一个都没落盘：这屏不该显示 0 B 和一堆空条，而要直说"没有可审计的东西"。
-    if (!s.apps.some((a) => a.installed)) {
-      els.allBytes.textContent = '—';
-      els.allSub.innerHTML =
-        '这台机器上没找到任何一个 coding agent 的数据目录。' +
-        '装过其中一个之后刷新，它们的落盘位置会出现在上面的标签里。';
-      els.allRecFigure.textContent = '—';
-      els.allRecNote.textContent = '';
-      els.allRecBtn.disabled = true;
-      els.allApps.innerHTML = s.apps.map((a) => `
-        <div class="all-app is-empty">
-          <span class="all-app-name">${esc(a.label)}</span>
-          <span class="all-app-bar"><i style="width:0"></i></span>
-          <span class="all-app-bytes">未安装</span>
-          <span class="all-app-rec"></span>
-        </div>`).join('');
-      els.projLede.textContent = '没有数据目录可读取，因此没有可归并的会话。';
-      els.projList.innerHTML = '';
-      els.projUnres.hidden = true;
-      return;
-    }
-
-    els.allRecBtn.disabled = false;
-    els.allBytes.textContent = fmtBytes(s.grand.bytes);
-    els.allSub.innerHTML =
-      `${s.apps.length} 个工具共 <b>${s.grand.files.toLocaleString()}</b> 个文件、` +
-      `<b>${s.grand.dirs.toLocaleString()}</b> 个目录。`;
-    els.allRecFigure.textContent = fmtBytes(s.reclaimable);
-    els.allRecNote.innerHTML = s.reclaimableExtra > 0
-      ? `另有 <b>${fmtBytes(s.reclaimableExtra)}</b> 可清但默认没勾` +
-        `（体积大或你可能正用着，切到具体工具里放回来）。`
-      : '';
-    els.allApps.innerHTML = s.apps.map((a) => {
-      // 占比极小（Claude 的 28 MB 对 5 GB 就是 0.5%）时，纯按比例画会短到看不见。
-      // 给一个 1.2% 的下限让"有这么一点"可被看见，但真实数值始终写在右边 ——
-      // 条是示意，数字是事实。
-      const pct = s.grand.bytes ? (a.bytes / s.grand.bytes) * 100 : 0;
-      const width = a.installed && a.bytes > 0 ? Math.max(1.2, pct) : 0;
-      return `
-      <div class="all-app${a.installed ? '' : ' is-empty'}">
-        <span class="all-app-name">${esc(a.label)}</span>
-        <span class="all-app-bar"><i style="width:${width.toFixed(2)}%"></i></span>
-        <span class="all-app-bytes">${a.installed ? fmtBytes(a.bytes) : '未安装'}</span>
-        <span class="all-app-rec">${a.reclaimable ? '可清 ' + fmtBytes(a.reclaimable) : ''}</span>
-      </div>`;
-    }).join('');
-  }).catch((err) => {
-    els.allSub.innerHTML = `<b>读取失败：</b>${esc(err.message)}`;
-  });
-
-  // 项目横切懒加载：第一次进入总览才付读取五个会话库的代价。
-  // 这一步在真机上约 2～4 秒（Cursor 的库 364 MB），所以不能只留一句静态的
-  // "正在读取" —— 把已知道的东西先摆出来：几个工具、各自有多少会话。
-  if (!projects.data) {
-    const known = state.apps.filter((a) => a.targets.some((t) => t.exists));
-    els.projLede.innerHTML = known.length
-      ? `正在读取 ${known.length} 个工具的会话记录（${known.map((a) => esc(a.label)).join('、')}）…`
-      : '正在读取各工具的会话…';
-    els.projList.innerHTML = skeletonRows(known.length || 3);
-    els.projUnres.hidden = true;
-    loadProjects()
-      .then(() => { if (state.appId === ALL) renderProjects(projects.data); })
-      .catch((err) => {
-        els.projLede.innerHTML = `<b>读取失败：</b>${esc(err.message)}`;
-        els.projList.innerHTML = '';
-      });
-  } else {
-    renderProjects(projects.data);
-  }
-}
-
-/** 项目列表的加载占位：高度与真实行接近，加载完不会有整页跳动。 */
-const skeletonRows = (n) => Array.from({ length: Math.min(n + 2, 6) },
-  () => '<div class="proj-skel" aria-hidden="true"></div>').join('');
-
-function renderProjects(d) {
-  const total = d.totals;
-  // 哪个工具的会话库读不出来，总量就会静默少一块 —— 这件事在任何
-  // 渲染分支里都不能漏说，包括"一条会话都没有"的早退分支。
-  const warnHtml = d.problems?.length
-    ? d.problems.map((m) => `<p class="is-warn">${esc(m)}</p>`).join('')
-    : '';
-  // 一条会话都没读到：说清是"没有历史"而不是"归并失败"，这两件事该分开。
-  if (!d.projects.length && !d.unresolvable.length) {
-    els.projLede.innerHTML = warnHtml
-      ? '没有读到任何会话 —— 见下面的原因。'
-      : '没有读到任何会话。这些工具是装过的，但里面还没有可归并的历史记录。';
-    els.projList.innerHTML = '';
-    els.projUnres.hidden = !warnHtml;
-    els.projUnres.innerHTML = warnHtml;
-    return;
-  }
-  els.projLede.innerHTML =
-    `<b>${total.projects}</b> 个项目、<b>${total.sessions.toLocaleString()}</b> 条会话，` +
-    `正文合计 <b>${fmtBytes(total.bytes)}</b>。同一项目在多个工具里的残留归在一起 —— ` +
-    `点一行展开看是哪些工具、各留了多少。`;
-  if (!d.projects.length) {
-    els.projList.innerHTML = '<p class="empty">没有能按项目归并的会话 —— 它们都缺工作区信息，见下面那一段。</p>';
-  } else {
-    els.projList.innerHTML = d.projects.map((p) => `
-      <div class="proj" data-proj="${esc(p.key)}">
-        <button class="proj-head" type="button" aria-expanded="false">
-          <span class="proj-path" title="${esc(p.path || p.label)}">${esc(p.path || p.label)}</span>
-          <span class="proj-apps">${
-            // 用 app 的显示名而不是内部 id：这一行读起来是"ZCode 23 · Codex 5"，
-            // 和页面其它地方对得上。
-            p.apps.map((a) => `<i title="${esc(a.appLabel)}：${a.sessions} 条会话">${
-              esc(a.appLabel)} ${a.sessions}</i>`).join('')
-          }</span>
-          <span class="proj-bytes">${fmtBytes(p.bytes)}</span>
-          <span class="proj-caret" aria-hidden="true"></span>
-        </button>
-        <div class="proj-body" hidden></div>
-      </div>`).join('');
-  }
-  if (d.unresolvable.length) {
-    els.projUnres.hidden = false;
-    els.projUnres.innerHTML =
-      `<p>另有 <b>${d.unresolvable.length}</b> 组会话无法归并（共 ${fmtBytes(
-        d.unresolvable.reduce((s, u) => s + u.bytes, 0))}）：` +
-      `${d.unresolvable.slice(0, 6).map((u) => esc(u.label)).join('、')}` +
-      `${d.unresolvable.length > 6 ? ' 等' : ''}。` +
-      `Cursor 窗口没开过文件夹、Claude 会话首行读不到 cwd 时就会这样 —— 猜一个项目名比不猜更糟。</p>`;
-  } else {
-    els.projUnres.hidden = true;
-  }
-  // 某个工具的会话库读不出来时，总量会静默变小 —— 必须让人知道少了谁。
-  if (warnHtml) {
-    els.projUnres.hidden = false;
-    els.projUnres.innerHTML += warnHtml;
-  }
-}
-
-/** 展开一个项目：列出它下面所有工具的会话。展开是纯粹的本地动作，不再打接口。 */
-function toggleProject(key) {
-  const d = projects.data;
-  const p = d && d.projects.find((x) => x.key === key);
-  if (!p) return;
-  const wrap = els.projList.querySelector(`[data-proj="${CSS.escape(key)}"]`);
-  if (!wrap) return;
-  const body = wrap.querySelector('.proj-body');
-  const head = wrap.querySelector('.proj-head');
-  const opening = body.hidden;
-  body.hidden = !opening;
-  head.setAttribute('aria-expanded', String(opening));
-  wrap.classList.toggle('is-open', opening);
-  if (!opening) return;
-
-  // 会话清理分两条线：库里按行删（ZCode/Codex 的会话）与删正文文件
-  // （Claude 的全部、Codex 的残骸）。项目卡片不把两者搅进一个按钮 ——
-  // 这里只列出"能做什么"，每件事都从它自己的入口走。
-  const residual = p.tasks.filter((t) => t.residual);
-  const rows = p.tasks.map((t) => {
-    const clean = t.reason != null;
-    return `<div class="proj-task${clean ? '' : ' is-locked'}">
-      <span class="ptask-app">${esc(t.appLabel)}</span>
-      <span class="ptask-title" title="${esc(t.title)}">${esc(t.title)}</span>
-      <span class="ptask-state">${esc(clean ? (REASON_LABEL[t.reason] || t.reason) : (STATE_META_CN[t.state] || t.state))}</span>
-      <span class="ptask-bytes">${fmtBytes(t.bytes || 0)}</span>
-    </div>`;
-  }).join('');
-
-  const perApp = [...new Set(p.tasks.map((t) => t.appId))]
-    .map((id) => `<button class="btn btn-ghost btn-sm" data-gotoapp="${esc(id)}" type="button">${
-      esc((state.apps.find((a) => a.app === id) || {}).label || id)} 里查看</button>`).join('');
-
-  // 行级清理的候选：带 reason 的 ZCode/Codex 会话（库里真有行可删）。
-  // Claude 全部、Cursor 全部、残骸都不在此列 —— 它们没有"行"，各走各的线。
-  const rowPurgeable = p.tasks.filter((t) => t.reason != null && !t.residual &&
-    rowPurgeableLine(t.appId) === 'db');
-  const rowBytes = rowPurgeable.reduce((s, t) => s + (t.bytes || 0), 0);
-
-  body.innerHTML = `
-    <div class="proj-tasks">${rows}</div>
-    <div class="proj-actions">
-      ${rowPurgeable.length
-        ? `<button class="btn btn-primary btn-sm" data-projrows="${esc(key)}" type="button">按行清理会话库（${
-            rowPurgeable.length} 条 · ${fmtBytes(rowBytes)}）</button>`
-        : ''}
-      ${residual.length
-        ? `<button class="btn btn-ghost btn-sm" data-projfiles="${esc(key)}" type="button">清掉 ${
-            residual.length} 个残留文件（${fmtBytes(residual.reduce((s, t) => s + (t.bytes || 0), 0))}）</button>`
-        : ''}
-      ${perApp}
-    </div>
-    <p class="proj-note">带状态的（已删除 / 已归档 / 残骸）说明界面上已经不用了。` +
-      `「按行清理」跨工具编排进一个确认流：进程探测、备份、事务删除、VACUUM 与自检` +
-      `照单工具同一套四道闸走，逐工具分批执行。</p>`;
-}
-
-/** 这个 app 的会话清理走哪条线：'db' = 库里有行可删，'files' = 正文即文件，null = 只读。 */
-function rowPurgeableLine(appId) {
-  const a = state.apps.find((x) => x.app === appId);
-  if (!a) return null;
-  if (a.writable === false) return null;
-  return a.history === 'claude-files' ? 'files' : 'db';
-}
-
-/**
- * 把一个项目里各工具可按行清理的会话，编排进同一个任务抽屉。
- *
- * taskState.data 换成一个合成的跨 app 视图：tasks 来自多个工具、
- * 按 app 分组挂在 batches 上。抽屉的文案、空跑、确认串全部复用 ——
- * 只有 callPurge 知道要按 app 分批发请求。
- */
-function pickProjectRows(key) {
-  const d = projects.data;
-  const p = d && d.projects.find((x) => x.key === key);
-  if (!p) return;
-
-  const picked = p.tasks.filter((t) => t.reason != null && !t.residual &&
-    rowPurgeableLine(t.appId) === 'db');
-  if (!picked.length) return;
-
-  // 按 app 分组，保留每个工具自己的 db 形状（ZCode 的 main/index、Codex 的 dbs/bodies）
-  const byApp = new Map();
-  for (const t of picked) {
-    if (!byApp.has(t.appId)) byApp.set(t.appId, []);
-    byApp.get(t.appId).push(t);
-  }
-
-  const label = p.path ? p.path.split('/').pop() || p.path : (p.label || '该项目');
-  taskState.data = {
-    // 合成视图的标记：callPurge 看到它就走多 app 分批；单工具路径不变
-    crossApp: true,
-    projectKey: key,
-    appId: [...byApp.keys()].join('+'),
-    appLabel: [...new Set(picked.map((t) => t.appLabel))].join('、'),
-    backupDir: null,       // 由每个 app 的 /api/tasks 返回自带
-    db: {},                // 逐 app 的库信息在抽屉文案里按 app 拼
-    batches: [...byApp.entries()].map(([appId, tasks]) => ({
-      appId,
-      appLabel: tasks[0].appLabel,
-      ids: tasks.map((t) => t.id),
-      count: tasks.length,
-      bytes: tasks.reduce((s, t) => s + (t.bytes || 0), 0),
-    })),
-    tasks: picked,
-    totals: {
-      count: picked.length,
-      bytes: picked.reduce((s, t) => s + (t.bytes || 0), 0),
-      rows: picked.reduce((s, t) => s + (t.rows || 0), 0),
-      byState: [],
-    },
-    app: { running: false, hits: [] },   // 逐 app 探测在 callPurge 内做；这里只影响按钮初态
-    readOnly: false,
-    fileBased: false,
-    projectName: label,
-  };
-  taskState.sel = new Set(picked.map((t) => t.id));
-
-  openTaskDrawer();
-  // 任务面板的 lede/warn 是按单工具写的；项目卡片借走时同步成编排的说法，
-  // 否则屏幕上还是"总览模式下不读会话库"那句旧话。
-  renderTasks();
-  // 抽屉的"运行中"判断读 taskState.data.app.running —— 合成视图先按未运行渲染，
-  // 真实探测结果由空跑/删除前的逐 app 检查给出并回填。
-}
-
-/** 把一个项目下的残骸会话映射成文件勾选，走文件清理那条线（废纸篓/彻底删除）。 */
-function pickProjectResiduals(key) {
-  const d = projects.data;
-  const p = d && d.projects.find((x) => x.key === key);
-  if (!p) return;
-  state.selection.clear();
-  let n = 0;
-  for (const t of p.tasks) {
-    if (!t.residual || !t.bodyRel) continue;
-    const view = state.apps.find((a) => a.app === t.appId);
-    if (!view) continue;
-    // bodyRel 的基准因 app 而异：Codex 相对 ~/.codex（ sessions/… ），
-    // Claude 的会话视图却把 projects/ 当前缀剥掉了（见 tasks-claude.mjs）——
-    // 两种都试一次。查的是预建的 key 表，不再线性扫文件数组。
-    const rootKey = view.targets[0].key;
-    const f = state.fileByKey.get(`${t.appId}/${rootKey}:${t.bodyRel}`)
-      || state.fileByKey.get(`${t.appId}/${rootKey}:projects/${t.bodyRel}`);
-    if (f) { state.selection.add(f.k); n += 1; }
-  }
-  if (!n) {
-    els.projLede.innerHTML = '<b>这些残骸在文件清单里找不到对应文件</b> —— 目录大概变了，点「重新扫描」再来。';
-    return;
-  }
-  renderActionbar();
-  openDrawer();
-}
-
-/** 全域"清理推荐"：把各工具的 recommend 分类文件全勾上，打开同一个确认抽屉。 */
-async function pickAllRecommended() {
-  state.selection.clear();
-  let count = 0;
-  for (const a of state.apps) {
-    if (a.totals.files === 0) continue;
-    // 口径与单工具的"推荐清理"完全一致：recommend && !recommendDefaultOff。
-    // 全域模式下没有 recOff 的覆盖 —— 让人先看见全量再决定，恰是这个按钮的意义。
-    const want = new Set(a.catalog.filter((c) => c.recommend && !c.recommendDefaultOff).map((c) => c.id));
-    for (const f of a.files) {
-      if (!want.has(f.c)) continue;
-      state.selection.add(keyOf(f));
-      count += 1;
-    }
-  }
-  if (!count) {
-    els.allRecNote.innerHTML = '所有工具都没有可推荐清理的内容。';
-    return;
-  }
-  renderActionbar();
-  openDrawer();
-}
 
 function renderHero() {
   const t = state.index.totals;
@@ -830,7 +468,6 @@ function renderActionbar() {
 
 /** 一行文件属于哪个 app —— 行在 indexRows() 里就带着归属，不反查。 */
 const appIdOfRow = (f) => f.app || state.appId;
-const appLabelOfRow = (f) => (state.apps.find((a) => a.app === appIdOfRow(f)) || {}).label || '';
 const rowTitle = (f) => {
   const view = state.apps.find((a) => a.app === appIdOfRow(f));
   const t = view?.targets.find((x) => x.key === f.t);
@@ -852,8 +489,7 @@ function openDrawer() {
   els.drawerStats.innerHTML = `
     <div class="dstat"><span>条目</span><b>${rows.length.toLocaleString()}</b></div>
     <div class="dstat"><span>合计</span><b>${fmtBytes(bytes)}</b></div>
-    <div class="dstat"><span>最大一项</span><b title="${esc(
-      (state.appId === ALL ? appLabelOfRow(biggest) + ' · ' : '') + rowTitle(biggest))}">${fmtBytes(biggest.s)}</b></div>`;
+    <div class="dstat"><span>最大一项</span><b title="${esc(rowTitle(biggest))}">${fmtBytes(biggest.s)}</b></div>`;
 
   // 这批里都是些什么 —— 按分类摊开，别只给一个总数
   // 跨 app 时同名分类（各工具都有一类"缓存"）是不同的元信息对象，
@@ -879,10 +515,8 @@ function openDrawer() {
     const cut = f.p.lastIndexOf('/');
     const dir = cut < 0 ? '' : f.p.slice(0, cut + 1);
     const name = cut < 0 ? f.p : f.p.slice(cut + 1);
-    // 跨 app 时必须说清这一行是谁的：不同工具的相同路径名不是同一个东西
-    const appTag = state.appId === ALL ? appLabelOfRow(f) + '/' : '';
     return `<li title="${esc(rowTitle(f))}">
-      <span class="dl-path"><span class="row-dir">${esc(appTag + dir)}</span><b>${esc(name)}</b></span>
+      <span class="dl-path"><span class="row-dir">${esc(dir)}</span><b>${esc(name)}</b></span>
       <span>${fmtBytes(f.s)}</span></li>`;
   }).join('')
     + (rows.length > 300
@@ -1016,11 +650,7 @@ const hideTip = () => { els.tooltip.hidden = true; };
 /* ── 渲染总入口 ─────────────────────────────────────────── */
 
 function renderAll() {
-  // 全域模式与单工具模式渲染的是两套 DOM：前者是总量 + 项目横切，
-  // 后者是某一个工具的分类表与清单。二者不会同时可见。
-  els.all.hidden = state.appId !== ALL;
-  els.single.hidden = state.appId === ALL;
-  if (state.appId === ALL) { renderGlobal(); renderActionbar(); return; }
+  els.single.hidden = false;
   if (!state.recReady) { state.recOff = loadRecOff(); state.recReady = true; }
   renderHero();
   renderRecommend();
@@ -1153,36 +783,16 @@ function renderChips() {
 document.addEventListener('click', async (e) => {
   const t = e.target;
 
-  // 换 app / 切全域：分类表、清单、历史会话整条线跟着换
+  // 换 app：分类表、清单、历史会话整条线跟着换
   const tab = t.closest('[data-app]');
   if (tab) {
     if (tab.dataset.app === state.appId) return;
     state.appId = tab.dataset.app;
     applyApp();
     loadTasks();
-    document.getElementById(state.appId === ALL ? 'all' : 'overview')
-      .scrollIntoView({ behavior: 'smooth', block: 'start' });
+    document.getElementById('overview').scrollIntoView({ behavior: 'smooth', block: 'start' });
     return;
   }
-
-  // 全域"清理推荐"：各工具的 recommend 全勾上进抽屉
-  if (t.closest('#allRecBtn')) { pickAllRecommended(); return; }
-
-  // 项目横切：展开/收起一行的会话明细
-  const projHead = t.closest('.proj-head');
-  if (projHead) { toggleProject(projHead.closest('[data-proj]').dataset.proj); return; }
-
-  // 项目内：跳到对应工具看它的会话；或把残骸勾上进文件清理；或跨工具按行清理
-  const gotoApp = t.closest('[data-gotoapp]');
-  if (gotoApp) {
-    const tab = els.appTabs.querySelector(`[data-app="${CSS.escape(gotoApp.dataset.gotoapp)}"]`);
-    if (tab) tab.click();
-    return;
-  }
-  const projFiles = t.closest('[data-projfiles]');
-  if (projFiles) { pickProjectResiduals(projFiles.dataset.projfiles); return; }
-  const projRows = t.closest('[data-projrows]');
-  if (projRows) { pickProjectRows(projRows.dataset.projrows); return; }
 
   // "这是什么 / 为什么在这里"的展开开关（跟展开文件列表是两回事）
   const more = t.closest('[data-more]');
@@ -1314,13 +924,8 @@ document.addEventListener('click', async (e) => {
   }
   if (t.closest('#rescanBtn')) {
     els.rescanBtn.disabled = true;
-    // 全域视图的两份数据各有自己的 TTL；重新扫描必须把它们一起作废，
-    // 否则总览上的数字会比下面的清单旧一分钟。
-    summary.data = null;
-    projects.data = null;
     await load(true);
     await loadTasks(true);
-    if (state.appId === ALL) renderAll();
     els.rescanBtn.disabled = false;
     return;
   }
@@ -1364,15 +969,13 @@ document.addEventListener('scroll', hideTip, true);
 
 // 键盘
 document.addEventListener('keydown', (e) => {
-  // 全域模式下文件清单整块隐藏着，聚焦一个看不见的输入框只会让人困惑。
-  const inSingle = state.appId !== ALL;
-  if (e.key === '/' && inSingle && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
+  if (e.key === '/' && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
     e.preventDefault(); els.search.focus(); els.search.select();
   }
   if (e.key === 'Escape') {
     if (!els.drawer.hidden) closeDrawer();
     else if (!tEls.drawer.hidden) closeTaskDrawer();
-    else if (inSingle && document.activeElement === els.search) {
+    else if (document.activeElement === els.search) {
       els.search.value = ''; state.q = ''; els.search.blur(); renderGroups();
     }
   }
@@ -1408,7 +1011,7 @@ const tEls = {
   confirmBox: $('tConfirmBox'), word: $('tWord'), msg: $('tdrawerMsg'), go: $('tdrawerGo'),
 };
 
-const taskState = { data: null, sel: new Set(), q: '', states: new Set(), sort: 'size', group: false, foldedWs: new Set() };
+const taskState = { data: null, sel: new Set(), q: '', states: new Set(), sort: 'size', group: true, foldedWs: new Set(), open: new Set() };
 
 /* Cursor 孤儿会话回灌。与上面的"清理"是两条完全不同的线：
    这里只新增行，不删任何东西；选中集合也单独放，避免和清理勾选串台。 */
@@ -1452,12 +1055,21 @@ const fmtDate = (ms) => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
 
+/** 详情里给到分钟 —— 同一天里的两条会话，"最后使用"只写日期就分不开了。 */
+const fmtDateTime = (ms) => {
+  if (!ms) return '—';
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${fmtDate(ms)} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
 async function loadTasks(refresh = false) {
   const appId = state.appId;
   const view = state.index;
   taskState.data = null;
   taskState.sel.clear();
   taskState.states.clear();
+  taskState.open.clear();
   tEls.warn.hidden = true;
   tEls.comp.hidden = true;
   tEls.foot.hidden = true;
@@ -1732,28 +1344,6 @@ function renderTasks() {
   const del = d.totals.byState.find((g) => g.state === 'deleted');
   const text = d.totals.bytes;
 
-  // 跨 app 合成视图：这一屏的任务面板被项目卡片借去展示编排批次，
-  // 说法与单工具不同 —— 它不是"某个工具的会话库"，是"这个项目在各工具里的残留"。
-  if (d.crossApp) {
-    tEls.lede.innerHTML =
-      `<b>${esc(d.projectName)}</b> 在 ${d.batches.length} 个工具里共 ` +
-      `<b>${d.totals.count}</b> 条可清理会话、<b>${fmtBytes(d.totals.bytes)}</b> 正文。` +
-      `仍被工具界面使用的不会出现在这里。`;
-    tEls.warn.hidden = false;
-    tEls.warn.className = 'app-warn is-ok';
-    tEls.warn.innerHTML = `${icon('box')}<div>跨工具清理按工具<b>逐个</b>执行：每个工具独立过` +
-      `进程探测 → 备份 → 事务删除 → VACUUM → 自检。哪个工具正开着，就只卡那一步，` +
-      `其余照常完成。</div>`;
-    tEls.dbBar.innerHTML = '';
-    tEls.comp.hidden = true;
-    renderTaskChips();
-    renderTaskList();
-    renderTaskFoot();
-    renderTaskQuick();
-    renderComposition();
-    return;
-  }
-
   // Codex 是两段式存储：库里只有索引和投影，正文在 sessions/ 的 rollout 文件里。
   // 那句话要是照抄 ZCode 的说法，就成了"158 MB 的库装着 581 MB 的正文"。
   tEls.lede.innerHTML = d.readOnly
@@ -1768,7 +1358,7 @@ function renderTasks() {
       ? `${esc(who)} 的会话分两处存：索引库 <b>${fmtBytes(d.db.total)}</b>，` +
         `正文文件 <b>${fmtBytes(d.db.bodies.bytes)}</b>（<b>${d.db.bodies.count}</b> 个 rollout 文件）。` +
         `读到 <b>${d.totals.count}</b> 个会话。`
-      : `会话库 <b>${fmtBytes(d.db.total)}</b>，装着 <b>${d.totals.count}</b> 个任务、` +
+      : `会话库 <b>${fmtBytes(d.db.total)}</b>，装着 <b>${d.totals.count}</b> 个会话、` +
         `<b>${fmtBytes(text)}</b> 的正文。` +
         (del
           ? `其中 <b>${del.count}</b> 个已在界面上删除，仍占 <b>${fmtBytes(del.bytes)}</b>。`
@@ -1871,7 +1461,7 @@ function renderComposition() {
 }
 
 const STATE_META_CN = {
-  deleted: '已删除任务', archived: '已归档任务', active: '活跃任务',
+  deleted: '已删除会话', archived: '已归档会话', active: '活跃会话',
   untracked: '界面不可见', empty: '空文件',
 };
 const STATUS_CLASS_TONE = { 'st-serious': 'st-serious', 'st-warning': 'st-warning', 'st-good': 'st-good', 'st-critical': 'st-critical' };
@@ -1893,21 +1483,47 @@ function renderTaskList() {
 
   const rowHtml = (t) => {
     const sel = taskState.sel.has(t.id);
+    const open = taskState.open.has(t.id);
     const meta = [
       taskState.group ? '' : shortPath(t.workspace),
       `${fmtDate(t.updatedAt)} 最后使用`,
+      t.model ? t.model : '',
       t.children ? `${t.children} 子会话` : '',
       t.typeLabel,
     ].filter(Boolean).join(' · ');
-    return `<div class="trow ${sel ? 'is-on' : ''}" data-task="${esc(t.id)}">
-      <input type="checkbox" data-task-box="${esc(t.id)}" ${sel ? 'checked' : ''}
-        ${isPurgeable(t) ? '' : 'disabled'} aria-label="选择任务 ${esc(t.title)}">
-      <div class="trow-main">
-        <span class="trow-title" title="${esc(t.title)}">${esc(t.title)}</span>
-        <span class="trow-meta" title="${esc(t.workspace)}"><b class="trow-state-m">${esc(stateLabel(t))}</b>${esc(meta)}</span>
+    const body = t.bodyRel
+      ? `<button class="btn btn-ghost btn-sm" type="button" data-locate="${esc(t.bodyRel)}">在文件清单中定位</button>`
+      : '';
+    return `<div class="tsession ${open ? 'is-open' : ''}">
+      <div class="trow ${sel ? 'is-on' : ''}" data-task="${esc(t.id)}">
+        <button class="trow-caret" type="button" data-task-toggle="${esc(t.id)}"
+          aria-expanded="${open}" title="${open ? '收起' : '会话详情'}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+        <input type="checkbox" data-task-box="${esc(t.id)}" ${sel ? 'checked' : ''}
+          ${isPurgeable(t) ? '' : 'disabled'} aria-label="选择会话 ${esc(t.title)}">
+        <div class="trow-main">
+          <span class="trow-title" title="${esc(t.title)}">${esc(t.title)}</span>
+          <span class="trow-meta" title="${esc(t.workspace)}"><b class="trow-state-m">${esc(stateLabel(t))}</b>${esc(meta)}</span>
+        </div>
+        <span class="trow-pill ${stateTone(t)}">${esc(stateLabel(t))}</span>
+        <span class="trow-size">${fmtBytes(t.bytes)}</span>
       </div>
-      <span class="trow-pill ${stateTone(t)}">${esc(stateLabel(t))}</span>
-      <span class="trow-size">${fmtBytes(t.bytes)}</span>
+      ${open ? `<div class="tdetail" data-detail="${esc(t.id)}">
+        <dl class="tdetail-grid">
+          <div><dt>最后使用</dt><dd>${fmtDateTime(t.updatedAt)}</dd></div>
+          <div><dt>创建</dt><dd>${fmtDateTime(t.createdAt)}</dd></div>
+          <div><dt>文件夹</dt><dd title="${esc(t.workspace)}"><code>${esc(shortPath(t.workspace) || '—')}</code></dd></div>
+          <div><dt>模型</dt><dd>${esc(t.model || '—')}</dd></div>
+          <div class="tspan"><dt>会话 ID</dt><dd><code>${esc(t.id)}</code></dd></div>
+          <div class="tspan"><dt>正文</dt><dd title="${esc(t.bodyRel || '')}"><code>${esc(t.bodyRel || '库内存储')}</code></dd></div>
+        </dl>
+        <div class="tdetail-acts">
+          <button class="btn btn-ghost btn-sm" type="button" data-copy-id="${esc(t.id)}">复制会话 ID</button>
+          ${body}
+        </div>
+      </div>` : ''}
     </div>`;
   };
 
@@ -1930,18 +1546,33 @@ function renderTaskList() {
   tEls.list.innerHTML = groups.map((g) => {
     const folded = taskState.foldedWs.has(g.ws);
     const selN = g.tasks.filter((t) => taskState.sel.has(t.id)).length;
+    const named = g.ws === '(未知工作区)';
+    const base = named ? g.ws : (g.ws.split('/').filter(Boolean).pop() || g.ws);
     return `<section class="tgroup ${folded ? 'is-folded' : ''}" data-ws="${esc(g.ws)}">
       <header class="tgroup-head" data-ws-toggle="${esc(g.ws)}" role="button" tabindex="0"
         aria-expanded="${!folded}" title="${esc(g.ws)}">
         <svg class="tgroup-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
-        <span class="tgroup-ws">${esc(shortPath(g.ws))}</span>
-        <span class="tgroup-n">${g.tasks.length} 个${selN ? ` · 已选 ${selN}` : ''}</span>
+        <span class="tgroup-name">
+          <b>${esc(base)}</b>
+          <code>${esc(shortPath(g.ws))}</code>
+        </span>
+        <span class="tgroup-n">${g.tasks.length} 个会话${selN ? ` · 已选 ${selN}` : ''}</span>
         <span class="tgroup-size">${fmtBytes(g.bytes)}</span>
       </header>
       ${folded ? '' : `<div class="tgroup-body">${g.tasks.map(rowHtml).join('')}</div>`}
     </section>`;
   }).join('');
+}
+
+/** 从会话详情跳到文件清单：定位正文文件并让搜索框带着它。 */
+function locateBody(rel) {
+  const hit = state.index.files.find((f) => f.p === rel || f.p.endsWith('/' + rel));
+  const q = hit ? hit.p : rel;
+  state.q = q.toLowerCase();
+  els.search.value = q;
+  renderGroups();
+  document.getElementById('files').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function taskSelTotals() {
@@ -1970,16 +1601,14 @@ function renderTaskFoot() {
   // 这个按钮永远可点 —— 它只是打开抽屉。空跑核对是只读的，应用开着也安全，
   // 拦住用户看清单没有任何好处。真正被拦的是抽屉里那个「删除」。
   const running = d?.app?.running;
-  tEls.purgeBtn.title = d?.crossApp
-    ? `跨 ${d.batches.length} 个工具按行清理这 ${count} 条会话：逐工具探测进程、备份、删除、自检`
-    : d?.fileBased
-      ? `把这 ${count} 个会话的正文文件交给文件清理：默认移入废纸篓`
-      : running
-        ? `${d?.appLabel || '应用'} 正在运行：可以先空跑核对，但要完全退出它才能删除`
-        : `清理这 ${count} 个任务；动手前会自动备份`;
+  tEls.purgeBtn.title = d?.fileBased
+    ? `把这 ${count} 个会话的正文文件交给文件清理：默认移入废纸篓`
+    : running
+      ? `${d?.appLabel || '应用'} 正在运行：可以先空跑核对，但要完全退出它才能删除`
+      : `清理这 ${count} 个会话；动手前会自动备份`;
 }
 
-/* ── 首屏的任务快捷项 ───────────────────────────────────── */
+/* ── 首屏的会话快捷项 ───────────────────────────────────── */
 
 /* 默认收紧范围：只动"界面上删过、且确实放着没用了"的。
    近期还在用的、置顶的，一律先放过 —— 它们也可能是你回头还要翻的旧对话。 */
@@ -2023,7 +1652,7 @@ function renderTaskQuick() {
   const s = taskQuickSet();
   els.tqFigure.textContent = fmtBytes(s.bytes);
   els.tqSub.innerHTML =
-    `${esc(d.appLabel)} 界面上你删过的 <b>${del.count}</b> 个任务。它的"删除"只是打个标记 —— ` +
+    `${esc(d.appLabel)} 界面上你删过的 <b>${del.count}</b> 个会话。它的"删除"只是打个标记 —— ` +
     `正文一行没少，${fmtBytes(del.bytes)} 还躺在会话库里。`;
 
   els.taskAge.value = String(tq.ageDays);
@@ -2043,11 +1672,11 @@ function renderTaskQuick() {
   if (s.skippedRecent) skips.push(`${s.skippedRecent} 个近期还在用的`);
   if (tq.skipPinned && s.skippedPinned) skips.push(`${s.skippedPinned} 个置顶的`);
   els.taskQuickCap.innerHTML =
-    `勾选 ${s.tasks.length} 个任务并摊开确认清单，<b>不会立刻删除</b>。` +
+    `勾选 ${s.tasks.length} 个会话并摊开确认清单，<b>不会立刻删除</b>。` +
     (skips.length ? `<span class="rec-off">已跳过 ${skips.join('、')}。</span>` : '');
 }
 
-/* ── 任务清理抽屉 ───────────────────────────────────────── */
+/* ── 会话清理抽屉 ───────────────────────────────────────── */
 
 /**
  * 打开清理确认。正文本身就是文件的会话（Claude Code 的全部、Codex 的残骸）没有"行"可删，
@@ -2098,34 +1727,23 @@ function openTaskDrawer() {
        <div class="dstat"><span>库里的条目</span><b>${rows.toLocaleString()}</b></div>
        <div class="dstat"><span>正文文件合计</span><b>${fmtBytes(bytes)}</b></div>`
     : `<div class="dstat"><span>会话</span><b>${count.toLocaleString()}</b></div>
-       <div class="dstat"><span>涉及工具</span><b>${d.crossApp ? d.batches.length : 1}</b></div>
        <div class="dstat"><span>正文合计</span><b>${fmtBytes(bytes)}</b></div>`;
 
   // 会写到哪几个库，由后端报的路径决定 —— 各工具不一样，前端不硬编码文件名
-  if (d.crossApp) {
-    // 跨 app：逐工具说一句写哪里、备份到哪。库路径要等各 app 的 /api/tasks
-    // 才有 —— 合成视图里没有，就按工具名给原则，细节空跑时摊开。
-    tEls.note.innerHTML =
-      `这一批横跨 <b>${d.batches.length}</b> 个工具（${esc(d.batches.map((b) => b.appLabel).join('、'))}），` +
-      `将按工具<b>逐个</b>执行：每个工具独立过进程探测 → 备份 → 事务删除 → VACUUM → 自检，` +
-      `任何一个被拒绝（比如它还开着）就停在那里，已完成的工具不受影响。` +
-      `确认串只需要输一次。`;
-  } else {
-    const dbFiles = (d.db.dbs || [d.db.main, d.db.index].filter(Boolean))
-      .map((x) => shortPath(x.path));
-    const dbsTxt = dbFiles.map((p) => `<code>${esc(p)}</code>`).join(' 和 ');
-    const backupTxt = `动手前会把库完整备份到 <code>${esc(shortPath(d.backupDir))}</code>。`;
-    tEls.note.innerHTML = d.app.running
-      ? `<b>${esc(who)} 仍在运行</b>，现在不能删除。请完全退出 ${esc(who)} 后重新打开本页。`
-      : `删除会把这些会话的行从 ${dbsTxt} 里彻底移除，` +
-        `随后 <code>VACUUM</code> 重建数据库把空间真正交还给磁盘。${backupTxt}` +
-        // Codex 的正文是磁盘上的 rollout 文件，行级删除碰不到它 —— 不说清楚，
-        // 用户会以为回收的数字偏小是工具没干活。
-        (d.db.bodies
-          ? `但 <b>Codex 的正文不在这些库里</b>：它存在 <code>sessions/</code> 的 rollout 文件里，` +
-            `这里只抹索引行。文件要等索引里再也没有它们，才会变成孤儿、归「文件清单」那条线清理。`
-          : `<b>正文合计只是下限</b> —— 实际回收通常更多，因为索引也会一起收缩。`);
-  }
+  const dbFiles = (d.db.dbs || [d.db.main, d.db.index].filter(Boolean))
+    .map((x) => shortPath(x.path));
+  const dbsTxt = dbFiles.map((p) => `<code>${esc(p)}</code>`).join(' 和 ');
+  const backupTxt = `动手前会把库完整备份到 <code>${esc(shortPath(d.backupDir))}</code>。`;
+  tEls.note.innerHTML = d.app.running
+    ? `<b>${esc(who)} 仍在运行</b>，现在不能删除。请完全退出 ${esc(who)} 后重新打开本页。`
+    : `删除会把这些会话的行从 ${dbsTxt} 里彻底移除，` +
+      `随后 <code>VACUUM</code> 重建数据库把空间真正交还给磁盘。${backupTxt}` +
+      // Codex 的正文是磁盘上的 rollout 文件，行级删除碰不到它 —— 不说清楚，
+      // 用户会以为回收的数字偏小是工具没干活。
+      (d.db.bodies
+        ? `但 <b>Codex 的正文不在这些库里</b>：它存在 <code>sessions/</code> 的 rollout 文件里，` +
+          `这里只抹索引行。文件要等索引里再也没有它们，才会变成孤儿、归「文件清单」那条线清理。`
+        : `<b>正文合计只是下限</b> —— 实际回收通常更多，因为索引也会一起收缩。`);
 
   const sorted = picked.slice().sort((a, b) => b.bytes - a.bytes);
   tEls.listD.innerHTML = sorted.slice(0, 200).map((t) =>
@@ -2166,16 +1784,13 @@ function checkLine(data) {
 }
 
 /**
- * 执行删除（或空跑）。单工具走一条请求；跨 app 合成视图按批次逐个发 ——
- * 每批独立过服务端的四道闸（进程探测 → 备份 → 事务+外键 → VACUUM+自检），
- * 任一批被拒就停下：后面的工具还没动，人看到的是"走到哪、卡在哪"。
+ * 执行删除（或空跑）。一条请求过完服务端的四道闸：
+ * 进程探测 → 备份 → 事务+外键 → VACUUM+自检。被拒时服务端说清卡在哪一步。
  */
 async function callPurge(dryRun) {
   const d = taskState.data;
-  const batches = d.crossApp
-    ? d.batches
-    : [{ appId: state.appId, appLabel: d.appLabel, ids: [...taskState.sel] }];
-  const idsOf = (b) => d.crossApp ? b.ids : [...taskState.sel];
+  const ids = [...taskState.sel];
+  if (!d || !ids.length) return;
 
   tEls.go.disabled = true;
   tEls.dryBtn.disabled = true;
@@ -2184,48 +1799,20 @@ async function callPurge(dryRun) {
   if (!dryRun) tEls.go.textContent = '处理中…';
 
   try {
-    const results = [];
-    for (const b of batches) {
-      const res = await fetch('/api/tasks/purge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(dryRun
-          ? { app: b.appId, ids: idsOf(b), dryRun: true }
-          : { app: b.appId, ids: idsOf(b), confirm: tEls.word.value }),
-      });
-      const data = await res.json();
-      // 任一批被拒就停：后面的工具还没动。报错里带上工具名，人知道卡在谁那里。
-      if (!res.ok) {
-        if (results.length) {
-          results.push({ appLabel: b.appLabel, ok: false, error: data.error || res.statusText });
-          throw new CrossAppError(results, b.appLabel);
-        }
-        throw new Error(data.error || res.statusText);
-      }
-      results.push({ appLabel: b.appLabel, appId: b.appId, ok: true, data });
-      // 已完成一批就更新进度，几十秒的等待里让人看见走到哪了
-      tEls.msg.textContent = dryRun
-        ? `空跑核对中… ${results.filter(r => r.ok).length}/${batches.length}（${b.appLabel} 完成）`
-        : `处理中… ${results.filter(r => r.ok).length}/${batches.length}（${b.appLabel} 完成）`;
-    }
-
-    if (dryRun) renderCrossDryRun(results);
-    else await finishCrossPurge(results);
+    const res = await fetch('/api/tasks/purge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(dryRun
+        ? { app: state.appId, ids, dryRun: true }
+        : { app: state.appId, ids, confirm: tEls.word.value }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    if (dryRun) renderDryRun(data);
+    else await finishPurge(data);
   } catch (err) {
     tEls.msg.className = 'drawer-msg is-err';
-    if (err instanceof CrossAppError) {
-      const done = err.results.filter((r) => r.ok);
-      tEls.msg.innerHTML = err.dryRun
-        ? `空跑在 <b>${esc(err.stoppedAt)}</b> 处停下：${esc(err.lastError)}<br>` +
-          (done.length ? `此前已核对：${done.map((r) => esc(r.appLabel)).join('、')}（无任何改动）。` : '')
-        : `<b>${esc(err.stoppedAt)} 被拒绝</b>：${esc(err.lastError)}<br>` +
-          (done.length
-            ? `已完成的：${done.map((r) => esc(r.appLabel)).join('、')}（各自备份、各自自检）。` +
-              `刷新后再来，已完成的那几个不会再出现在候选里。`
-            : '第一个工具就被拒绝，没有任何改动。');
-    } else {
-      tEls.msg.textContent = err.message;
-    }
+    tEls.msg.textContent = err.message;
   } finally {
     tEls.go.disabled = false;
     tEls.dryBtn.disabled = false;
@@ -2233,63 +1820,39 @@ async function callPurge(dryRun) {
   }
 }
 
-/** 跨 app 批处理的中途失败：带着已完成的部分与卡住的位置抛出。 */
-class CrossAppError extends Error {
-  constructor(results, stoppedAt) {
-    super(`在 ${stoppedAt} 处被拒`);
-    this.results = results;
-    this.stoppedAt = stoppedAt;
-    this.lastError = results[results.length - 1]?.error || '';
-    this.dryRun = false;
-  }
-}
-
-/** 跨 app 空跑：逐工具摊开各自会删的行，与单工具同一版面。 */
-function renderCrossDryRun(results) {
-  let html = '';
-  let totalRows = 0;
-  for (const r of results) {
-    const { data } = r;
-    const rows = Array.isArray(data.perDb)
-      ? data.perDb.map((x) => [`${x.table}（${x.name}）`, x.count ?? x.deleted])
-      : Object.entries(data.counts || {}).filter(([, n]) => n > 0)
-          .map(([k, n]) => [ROW_LABEL[k] || k, n]);
-    const n = rows.reduce((s, [, c]) => s + c, 0);
-    totalRows += n;
-    html += `<li class="dry-head"><span>${esc(r.appLabel)}：${n.toLocaleString()} 行</span><span></span></li>`
-      + rows.map(([k, c]) => `<li><span>　${esc(k)}</span><span>${c.toLocaleString()}</span></li>`).join('');
-  }
-  tEls.dryList.innerHTML = html;
+/** 空跑：逐表摊开会删掉的行，数据库没有任何改动。 */
+function renderDryRun(data) {
+  const rows = Array.isArray(data.perDb)
+    ? data.perDb.map((x) => [`${x.table}（${x.name}）`, x.count ?? 0])
+    : Object.entries(data.counts || {}).filter(([, n]) => n > 0)
+        .map(([k, n]) => [ROW_LABEL[k] || k, n]);
+  const totalRows = rows.reduce((s, [, c]) => s + c, 0);
+  const bodies = data.bodyBytes
+    ? `<br>另有 <b>${fmtBytes(data.bodyBytes)}</b> 正文在 rollout 文件里 —— 这里只删索引行，正文要等它们变成孤儿后走文件清理。`
+    : '';
+  tEls.dryList.innerHTML = rows
+    .map(([k, c]) => `<li><span>${esc(k)}</span><span>${c.toLocaleString()}</span></li>`).join('');
   tEls.dryWrap.hidden = false;
   tEls.msg.className = 'drawer-msg is-ok';
-  tEls.msg.textContent = `空跑完成：${results.length} 个工具共 ${totalRows.toLocaleString()} 行，数据库没有任何改动。确认无误后输入「清理」再删除。`;
+  tEls.msg.innerHTML =
+    `空跑完成：共 <b>${totalRows.toLocaleString()}</b> 行，数据库没有任何改动。${bodies}` +
+    `确认无误后输入「清理」再删除。`;
 }
 
-/** 跨 app 删除完成：逐工具汇报回收量与完整性，然后刷新两边的视图。 */
-async function finishCrossPurge(results) {
-  const perApp = results.map((r) => {
-    const { data } = r;
-    return `<li><span>${esc(r.appLabel)}</span><span>${
-      fmtBytes(data.before.total)} → ${fmtBytes(data.after.total)}，回收 ${fmtBytes(data.freed)}</span></li>`;
-  }).join('');
-  const totalFreed = results.reduce((s, r) => s + (r.data.freed || 0), 0);
+/** 删除完成：报回收量与自检结论，然后刷新会话与文件两边的视图。 */
+async function finishPurge(data) {
   tEls.msg.className = 'drawer-msg is-ok';
   tEls.msg.innerHTML =
-    `完成，回收 <b>${fmtBytes(totalFreed)}</b>。<ul class="cross-result">${perApp}</ul>` +
-    `每个工具各自备份、各自过完整性检查。`;
+    `完成，回收 <b>${fmtBytes(data.freed)}</b>：` +
+    `${fmtBytes(data.before.total)} → ${fmtBytes(data.after.total)}。` +
+    `${esc(checkLine(data))}备份已经写好。`;
   await loadTasks(true);
   await load(true);          // 库变小了，文件清单也要重算
-  // 项目横切的数据也过时了：作废缓存，下次进总览重算
-  projects.data = null;
-  projects.at = 0;
-  summary.data = null;
-  summary.at = 0;
-  if (state.appId === ALL) renderGlobal();
   renderTasks();
   setTimeout(closeTaskDrawer, 3000);
 }
 
-/* 任务面板事件 */
+/* 会话面板事件 */
 document.addEventListener('click', (e) => {
   const t = e.target;
 
@@ -2317,6 +1880,27 @@ document.addEventListener('click', (e) => {
     renderTaskList();
     return;
   }
+
+  // 会话详情：展开 / 收起。放在行处理之前 —— 点开三角不该顺手把会话勾上。
+  const tgl = t.closest('[data-task-toggle]');
+  if (tgl) {
+    const id = tgl.dataset.taskToggle;
+    taskState.open.has(id) ? taskState.open.delete(id) : taskState.open.add(id);
+    renderTaskList();
+    return;
+  }
+
+  const copy = t.closest('[data-copy-id]');
+  if (copy) {
+    navigator.clipboard?.writeText(copy.dataset.copyId).then(() => {
+      copy.textContent = '已复制';
+      setTimeout(() => { copy.textContent = '复制会话 ID'; }, 1200);
+    }).catch(() => {});
+    return;
+  }
+
+  const locate = t.closest('[data-locate]');
+  if (locate) { locateBody(locate.dataset.locate); return; }
 
   const box = t.closest('[data-task-box]');
 
@@ -2375,26 +1959,6 @@ tEls.word.addEventListener('input', () => {
     tEls.msg.textContent = ''; tEls.msg.className = 'drawer-msg';
   }
 });
-
-/* ── 顶栏导航：高亮当前所在的一段 ───────────────────────── */
-
-(function initNav() {
-  const links = [...document.querySelectorAll('.nav-a')];
-  const targets = links
-    .map((a) => document.querySelector(a.getAttribute('href')))
-    .filter(Boolean);
-  if (!targets.length) return;
-
-  let raf = 0;
-  const sync = () => {
-    raf = 0;
-    let current = targets[0];
-    for (const t of targets) if (t.getBoundingClientRect().top <= 150) current = t;
-    for (const a of links) a.classList.toggle('is-on', a.getAttribute('href') === `#${current.id}`);
-  };
-  addEventListener('scroll', () => { if (!raf) raf = requestAnimationFrame(sync); }, { passive: true });
-  sync();
-})();
 
 loadTqScope();
 
