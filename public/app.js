@@ -790,7 +790,8 @@ document.addEventListener('click', async (e) => {
     state.appId = tab.dataset.app;
     applyApp();
     loadTasks();
-    document.getElementById('overview').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // 会话管理在最上面：换工具后回到页首，而不是滚到磁盘总览。
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     return;
   }
 

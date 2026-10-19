@@ -1001,8 +1001,15 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   background: var(--surface);
+  /* Cursor 的键族能摊出上百行：构成图也关进自己的滚动区，
+     否则会话列表还没出现，页面已经被这张图撑长了。 */
+  max-height: min(44vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
-.tcomp-title { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.tcomp-title { font-size: 12px; font-weight: 600; color: var(--ink-2); flex: none; }
+.tcomp-row { flex: none; }
 .tcomp-row {
   display: grid;
   grid-template-columns: minmax(96px, 168px) minmax(0, 1fr) auto;
@@ -1028,15 +1035,17 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
 .tcomp-row.is-total .tcomp-n { color: var(--ink); font-weight: 600; }
 .tcomp-row.is-total .tcomp-bar i { background: var(--accent); }
 
-/* 任务列表：246 行不该把页面撑成一万像素，给它自己的滚动区 */
+/* 任务列表：会话条数动辄上百，给它自己的滚动区，不把整页撑长。
+   组头在滚动区里吸顶 —— 滑到第 80 条时仍然知道自己在哪个项目下。 */
 .task-list {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   overflow: hidden auto;
-  max-height: min(58vh, 560px);
+  max-height: min(62vh, 640px);
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 .task-list:empty { display: none; }
 
@@ -1201,6 +1210,9 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
 .tgroup { border-bottom: 1px solid var(--line); }
 .tgroup:last-child { border-bottom: 0; }
 .tgroup-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto auto;
   align-items: center;

@@ -42,6 +42,86 @@
        各工具把东西存在完全不同的地方，把五张分类表叠在一起只会骗人。 -->
   <div class="single" id="single">
 
+  <!-- ── 会话管理 ───────────────────────────────────────── -->
+  <section class="panel" id="tasks" aria-labelledby="taskTitle">
+    <h2 id="taskTitle">会话管理</h2>
+
+    <div class="app-warn" id="taskWarn" hidden></div>
+
+    <p class="lede" id="taskLede">正在读取会话库…</p>
+    <div class="dbbar" id="dbBar"></div>
+    <div class="tcomp" id="taskComp" hidden></div>
+
+    <div class="toolbar">
+      <label class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>
+        </svg>
+        <input type="search" id="taskSearch" placeholder="搜索会话标题或文件夹…" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="chips" id="taskChips" role="group" aria-label="按会话状态筛选"></div>
+      <label class="sort">
+        <span>排序</span>
+        <select id="taskSort">
+          <option value="size">体积</option>
+          <option value="time">最后使用</option>
+          <option value="title">标题</option>
+        </select>
+      </label>
+      <button class="btn btn-ghost btn-sm is-on" id="taskGroupBtn" type="button" aria-pressed="true">
+        按项目分组
+      </button>
+      <div class="btn-pair" role="group" aria-label="会话勾选快捷操作">
+        <button class="btn btn-ghost btn-sm" id="taskPickAll" type="button">全选</button>
+        <button class="btn btn-ghost btn-sm" id="taskClearSel" type="button">取消</button>
+      </div>
+    </div>
+
+    <div class="task-list" id="taskList"></div>
+    <p class="empty" id="taskEmpty" hidden>没有匹配的会话。</p>
+
+    <div class="task-foot" id="taskFoot" hidden>
+      <div class="ab-summary">
+        <span>已选</span> <strong id="tfCount">0</strong>
+        <span>个会话 · 文本 <b id="tfBytes">0 B</b></span>
+      </div>
+      <button class="btn btn-primary" id="taskPurgeBtn" type="button">清理…</button>
+    </div>
+
+    <!-- Cursor 专用：界面看不到、transcript 还在的会话 -->
+    <div class="recover" id="recoverPanel" hidden>
+      <div class="recover-head">
+        <div>
+          <h3>界面里看不到的会话</h3>
+          <p class="recover-lede" id="recoverLede"></p>
+        </div>
+        <div class="recover-picks">
+          <button class="btn btn-ghost btn-sm" id="recoverPickAll" type="button">全选</button>
+          <button class="btn btn-ghost btn-sm" id="recoverClear" type="button">取消</button>
+        </div>
+      </div>
+      <div class="app-warn" id="recoverWarn" hidden></div>
+      <div class="recover-list" id="recoverList"></div>
+      <div class="recover-foot" id="recoverFoot" hidden>
+        <span>已选 <b id="recoverCount">0</b> 个会话 · <b id="recoverBubbles">0</b> 条消息</span>
+        <button class="btn btn-primary btn-sm" id="recoverBtn" type="button">回灌到 Cursor…</button>
+      </div>
+      <div class="recover-confirm" id="recoverConfirm" hidden>
+        <p id="recoverConfNote"></p>
+        <label class="purge-confirm">输入 <b id="recoverWordHint">回灌</b> 确认
+          <input id="recoverWord" autocomplete="off" spellcheck="false">
+        </label>
+        <div class="recover-confirm-btns">
+          <button class="btn btn-ghost btn-sm" id="recoverCancel" type="button">取消</button>
+          <button class="btn btn-ghost btn-sm" id="recoverDry" type="button">空跑核对</button>
+          <button class="btn btn-primary btn-sm" id="recoverGo" type="button">确认回灌</button>
+        </div>
+        <p class="drawer-msg" id="recoverMsg"></p>
+      </div>
+    </div>
+  </section>
+
+
   <!-- ── 总览：先说总量，再说这里面能清掉什么 ───────────────
        这两件事本来就是一句话的两半 —— 上面那个数是分母，下面两条清理线是分子。
        拆成两张卡反而要人自己把它们接起来。 -->
@@ -161,84 +241,6 @@
     <p class="empty" id="emptyHint" hidden>没有匹配的条目。</p>
   </section>
 
-  <!-- ── 会话管理 ───────────────────────────────────────── -->
-  <section class="panel" id="tasks" aria-labelledby="taskTitle">
-    <h2 id="taskTitle">会话管理</h2>
-
-    <div class="app-warn" id="taskWarn" hidden></div>
-
-    <p class="lede" id="taskLede">正在读取会话库…</p>
-    <div class="dbbar" id="dbBar"></div>
-    <div class="tcomp" id="taskComp" hidden></div>
-
-    <div class="toolbar">
-      <label class="search">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
-          <circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>
-        </svg>
-        <input type="search" id="taskSearch" placeholder="搜索会话标题或文件夹…" autocomplete="off" spellcheck="false">
-      </label>
-      <div class="chips" id="taskChips" role="group" aria-label="按会话状态筛选"></div>
-      <label class="sort">
-        <span>排序</span>
-        <select id="taskSort">
-          <option value="size">体积</option>
-          <option value="time">最后使用</option>
-          <option value="title">标题</option>
-        </select>
-      </label>
-      <button class="btn btn-ghost btn-sm is-on" id="taskGroupBtn" type="button" aria-pressed="true">
-        按项目分组
-      </button>
-      <div class="btn-pair" role="group" aria-label="会话勾选快捷操作">
-        <button class="btn btn-ghost btn-sm" id="taskPickAll" type="button">全选</button>
-        <button class="btn btn-ghost btn-sm" id="taskClearSel" type="button">取消</button>
-      </div>
-    </div>
-
-    <div class="task-list" id="taskList"></div>
-    <p class="empty" id="taskEmpty" hidden>没有匹配的会话。</p>
-
-    <div class="task-foot" id="taskFoot" hidden>
-      <div class="ab-summary">
-        <span>已选</span> <strong id="tfCount">0</strong>
-        <span>个会话 · 文本 <b id="tfBytes">0 B</b></span>
-      </div>
-      <button class="btn btn-primary" id="taskPurgeBtn" type="button">清理…</button>
-    </div>
-
-    <!-- Cursor 专用：界面看不到、transcript 还在的会话 -->
-    <div class="recover" id="recoverPanel" hidden>
-      <div class="recover-head">
-        <div>
-          <h3>界面里看不到的会话</h3>
-          <p class="recover-lede" id="recoverLede"></p>
-        </div>
-        <div class="recover-picks">
-          <button class="btn btn-ghost btn-sm" id="recoverPickAll" type="button">全选</button>
-          <button class="btn btn-ghost btn-sm" id="recoverClear" type="button">取消</button>
-        </div>
-      </div>
-      <div class="app-warn" id="recoverWarn" hidden></div>
-      <div class="recover-list" id="recoverList"></div>
-      <div class="recover-foot" id="recoverFoot" hidden>
-        <span>已选 <b id="recoverCount">0</b> 个会话 · <b id="recoverBubbles">0</b> 条消息</span>
-        <button class="btn btn-primary btn-sm" id="recoverBtn" type="button">回灌到 Cursor…</button>
-      </div>
-      <div class="recover-confirm" id="recoverConfirm" hidden>
-        <p id="recoverConfNote"></p>
-        <label class="purge-confirm">输入 <b id="recoverWordHint">回灌</b> 确认
-          <input id="recoverWord" autocomplete="off" spellcheck="false">
-        </label>
-        <div class="recover-confirm-btns">
-          <button class="btn btn-ghost btn-sm" id="recoverCancel" type="button">取消</button>
-          <button class="btn btn-ghost btn-sm" id="recoverDry" type="button">空跑核对</button>
-          <button class="btn btn-primary btn-sm" id="recoverGo" type="button">确认回灌</button>
-        </div>
-        <p class="drawer-msg" id="recoverMsg"></p>
-      </div>
-    </div>
-  </section>
   </div><!-- /#single -->
 
   <footer class="foot">
