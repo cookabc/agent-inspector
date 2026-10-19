@@ -240,13 +240,6 @@ function renderAppTabs() {
     }).join('');
 }
 
-function catById(id) {
-  const view = state.index;
-  if (!view) return { id, label: id, status: 'warning', verdict: 'review' };
-  return (view.catalog || view.categories).find((c) => c.id === id)
-    || view.catalog[view.catalog.length - 1];
-}
-
 function filesOf(catId) {
   return state.byCat.get(catId) || [];
 }
@@ -654,7 +647,7 @@ function matches(f) {
   if (state.group && groupOf(f) !== state.group) return false;
   if (state.q && !f.p.toLowerCase().includes(state.q)) return false;
   if (state.statuses.size) {
-    const cat = catById(f.c);
+    const cat = catOfRow(f);
     if (!state.statuses.has(cat.status)) return false;
   }
   return true;
