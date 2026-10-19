@@ -494,7 +494,7 @@ test('/api/projects 并发读五个 app 时不互相踩临时副本', async (t) 
     JSON.stringify({ folder: 'file://' + WS }));
 
   // WAL 模式的库（带 -wal/-shm）打不开只读时会走 copyAside 那条路 ——
-  // 四个 worker 并发时，各自的临时目录前缀必须不同，否则会互相覆盖/删除。
+  // 多个 worker 并发时，各自的临时目录前缀必须不同，否则会互相覆盖/删除。
   const dbPath = path.join(ide, 'User', 'globalStorage', 'state.vscdb');
   const db = new DatabaseSync(dbPath);
   db.exec('PRAGMA journal_mode=WAL');
@@ -507,7 +507,7 @@ test('/api/projects 并发读五个 app 时不互相踩临时副本', async (t) 
 
   seedZcode(f.home);
 
-  // 同时打两次：第一次读四个 app，第二次撞缓存；再并发打 summary。
+  // 同时打两次：第一次读五个 app，第二次撞缓存；再并发打 summary。
   // 只要任何一个 worker 删了别人的副本，这里就会出问题（读不到会话或报错）。
   const [p1, p2, s1] = await Promise.all([
     f.get('/api/projects'),

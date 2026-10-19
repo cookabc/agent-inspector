@@ -13,7 +13,7 @@ const project = fileURLToPath(new URL('..', import.meta.url));
 
 /**
  * 每个 (app, target) 对应的落盘位置 —— 全部在临时 HOME 之下，
- * 这样测试可以同时对四个 app 的删除边界下手，而不会碰到真实数据。
+ * 这样测试可以同时对五个 app 的删除边界下手，而不会碰到真实数据。
  */
 const LOC = {
   'zcode/root': '.zcode',

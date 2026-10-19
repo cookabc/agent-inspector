@@ -146,7 +146,7 @@ function stripTarget(t) {
  * 所有 app 的会话数据。缺一个 app 不致命：那台机器上没装就直接跳过，
  * 项目横切少一行而已 —— 但读失败要留下痕迹，不能装作没这个工具。
  *
- * 四个 app 并发读：每次扫描都是一个独立 worker，串行等待只会把
+ * 五个 app 并发读：每次扫描都是一个独立 worker，串行等待只会把
  * 首屏拖成四倍（实测串行 4.2s vs 并发 2.0s）。
  *
  * @returns {{byApp: Array, problems: string[]}} 读失败的 app 进 problems，
@@ -440,7 +440,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/projects') {
-      // 按项目横切：四个 app 的会话各扫一遍（走 taskCache），归并后返回。
+      // 按项目横切：五个 app 的会话各扫一遍（走 taskCache），归并后返回。
       // 这一步要读会话库，可能几秒 —— 但它是懒加载的，只有人真的去看时才付这个代价。
       const { byApp, problems } = await getAllTasks();
       return sendJSON(req, res, 200, { ...projectsFrom(byApp), problems });

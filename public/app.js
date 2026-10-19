@@ -1,7 +1,7 @@
 /* Agent Inspector —— 前端
  *
- * 一次只审一个 app：ZCode / Codex / Claude Code / Cursor 把东西存在四个完全不同的地方，
- * 分类表也各自一套。把四张表叠成一个总数只会骗人，所以顶栏那排标签决定下面每一块读谁的数据。
+ * 一次只审一个 app：ZCode / Codex / Claude Code / Cursor / Gemini 把东西存在完全不同的地方，
+ * 分类表也各自一套。把五张表叠成一个总数只会骗人，所以顶栏那排标签决定下面每一块读谁的数据。
  */
 
 const $ = (id) => document.getElementById(id);
@@ -171,7 +171,7 @@ function indexRows() {
   }
 }
 
-/** 默认看谁：全域总览 → 上次看的单工具 → 第一个装了的。四个都没装也停在总览。 */
+/** 默认看谁：全域总览 → 上次看的单工具 → 第一个装了的。一个都没装也停在总览。 */
 function pickApp() {
   try {
     const last = localStorage.getItem(APP_KEY);
@@ -336,7 +336,7 @@ function renderGlobal() {
     els.allSub.innerHTML = `<b>读取失败：</b>${esc(err.message)}`;
   });
 
-  // 项目横切懒加载：第一次进入总览才付读取四个会话库的代价。
+  // 项目横切懒加载：第一次进入总览才付读取五个会话库的代价。
   // 这一步在真机上约 2～4 秒（Cursor 的库 364 MB），所以不能只留一句静态的
   // "正在读取" —— 把已知道的东西先摆出来：几个工具、各自有多少会话。
   if (!projects.data) {
