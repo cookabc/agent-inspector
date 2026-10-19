@@ -150,7 +150,9 @@ p { margin: 0; }
   border-bottom: 1px solid var(--line);
 }
 
-.brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+/* 品牌区宽度固定：下面的路径文字随工具变长变短（Cursor 要列两个目录），
+   若让它参与伸缩，切换工具时中间的标签会整体左右挪。 */
+.brand { display: flex; align-items: center; gap: 11px; min-width: 0; flex: 0 0 clamp(168px, 17vw, 220px); }
 
 .brand-mark {
   display: grid;
