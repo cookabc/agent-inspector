@@ -327,7 +327,9 @@ async function purge(rel, appId, targetKey) {
 }
 
 /**
- * 与界面共用分类规则；每个 app 另外声明必须整目录保护的库目录。
+ * 与界面共用分类规则；每个 app 另外声明两件事，都写在它自己的模块里：
+ *   protectedDirs  必须整目录保护的库目录（如 ZCode 的 cli/db）
+ *   containerDirs  纯容器目录，自己不保护，由后代决定（如 ZCode 的 v2/）
  * Cursor 的 state.vscdb 已经在规则里归到 database（locked），不需要特判。
  */
 function isProtected(plan, target, rel, directory = false) {
@@ -335,16 +337,10 @@ function isProtected(plan, target, rel, directory = false) {
   for (const dir of app.protectedDirs || []) {
     if (rel === dir || rel.startsWith(`${dir}/`)) return true;
   }
-  if (directory && isContainer(app, rel)) return false;
+  if (directory && (app.containerDirs || []).includes(rel)) return false;
   return Boolean(app.CATEGORIES[app.classify(
     directory ? `${rel}/` : rel, 0, { app: app.id, t: target.key }
   )]?.locked);
-}
-
-/** 容器目录（如 ZCode 的 v2/）自己不保护，由它的实际后代决定。 */
-function isContainer(app, rel) {
-  if (app.id !== 'zcode') return false;
-  return rel === 'v2';
 }
 
 /* ── HTTP ─────────────────────────────────────────────────── */
