@@ -1,15 +1,16 @@
 /**
- * 全域聚合与按项目横切。
+ * 历史会话面板的接口层：五个 app 各扫各的库，形状必须一致。
  *
- * 这些接口要读会话库（/api/projects 走的是与 /api/tasks 同一条 worker 链路），
- * 所以夹具不用空目录，而是用 node:sqlite 把最小可用的会话库建出来 ——
- * 做法与 codex-tasks.test.mjs 同源。所有库都在临时 HOME 下，绝不碰真实数据。
+ * 这些接口要读会话库（走的是 worker 链路），所以夹具不用空目录，而是用 node:sqlite
+ * 把最小可用的会话库建出来 —— 做法与 codex-tasks.test.mjs 同源。
+ * 所有库都在临时 HOME 下，绝不碰真实数据。
  *
- * 这里专门盯三件容易回归的事：
- *   - /api/summary 的"可回收"口径必须与前端"推荐清理"一致（recommend && !recommendDefaultOff）
- *   - 两个工具写成同一个 cwd 的会话必须归并成一个项目
- *   - Cursor 的 workspaceStorage/<uuid>/workspace.json 必须能把 UUID 还原成路径，
+ * 这里专门盯四件容易回归的事：
+ *   - 五个 app 的会话行与 byState 满足同一份契约（见文件末尾的契约组）
+ *   - Cursor 的 workspaceStorage/<uuid>/workspace.json 能把 UUID 还原成路径，
  *     解析不了时退回 UUID 而不是猜
+ *   - 按行清理的四道闸：静态拒绝 → 进程探测 → 备份 → 事务+自检
+ *   - 只读的两家（Cursor / Gemini）在任何进程检查之前就被静态拒绝
  */
 
 import test from 'node:test';
@@ -23,7 +24,6 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { projectsFrom } from '../lib/projects.mjs';
 import { workspaceFolders } from '../lib/apps/cursor.mjs';
 
 const project = fileURLToPath(new URL('..', import.meta.url));
@@ -121,51 +121,6 @@ function seedZcode(home) {
   ti.close();
 }
 
-/* ── projectsFrom 纯函数 ──────────────────────────────────── */
-
-test('同一绝对路径的会话归并成一个项目，并保留每个工具的一份', () => {
-  const { projects, totals } = projectsFrom([{
-    appId: 'zcode', appLabel: 'ZCode', tasks: [
-      { id: '1', workspace: WS, workspaceKey: WS, bytes: 3000, state: 'active', reason: null },
-      { id: '2', workspace: WS, workspaceKey: WS, bytes: 7000, state: 'deleted', reason: 'deleted' },
-    ],
-  }, {
-    appId: 'codex', appLabel: 'Codex', tasks: [
-      { id: '3', workspace: WS, workspaceKey: WS, bytes: 5000, state: 'archived', reason: 'archived' },
-    ],
-  }]);
-
-  assert.equal(projects.length, 1, '同路径必须归并');
-  const p = projects[0];
-  assert.equal(p.sessions, 3);
-  assert.equal(p.bytes, 15000);
-  assert.deepEqual(p.apps.map((a) => a.appId), ['zcode', 'codex'], '两个工具各一行，按体积排');
-  assert.equal(p.apps[0].sessions, 2);
-  assert.equal(totals.projects, 1);
-});
-
-test('不能归并的会话单独成桶，不猜项目', () => {
-  const { projects, unresolvable } = projectsFrom([{
-    appId: 'cursor', appLabel: 'Cursor', tasks: [
-      { id: '1', workspace: 'deadbeef-uuid', workspaceKey: 'deadbeef-uuid', workspaceOpaque: true, bytes: 100 },
-      { id: '2', workspace: '', workspaceKey: '(不在会话头里)', bytes: 200 },
-    ],
-  }]);
-  assert.equal(projects.length, 0);
-  assert.equal(unresolvable.length, 2);
-  // 桶的 key 带上形态前缀：UUID 与空工作区不会混成一个
-  assert.deepEqual(unresolvable.map((u) => u.key).sort(), ['none', 'opaque:deadbeef-uuid']);
-});
-
-test('Claude 回落 slug 与 Cursor 的 UUID 也不会互相串', () => {
-  const { projects, unresolvable } = projectsFrom([
-    { appId: 'claude', appLabel: 'Claude Code', tasks: [{ id: '1', workspace: '', workspaceKey: '-Users-x-proj', bytes: 1 }] },
-    { appId: 'cursor', appLabel: 'Cursor', tasks: [{ id: '2', workspace: 'uuid-1', workspaceKey: 'uuid-1', workspaceOpaque: true, bytes: 1 }] },
-  ]);
-  assert.equal(projects.length, 0);
-  assert.equal(unresolvable.length, 2);
-});
-
 /* ── Cursor 工作区反查 ────────────────────────────────────── */
 
 test('workspaceFolders 把 workspace.json 的 folder 还原成绝对路径', async (t) => {
@@ -195,104 +150,7 @@ test('workspaceFolders 把 workspace.json 的 folder 还原成绝对路径', asy
   ], '只有能解析成本机绝对路径的才映射；远端、坏 URL、缺文件、坏 JSON 全部跳过');
 });
 
-/* ── 接口层面 ─────────────────────────────────────────────── */
-
-test('/api/summary 的形状：grand 与 scan 一致，reclaimable 不超过总量', async (t) => {
-  const f = await fixture(t);
-  seedZcode(f.home);
-
-  const scan = await f.get('/api/scan');
-  const summary = await f.get('/api/summary');
-  assert.equal(summary.status, 200);
-  assert.deepEqual(summary.body.grand, scan.body.grand, '两个接口的总量必须同源');
-
-  assert.ok(summary.body.reclaimable <= summary.body.grand.bytes);
-  assert.ok(summary.body.reclaimable >= 0);
-  assert.ok(summary.body.reclaimableExtra >= 0, '默认没勾的可清量单列，不混进推荐');
-  assert.ok(Array.isArray(summary.body.apps));
-
-  // 每个 app 一行，installed 反映这台机器上有没有落盘
-  for (const a of summary.body.apps) {
-    assert.equal(typeof a.reclaimable, 'number', a.id);
-    assert.equal(typeof a.installed, 'boolean', a.id);
-  }
-  const zcode = summary.body.apps.find((a) => a.id === 'zcode');
-  assert.equal(zcode.installed, true);
-  // Claude 的目录虽是空的，但 ~/.claude.json 这个单文件目标在 —— 装了
-  const claude = summary.body.apps.find((a) => a.id === 'claude');
-  assert.equal(claude.installed, true, '单文件目标存在就算装了这个工具');
-});
-
-test('/api/summary 的可回收口径就是 recommend 且未默认排除', async (t) => {
-  const f = await fixture(t);
-  seedZcode(f.home);
-
-  const summary = await f.get('/api/summary');
-  const scan = await f.get('/api/scan');
-  let expect = 0;
-  for (const a of scan.body.apps) {
-    for (const c of a.catalog) {
-      if (c.recommend && !c.recommendDefaultOff) expect += c.bytes;
-    }
-  }
-  assert.equal(summary.body.reclaimable, expect, '与按 catalog 现算的对不上');
-});
-
-test('/api/projects 把两个工具同一 cwd 的会话归并，读不到的就是空', async (t) => {
-  const f = await fixture(t);
-  seedZcode(f.home);
-
-  const d = await f.get('/api/projects');
-  assert.equal(d.status, 200);
-  // 夹具只给 ZCode 播了种子，Codex/Claude/Cursor 的目录都是空的
-  assert.equal(d.body.totals.projects, 1, 'ZCode 那两条会话同一个工作区');
-  assert.equal(d.body.projects[0].sessions, 2);
-  assert.deepEqual(d.body.projects[0].apps.map((a) => a.appId), ['zcode']);
-  assert.equal(d.body.projects[0].path, WS);
-  // ZCode 的 deleted 会话必须带 reason —— 否则项目明细里没人知道它可清理
-  assert.equal(d.body.projects[0].tasks.some((x) => x.reason === 'deleted'), true);
-});
-
-test('/api/projects 的条目带 app 归属，项目桶不泄漏到 unresolvable', async (t) => {
-  const f = await fixture(t);
-  seedZcode(f.home);
-  const d = await f.get('/api/projects');
-  for (const t2 of d.body.projects[0].tasks) {
-    assert.ok(t2.appId && t2.appLabel, `${t2.id} 缺 app 归属`);
-  }
-  assert.equal(d.body.unresolvable.length, 0, '都有绝对路径，不该有无法归并的桶');
-});
-
 /* ── Cursor 反查的接口级验证 ──────────────────────────────── */
-
-test('反查生效时 /api/projects 把 Cursor 会话归并进真实项目', async (t) => {
-  const f = await fixture(t);
-  const ide = f.cursorIde;
-  const uuid = '11112222-3333-4444-5555-666677778888';
-
-  // workspaceStorage/<uuid>/workspace.json：Cursor 的真实形态
-  await fs.mkdir(path.join(ide, 'User', 'workspaceStorage', uuid), { recursive: true });
-  await fs.writeFile(path.join(ide, 'User', 'workspaceStorage', uuid, 'workspace.json'),
-    JSON.stringify({ folder: 'file://' + WS }));
-
-  // state.vscdb：composerHeaders 是界面可见的会话头，composerId 是 36 位
-  const composerId = 'cccc3333-4444-5555-6666-777788889999';
-  const db = new DatabaseSync(path.join(ide, 'User', 'globalStorage', 'state.vscdb'));
-  db.exec('CREATE TABLE composerHeaders (composerId TEXT, workspaceId TEXT, createdAt INTEGER, lastUpdatedAt INTEGER, isArchived INTEGER, isSubagent INTEGER, recency INTEGER)');
-  db.exec('CREATE TABLE cursorDiskKV (key TEXT, value BLOB)');
-  db.prepare('INSERT INTO composerHeaders VALUES (?, ?, 1, 2, 0, 0, 3)').run(composerId, uuid);
-  db.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)').run(`bubbleId:${composerId}:b1`, '对话正文'.repeat(64));
-  db.close();
-
-  seedZcode(f.home);   // ZCode 也占同一个工作区 —— 归并应当跨两个工具
-
-  const d = await f.get('/api/projects');
-  assert.equal(d.status, 200);
-  const hit = d.body.projects.find((p) => p.path === WS);
-  assert.ok(hit, `应出现项目 ${WS}，实际：${JSON.stringify(d.body.projects.map((p) => p.path))}`);
-  const ids = hit.apps.map((a) => a.appId).sort();
-  assert.deepEqual(ids, ['cursor', 'zcode'], 'Cursor 的会话应归并进同一项目');
-});
 
 test('反查不到时 Cursor 会话保持 UUID，不猜项目', async (t) => {
   const f = await fixture(t);
@@ -309,22 +167,15 @@ test('反查不到时 Cursor 会话保持 UUID，不猜项目', async (t) => {
   db.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)').run(`bubbleId:${composerId}:b1`, '正文');
   db.close();
 
-  const d = await f.get('/api/projects');
-  assert.equal(d.status, 200);
-  assert.equal(d.body.projects.length, 0, '没有可归并的项目');
-  assert.equal(d.body.unresolvable.length, 1);
-  assert.match(d.body.unresolvable[0].label, /nowhere-uuid/);
-
-  // 单 app 的会话视图也要把"这是不透明 UUID"标出来
+  // 反查不到就原样保留 UUID —— 不猜一个项目出来
   const tasks = await f.get('/api/tasks?app=cursor');
   assert.equal(tasks.body.tasks.length, 1, '只有一条会话，不该分出残骸');
-  assert.equal(tasks.body.tasks[0].workspaceKey, 'nowhere-uuid');
-  assert.equal(tasks.body.tasks[0].workspaceOpaque, true);
+  assert.equal(tasks.body.tasks[0].workspace, 'nowhere-uuid');
 });
 
-/* ── 跨工具行级清理：项目卡片编排的服务端前提 ─────────────── */
+/* ── 行级清理：四道闸 ─────────────────────────────────────── */
 
-test('项目横切给出的可清会话，逐 app 过 /api/tasks/purge 的四道闸', async (t) => {
+test('逐 app 的可清会话，过 /api/tasks/purge 的四道闸', async (t) => {
   const f = await fixture(t);
   seedZcode(f.home);          // ZCode：sess_a（deleted=1 可清）+ sess_b（active 不可清），同一 cwd
 
@@ -342,21 +193,18 @@ test('项目横切给出的可清会话，逐 app 过 /api/tasks/purge 的四道
     .run(codexUuid, 'Codex 的归档会话', WS, path.join(f.home, '.codex', wsBody), 'gpt', 'openai', 'paginated', 'user', 'p');
   codexDb.close();
 
-  // 1) 项目横切把两个工具的会话归并到同一项目，且各自带 reason
-  const proj = await f.get('/api/projects');
-  assert.equal(proj.status, 200);
-  const hit = proj.body.projects.find((p) => p.path === WS);
-  assert.ok(hit, '两工具同 cwd 应归并成一个项目');
-  const cleanable = hit.tasks.filter((x) => x.reason != null);
-  assert.deepEqual(cleanable.map((x) => x.appId).sort(), ['codex', 'zcode', 'zcode'],
-    '两个工具各贡献可清会话 —— 这就是项目卡片「按行清理」按钮的数据来源。' +
-    'ZCode 是两条：deleted 一条、active 但工作区目录不存在（wsMissing）一条');
+  // 1) 两个工具各自的可清会话 —— 判定只看 reason，不看 state
+  const [tz, tc] = await Promise.all([
+    f.get('/api/tasks?app=zcode'),
+    f.get('/api/tasks?app=codex'),
+  ]);
+  const zcodeIds = tz.body.tasks.filter((x) => x.reason != null).map((x) => x.id);
+  const codexIds = tc.body.tasks.filter((x) => x.reason != null).map((x) => x.id);
+  assert.equal(zcodeIds.length, 2,
+    'ZCode 两条可清：deleted 一条、active 但工作区目录不存在（wsMissing）一条');
+  assert.equal(codexIds.length, 1, 'Codex 一条归档线程');
 
   // 2) 逐 app 批次真的能各自走完四道闸：dryRun 两个 app，互不干扰
-  const zcodeIds = cleanable.filter((x) => x.appId === 'zcode').map((x) => x.id);
-  const codexIds = cleanable.filter((x) => x.appId === 'codex').map((x) => x.id);
-  assert.equal(zcodeIds.length, 2);
-  assert.equal(codexIds.length, 1);
 
   const [dz, dc] = await Promise.all([
     f.post('/api/tasks/purge', { app: 'zcode', ids: zcodeIds, dryRun: true }),
@@ -396,7 +244,7 @@ test('项目横切给出的可清会话，逐 app 过 /api/tasks/purge 的四道
 
 /* ── Gemini / Antigravity：第五个工具 ────────────────────── */
 
-test('Gemini 摘要库只读列出会话，工作区 URI 还原成路径供项目归并', async (t) => {
+test('Gemini 摘要库只读列出会话，工作区 URI 还原成路径', async (t) => {
   const f = await fixture(t);
   const db = new DatabaseSync(path.join(f.home, '.gemini', 'antigravity', 'conversation_summaries.db'));
   db.exec(`CREATE TABLE conversation_summaries (
@@ -419,14 +267,6 @@ test('Gemini 摘要库只读列出会话，工作区 URI 还原成路径供项�
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
     .run('conv-2', '坏的 URI', 1, '2026-10-18 09:00:00', '2026-10-18 09:00:00', 'not-json', 0, 0);
   db.close();
-
-  seedZcode(f.home);   // ZCode 占同一个工作区 —— 项目横切应归并
-
-  const d = await f.get('/api/projects');
-  assert.equal(d.status, 200);
-  const hit = d.body.projects.find((p) => p.path === WS);
-  assert.ok(hit, 'Gemini 的 file:// 工作区应还原成路径并归并进项目');
-  assert.deepEqual(hit.apps.map((a) => a.appId).sort(), ['gemini', 'zcode']);
 
   // 单 app 视图：只读、无 reason（正文在云端，删摘要 = 半删）
   const tasks = await f.get('/api/tasks?app=gemini');
@@ -486,7 +326,8 @@ test('Gemini 分类规则：摘要库锁定、缓存可清、CLI 经典布局归
   await assert.rejects(fs.access(path.join(f.home, '.gemini', 'antigravity', 'cache')));
 });
 
-test('/api/projects 并发读五个 app 时不互相踩临时副本', async (t) => {  const f = await fixture(t);
+test('并发读多个 app 的会话库时不互相踩临时副本', async (t) => {
+  const f = await fixture(t);
   const ide = f.cursorIde;
   const uuid = '99998888-7777-6666-5555-444433332222';
   await fs.mkdir(path.join(ide, 'User', 'workspaceStorage', uuid), { recursive: true });
@@ -507,23 +348,22 @@ test('/api/projects 并发读五个 app 时不互相踩临时副本', async (t) 
 
   seedZcode(f.home);
 
-  // 同时打两次：第一次读五个 app，第二次撞缓存；再并发打 summary。
-  // 只要任何一个 worker 删了别人的副本，这里就会出问题（读不到会话或报错）。
-  const [p1, p2, s1] = await Promise.all([
-    f.get('/api/projects'),
-    f.get('/api/projects'),
-    f.get('/api/summary'),
+  // 同时打两次 Cursor（撞缓存）+ 一次 ZCode：只要任何一个 worker 删了别人的副本，
+  // 这里就会出问题（读不到会话或报错）。
+  const [c1, c2, z1] = await Promise.all([
+    f.get('/api/tasks?app=cursor'),
+    f.get('/api/tasks?app=cursor'),
+    f.get('/api/tasks?app=zcode'),
   ]);
-  assert.equal(p1.status, 200, JSON.stringify(p1.body));
-  assert.equal(p2.status, 200, JSON.stringify(p2.body));
-  assert.equal(s1.status, 200, JSON.stringify(s1.body));
+  assert.equal(c1.status, 200, JSON.stringify(c1.body));
+  assert.equal(c2.status, 200, JSON.stringify(c2.body));
+  assert.equal(z1.status, 200, JSON.stringify(z1.body));
 
-  const hit = p1.body.projects.find((p) => p.path === WS);
-  assert.ok(hit, 'Cursor 的会话要能在并发下读到');
-  assert.deepEqual(hit.apps.map((a) => a.appId).sort(), ['cursor', 'zcode']);
+  assert.equal(c1.body.tasks.length, 1, 'Cursor 的会话要能在并发下读到');
+  assert.equal(c1.body.tasks[0].workspace, WS, 'workspace.json 的反查也要活着');
   // 两次结果必须一致 —— 副本被抽走会导致其中一次少数据
-  assert.equal(p1.body.totals.sessions, p2.body.totals.sessions);
-  assert.equal(p1.body.totals.bytes, p2.body.totals.bytes);
+  assert.equal(c1.body.tasks.length, c2.body.tasks.length);
+  assert.equal(c1.body.totals.bytes, c2.body.totals.bytes);
 });
 
 test('全域删除边界：未知 app 与空 app 仍是客户端错误', async (t) => {

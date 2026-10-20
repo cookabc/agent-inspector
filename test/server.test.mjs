@@ -331,16 +331,6 @@ for (const route of ['/api/purge', '/api/trash']) {
   }
 }
 
-test('/api/apps lists all five apps with their targets', async t => {
-  const f = await fixture(t);
-  const { body } = await f.get('/api/apps');
-  assert.deepEqual(body.apps.map(a => a.id), ['claude', 'codex', 'cursor', 'gemini', 'zcode']);
-  for (const a of body.apps) assert.ok(a.targets.length, a.id);
-  assert.equal(body.apps.find(a => a.id === 'cursor').writable, false, 'Cursor 只读');
-  assert.equal(body.apps.find(a => a.id === 'claude').writable, true);
-  assert.equal(body.apps.find(a => a.id === 'gemini').writable, false, 'Gemini 摘要库只读');
-});
-
 /**
  * 按行清理的能力是静态的：不能因为 Cursor 恰好在跑就报 409"先退出应用"，
  * 那会让人以为退出了就能删 —— 实际上这个工具对 Cursor 根本没有写路径。
@@ -356,14 +346,6 @@ for (const [app, status, why] of [
     assert.doesNotMatch(result.body.error, /正在运行/, why);
   });
 }
-
-test('/api/tasks/orphans is a ZCode-only entry', async t => {
-  const f = await fixture(t);
-  for (const app of ['codex', 'claude', 'cursor']) {
-    const result = await f.post('/api/tasks/orphans', { app, dryRun: true });
-    assert.equal(result.status, 400, app + ' ' + JSON.stringify(result));
-  }
-});
 
 test('every history panel scans and reports its own shape', async t => {
   const f = await fixture(t);

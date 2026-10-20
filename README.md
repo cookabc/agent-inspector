@@ -327,7 +327,6 @@ lib/tasks-claude.mjs   Claude Code：按文件的历史视图
 lib/tasks-cursor.mjs   Cursor：只读，按键族统计
 lib/cursor-recover.mjs Cursor：孤儿会话扫描与回灌（唯一写 state.vscdb 的路径）
 lib/tasks-gemini.mjs   Gemini/Antigravity：只读摘要，正文在云端
-lib/projects.mjs       按项目横切：五个工具的会话归并成项目桶（能确定才归并）
 lib/sqlite-open.mjs    只读打开：必要时连侧文件一起复制到副本上再开
 lib/db-worker.mjs      数据库操作在 worker 线程里跑
 public/index.html      页面骨架
@@ -335,7 +334,7 @@ public/style.css       设计令牌与全部样式
 public/app.js          渲染、勾选、清理流程
 test/server.test.mjs   临时 HOME 中的 HTTP 删除边界回归测试
 test/codex-tasks.test.mjs  Codex 三库夹具：空跑、跨库删除、备份、残骸交接
-test/global-tasks.test.mjs 全域视图：项目归并、Cursor 反查、并发一致性
+test/history-panels.test.mjs  五个工具的会话面板：行与 byState 的同一份契约、Cursor 反查、并发一致性
 test/cursor-recover.test.mjs 孤儿会话：扫描、空跑、回灌、幂等、服务端确认闸门
 ```
 

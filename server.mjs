@@ -27,14 +27,13 @@ import { Worker } from 'node:worker_threads';
 /* 自己的模块用动态 import：本地这几个都依赖内置的 node:sqlite，
    而它是 Node 22.5 才有的。更早的版本上静态 import 会在任何提示之前直接崩掉，
    用户只看到一句 "Cannot find module 'node:sqlite'"。这里接住它，说人话。 */
-let APPS, getApp, planApps, appSummaries, scanApps, appRunning, rowPurgeBlocked, projectsFrom, CURSOR_CONFIRM;
+let APPS, getApp, planApps, scanApps, appRunning, rowPurgeBlocked, CURSOR_CONFIRM;
 try {
-  [{ APPS, getApp, planApps, appSummaries }, { scanApps }, { appRunning, rowPurgeBlocked },
-    { projectsFrom }, { CONFIRM_WORD: CURSOR_CONFIRM }] = await Promise.all([
+  [{ APPS, getApp, planApps }, { scanApps }, { appRunning, rowPurgeBlocked },
+    { CONFIRM_WORD: CURSOR_CONFIRM }] = await Promise.all([
     import('./lib/apps/index.mjs'),
     import('./lib/scan.mjs'),
     import('./lib/tasks.mjs'),
-    import('./lib/projects.mjs'),
     import('./lib/cursor-recover.mjs'),
   ]);
 } catch (err) {
@@ -100,8 +99,6 @@ try {
   console.error(`\n  ${err.message}\n`);
   process.exit(1);
 }
-const SUMMARIES = appSummaries(plans);
-
 /* ── 缓存 ─────────────────────────────────────────────────── */
 let cache = null;          // { index, at }
 let indexInflight = null;  // 并发请求搭同一趟扫描，别让 N 个请求各走一遍目录树
@@ -142,66 +139,6 @@ function stripTarget(t) {
 }
 
 /* ── 全域聚合 ───────────────────────────────────────────────── */
-
-/**
- * 所有 app 的会话数据。缺一个 app 不致命：那台机器上没装就直接跳过，
- * 项目横切少一行而已 —— 但读失败要留下痕迹，不能装作没这个工具。
- *
- * 五个 app 并发读：每次扫描都是一个独立 worker，串行等待只会把
- * 首屏拖成四倍（实测串行 4.2s vs 并发 2.0s）。
- *
- * @returns {{byApp: Array, problems: string[]}} 读失败的 app 进 problems，
- *   接口原样带给前端 —— 静默少一个工具的数据，比报错更害人。
- */
-async function getAllTasks() {
-  const problems = [];
-  const jobs = [];
-  for (const plan of plans) {
-    if (!plan.targets.some((t) => t.exists)) continue;    // 没装：不是错误
-    jobs.push(
-      getTasks(plan.app.id)
-        .then((data) => ({ appId: plan.app.id, appLabel: plan.app.label, tasks: data.tasks || [] }))
-        .catch((err) => {
-          problems.push(`${plan.app.label} 的会话读不出来：${err.message}`);
-          return null;
-        }),
-    );
-  }
-  const results = await Promise.all(jobs);
-  return { byApp: results.filter(Boolean), problems };
-}
-
-/**
- * 全域可回收总量。口径与前端"推荐清理"默认勾选完全一致：
- * recommend 且没标 recommendDefaultOff 的分类 —— 日志、缓存、系统垃圾。
- * 另给出含默认排除项（如 Computer Use 副本身份、旧版本运行时）的口径做参照。
- */
-function computeSummary(index) {
-  let reclaimable = 0, reclaimableFiles = 0, extra = 0;
-  const perApp = index.apps.map((a) => {
-    const cats = a.catalog || [];
-    const on = cats.filter((c) => c.recommend && !c.recommendDefaultOff);
-    const off = cats.filter((c) => c.recommend && c.recommendDefaultOff);
-    const bytes = on.reduce((s, c) => s + c.bytes, 0);
-    const count = on.reduce((s, c) => s + c.count, 0);
-    reclaimable += bytes;
-    reclaimableFiles += count;
-    extra += off.reduce((s, c) => s + c.bytes, 0);
-    return {
-      id: a.app, label: a.label, writable: a.writable,
-      bytes: a.totals.bytes, files: a.totals.files,
-      installed: a.totals.files > 0 || a.targets.some((t) => t.exists),
-      reclaimable: bytes, reclaimableFiles: count,
-    };
-  });
-  return {
-    grand: index.grand,
-    reclaimable,
-    reclaimableFiles,
-    reclaimableExtra: extra,      // 默认没勾、但点一下就能放回来清的部分
-    apps: perApp,
-  };
-}
 
 /* ── 安全 ─────────────────────────────────────────────────── */
 
@@ -430,23 +367,6 @@ const server = http.createServer(async (req, res) => {
       throw httpError(415, '请求必须使用 application/json');
     }
 
-    if (p === '/api/apps') {
-      return sendJSON(req, res, 200, { apps: SUMMARIES, trash: TRASH, canTrash: MACOS, canReveal: MACOS });
-    }
-
-    if (p === '/api/summary') {
-      // 全域总览的总量与可回收口径。复用 /api/scan 的缓存索引，不重扫目录。
-      const index = await getIndex(url.searchParams.get('refresh') === '1');
-      return sendJSON(req, res, 200, computeSummary(index));
-    }
-
-    if (p === '/api/projects') {
-      // 按项目横切：五个 app 的会话各扫一遍（走 taskCache），归并后返回。
-      // 这一步要读会话库，可能几秒 —— 但它是懒加载的，只有人真的去看时才付这个代价。
-      const { byApp, problems } = await getAllTasks();
-      return sendJSON(req, res, 200, { ...projectsFrom(byApp), problems });
-    }
-
     if (p === '/api/scan') {
       const index = await getIndex(url.searchParams.get('refresh') === '1');
       // 前端照这两个开关决定要不要摆出"移入废纸篓"和"在 Finder 中显示" ——
@@ -485,16 +405,6 @@ const server = http.createServer(async (req, res) => {
       const result = await runDb('cursor-recover', 'cursor', plan.targets.map(stripTarget),
         [ids, { backupDir: BACKUP_DIR, dryRun }]);
       if (!dryRun) taskCache.delete('cursor');
-      return sendJSON(req, res, 200, result);
-    }
-
-    if (p === '/api/tasks/orphans' && req.method === 'POST') {
-      const { app: appId, dryRun = false } = await readBody(req);
-      const plan = planFor(String(appId || ''));
-      const running = await appRunning(plan.app);
-      if (running.running && !dryRun) throw appMustQuit(running);
-      const result = await runDb('orphans', plan.app.id, plan.targets.map(stripTarget), [{ backupDir: BACKUP_DIR, dryRun }]);
-      taskCache.delete(appId);
       return sendJSON(req, res, 200, result);
     }
 
