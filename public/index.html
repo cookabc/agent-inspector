@@ -44,7 +44,32 @@
        排布顺序按"人先想知道什么"来：先总量、再能清掉什么（这两件事本来就是
        一句话的两半），然后才是逐项清单和会话管理。会话管理放在最后、
        和文件清单并排 —— 它只在少数工具上有内容，不该占住首屏。 -->
-  <div class="single" id="single">
+  <div class="single" id="single" aria-busy="true">
+
+  <!-- 首次扫描时的骨架：占住正文将要出现的位置，
+       而不是让人对着一个空页面猜工具是不是挂了。数据到手后整块移除。 -->
+  <div class="skeleton" id="skeleton" aria-hidden="true">
+    <div class="sk-hero">
+      <span class="sk-line sk-w-120"></span>
+      <span class="sk-line sk-figure"></span>
+      <span class="sk-line sk-w-full"></span>
+      <span class="sk-line sk-w-70"></span>
+    </div>
+    <div class="sk-panels">
+      <div class="sk-panel">
+        <span class="sk-line sk-w-90"></span>
+        <span class="sk-block"></span>
+        <span class="sk-line sk-w-full"></span>
+        <span class="sk-line sk-w-70"></span>
+        <span class="sk-line sk-w-70"></span>
+      </div>
+      <div class="sk-panel">
+        <span class="sk-line sk-w-90"></span>
+        <span class="sk-block"></span>
+        <span class="sk-line sk-w-full"></span>
+      </div>
+    </div>
+  </div>
 
   <!-- ── 总览：先说总量，再说这里面能清掉什么 ───────────────
        这两件事本来就是一句话的两半 —— 上面那个数是分母，下面两条清理线是分子。

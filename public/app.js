@@ -10,6 +10,7 @@ const els = {
   rootPath: $('rootPath'), scanNote: $('scanNote'), rescanBtn: $('rescanBtn'), themeBtn: $('themeBtn'),
   appTabs: $('appTabs'),
   single: $('single'),
+  skeleton: $('skeleton'),
   heroBytes: $('heroBytes'), heroSub: $('heroSub'),
   diagnosis: $('diagnosis'), diagLede: $('diagLede'), diagTitleText: $('diagTitleText'),
   rec: $('rec'), recBtn: $('recBtn'), recCap: $('recCap'), recScope: $('recScope'),
@@ -134,17 +135,63 @@ function saveRecOff() {
 
 /* ── 数据 ───────────────────────────────────────────────── */
 
+/* ── 忙碌态 ─────────────────────────────────────────────────
+   两处反馈各管一件事：顶栏那条细线表示"后台在忙"（页面仍然可读可滚），
+   按钮上的转圈表示"这一下是你按的，正在等它"。两者互不替代 ——
+   只有按钮转圈时，人不知道别处是否也卡住了；只有顶栏细线时，
+   人又不知道自己那一按到底算不算数。 */
+
+function setBusy(on) {
+  document.body.classList.toggle('is-busy', Boolean(on));
+  els.single?.setAttribute('aria-busy', on ? 'true' : 'false');
+}
+
+function setBtnBusy(btn, on) {
+  if (!btn) return;
+  btn.classList.toggle('is-busy', Boolean(on));
+  btn.setAttribute('aria-busy', on ? 'true' : 'false');
+  // 关掉忙碌态时只解除自己加上的禁用；本来就被业务逻辑禁用的按钮不能被顺手打开。
+  // 用 data 属性记一笔"这个禁用是我加的"，收尾时才知道该不该还原。
+  if (on) {
+    btn.dataset.wasDisabled = btn.disabled ? '1' : '';
+    btn.disabled = true;
+  } else if (!btn.dataset.wasDisabled) {
+    btn.disabled = false;
+  }
+  if (!on) delete btn.dataset.wasDisabled;
+}
+
+/** 首次扫描结束后把骨架拿掉：先淡出，再从 DOM 里移除。 */
+function dropSkeleton() {
+  const sk = els.skeleton;
+  if (!sk) return;
+  sk.classList.add('is-done');
+  isReducedMotion()
+    ? sk.remove()
+    : setTimeout(() => sk.remove(), 200);
+}
+
+function isReducedMotion() {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+}
+
 async function load(refresh = false) {
-  els.scanNote.textContent = '扫描中…';
-  const res = await fetch('/api/scan' + (refresh ? '?refresh=1' : ''));
-  if (!res.ok) throw new Error((await res.json()).error || res.statusText);
-  state.scan = await res.json();
-  state.apps = state.scan.apps;
-  // 每行在数据入手的这一刻就带上归属与稳定 key。之前靠 files.includes()
-  // 反查 —— 抽屉里 3352 行 × 1.8 万文件是千万级比较，而这里一次写入零成本。
-  indexRows();
-  if (!state.apps.some((a) => a.app === state.appId)) state.appId = pickApp();
-  applyApp();
+  setBusy(true);
+  els.scanNote.textContent = refresh ? '重新扫描中…' : '扫描中…';
+  try {
+    const res = await fetch('/api/scan' + (refresh ? '?refresh=1' : ''));
+    if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+    state.scan = await res.json();
+    state.apps = state.scan.apps;
+    // 每行在数据入手的这一刻就带上归属与稳定 key。之前靠 files.includes()
+    // 反查 —— 抽屉里 3352 行 × 1.8 万文件是千万级比较，而这里一次写入零成本。
+    indexRows();
+    if (!state.apps.some((a) => a.app === state.appId)) state.appId = pickApp();
+    applyApp();
+  } finally {
+    dropSkeleton();
+    setBusy(false);
+  }
 }
 
 /** 给每个文件行打上所属 app 与 key，后续任何地方都不必反查。 */
@@ -208,6 +255,21 @@ function applyApp() {
 
   renderAppTabs();
   renderAll();
+  flashSwitch();
+}
+
+/** 切工具时让内容轻推一下：数据是瞬间换的，没有这个提示会像"点了没反应"。 */
+function flashSwitch() {
+  if (isReducedMotion()) return;
+  for (const el of document.querySelectorAll('#single > section, #single > .note')) {
+    el.classList.remove('is-switching');
+    // 强制重排，让同一个类能连续触发两次
+    void el.offsetWidth;
+    el.classList.add('is-switching');
+    // 按固定时长摘类，不依赖 animationend：首屏那记 enter 动画也会冒泡
+    // animationend 上来，靠事件判断容易漏掉或多摘。
+    setTimeout(() => el.classList.remove('is-switching'), 220);
+  }
 }
 
 const APP_KEY = 'zci-app';
@@ -586,7 +648,7 @@ async function runClean() {
     return;
   }
 
-  els.drawerGo.disabled = true;
+  setBtnBusy(els.drawerGo, true);
   els.drawerMsg.textContent = purge ? '正在彻底删除…' : '正在移入废纸篓…';
   els.drawerMsg.className = 'drawer-msg';
 
@@ -623,7 +685,7 @@ async function runClean() {
     els.drawerMsg.className = 'drawer-msg is-err';
     els.drawerMsg.textContent = err.message;
   } finally {
-    els.drawerGo.disabled = false;
+    setBtnBusy(els.drawerGo, false);
   }
 }
 
@@ -945,10 +1007,13 @@ document.addEventListener('click', async (e) => {
     renderSplit(); renderGroups(); renderActionbar(); return;
   }
   if (t.closest('#rescanBtn')) {
-    els.rescanBtn.disabled = true;
-    await load(true);
-    await loadTasks(true);
-    els.rescanBtn.disabled = false;
+    setBtnBusy(els.rescanBtn, true);
+    try {
+      await load(true);
+      await loadTasks(true);
+    } finally {
+      setBtnBusy(els.rescanBtn, false);
+    }
     return;
   }
   if (t.closest('#themeBtn')) {
@@ -1111,10 +1176,15 @@ async function loadTasks(refresh = false) {
 
   if (!view.targets.some((t) => t.exists)) {
     hideRecoverable();
+    tEls.lede.classList.remove('is-loading');
     tEls.lede.textContent = `${view.label} 在这台机器上没有数据目录。`;
     return;
   }
+  tEls.lede.classList.add('is-loading');
   tEls.lede.textContent = `正在读取 ${view.label} 的会话记录…`;
+  // 面板级别的忙碌态：内容区先不动（切工具时旧内容闪没会觉得点坏了），
+  // 只在右上角转一个圈，数据到了整块换掉。
+  setPanelBusy(true);
   try {
     const res = await fetch(`/api/tasks?app=${encodeURIComponent(appId)}` + (refresh ? '&refresh=1' : ''));
     const data = await res.json();
@@ -1127,7 +1197,31 @@ async function loadTasks(refresh = false) {
     if (data.canRecover) loadRecoverable();
   } catch (err) {
     if (state.appId !== appId) return;
+    tEls.lede.classList.remove('is-loading');
     tEls.lede.innerHTML = `<b>读取失败：</b>${esc(err.message)}`;
+  } finally {
+    setPanelBusy(false);
+  }
+}
+
+/** 面板角落的小转圈：不遮挡内容，只说明"这一块正在换数据"。
+ *
+ *  延迟 150ms 才亮 —— 切工具时多数请求是缓存命中、几毫秒就回来了，
+ *  立刻转一下再立刻消失，看起来像闪了个错误，比不显示更糟。
+ *  只有真的等了一会儿才值得提示。 */
+let panelBusyTimer = 0;
+function setPanelBusy(on) {
+  const panel = document.getElementById('tasks');
+  if (!panel) return;
+  clearTimeout(panelBusyTimer);
+  if (on) {
+    panelBusyTimer = setTimeout(() => {
+      panel.classList.add('is-busy');
+      panel.setAttribute('aria-busy', 'true');
+    }, 150);
+  } else {
+    panel.classList.remove('is-busy');
+    panel.setAttribute('aria-busy', 'false');
   }
 }
 
@@ -1337,6 +1431,8 @@ const fileBasedNote = (who) =>
 
 function renderTasks() {
   const d = taskState.data;
+  // 数据到了，加载中的呼吸点就该停 —— 不管下面走哪个分支。
+  tEls.lede.classList.remove('is-loading');
   // 选中之后又变成活跃的（比如在应用里恢复了），不能留在清理范围里
   if (d) for (const id of [...taskState.sel]) {
     const t = d.tasks.find((x) => x.id === id);
@@ -2018,4 +2114,9 @@ loadTqScope();
 load().then(() => loadTasks()).catch((err) => {
   els.heroSub.innerHTML = `<b>扫描失败：</b>${esc(err.message)}`;
   els.scanNote.textContent = '出错';
+  // 失败时也要把忙碌态收掉 —— 否则顶栏那条线会一直跑，看起来像永远没扫完
+  dropSkeleton();
+  setBusy(false);
+  setPanelBusy(false);
+  setBtnBusy(els.rescanBtn, false);
 });
