@@ -1355,11 +1355,19 @@ function renderTasks() {
 
   // 正文不在会话库里的两处：Claude 的正文就是 .jsonl 文件本身；Codex 是索引库 + 磁盘上的
   // rollout。分开说，免得把 Codex 的"两段式"说法安到 Claude 头上。
+  //
+  // 标题来自库里每条会话的 name 字段（Cursor 自己起的名字）。有些会话它没起名，
+  // 也没有改动摘要 —— 那几条只能显示 ID。这里主动交代一句，
+  // 免得人以为是工具没读到标题、或者以为界面出了 bug。
+  const untitledNote = d.untitled
+    ? `其中 <b>${d.untitled}</b> 条 Cursor 没有生成标题（库里没有 name 也没有改动摘要），按 ID 显示。`
+    : '';
   tEls.lede.innerHTML = d.readOnly
     ? (d.composition
         // Cursor：正文在库里，按键族摊开
         ? `${esc(who)} 的会话库 <b>${fmtBytes(d.db.total)}</b>，读到 <b>${d.totals.count}</b> 个会话、` +
-          `<b>${fmtBytes(text)}</b> 的正文。下面按键族摊开这 ${fmtBytes(d.db.total)} 到底是怎么分的。`
+          `<b>${fmtBytes(text)}</b> 的正文。下面按键族摊开这 ${fmtBytes(d.db.total)} 到底是怎么分的。` +
+          (untitledNote ? ` ${untitledNote}` : '')
         // Gemini：正文在云端，本机只有摘要索引
         : `${esc(who)} 的会话索引 <b>${fmtBytes(d.db.total)}</b>，读到 <b>${d.totals.count}</b> 条会话的摘要。` +
           `正文在云端，本机没有可回收的会话数据 —— 这里只告诉你有什么、归哪个项目。`)

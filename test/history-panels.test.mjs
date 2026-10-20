@@ -150,11 +150,12 @@ async function seedAll(home) {
 
   // Cursor：一条界面里的会话 + 一组没有会话头的残骸气泡
   const cursorDb = new DatabaseSync(path.join(home, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage', 'state.vscdb'));
-  cursorDb.exec('CREATE TABLE composerHeaders (composerId TEXT, workspaceId TEXT, createdAt INTEGER, lastUpdatedAt INTEGER, isArchived INTEGER, isSubagent INTEGER, recency INTEGER)');
+  cursorDb.exec('CREATE TABLE composerHeaders (composerId TEXT, workspaceId TEXT, createdAt INTEGER, lastUpdatedAt INTEGER, isArchived INTEGER, isSubagent INTEGER, recency INTEGER, value TEXT)');
   cursorDb.exec('CREATE TABLE cursorDiskKV (key TEXT, value BLOB)');
   const cursorId = 'dddd4444-5555-6666-7777-888899990000';
   const orphanId = 'ffff1111-2222-3333-4444-555566667777';
-  cursorDb.prepare('INSERT INTO composerHeaders VALUES (?, ?, 1, 2, 0, 0, 3)').run(cursorId, 'nowhere-uuid');
+  cursorDb.prepare('INSERT INTO composerHeaders VALUES (?, ?, 1, 2, 0, 0, 3, ?)')
+    .run(cursorId, 'nowhere-uuid', JSON.stringify({ type: 'head', composerId: cursorId, name: 'Cursor 的会话标题' }));
   cursorDb.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)').run(`bubbleId:${cursorId}:b1`, '正文');
   cursorDb.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)').run(`bubbleId:${orphanId}:b1`, '没人认领的正文');
   cursorDb.close();
@@ -199,10 +200,10 @@ test('反查不到时 Cursor 会话保持 UUID，不猜项目', async (t) => {
   // 用短 id 会切出带冒号的串、跟会话头对不上，平白多出一个"残骸"桶。
   const composerId = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
   const db = new DatabaseSync(path.join(ide, 'User', 'globalStorage', 'state.vscdb'));
-  db.exec('CREATE TABLE composerHeaders (composerId TEXT, workspaceId TEXT, createdAt INTEGER, lastUpdatedAt INTEGER, isArchived INTEGER, isSubagent INTEGER, recency INTEGER)');
+  db.exec('CREATE TABLE composerHeaders (composerId TEXT, workspaceId TEXT, createdAt INTEGER, lastUpdatedAt INTEGER, isArchived INTEGER, isSubagent INTEGER, recency INTEGER, value TEXT)');
   db.exec('CREATE TABLE cursorDiskKV (key TEXT, value BLOB)');
   // workspaceStorage 里没有这个 uuid —— 映不出来
-  db.prepare('INSERT INTO composerHeaders VALUES (?, ?, 1, 2, 0, 0, 3)').run(composerId, 'nowhere-uuid');
+  db.prepare('INSERT INTO composerHeaders VALUES (?, ?, 1, 2, 0, 0, 3, NULL)').run(composerId, 'nowhere-uuid');
   db.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)').run(`bubbleId:${composerId}:b1`, '正文');
   db.close();
 
@@ -297,10 +298,10 @@ test('并发读多个 app 的会话库时不互相踩临时副本', async (t) =>
   const dbPath = path.join(ide, 'User', 'globalStorage', 'state.vscdb');
   const db = new DatabaseSync(dbPath);
   db.exec('PRAGMA journal_mode=WAL');
-  db.exec('CREATE TABLE composerHeaders (composerId TEXT, workspaceId TEXT, createdAt INTEGER, lastUpdatedAt INTEGER, isArchived INTEGER, isSubagent INTEGER, recency INTEGER)');
+  db.exec('CREATE TABLE composerHeaders (composerId TEXT, workspaceId TEXT, createdAt INTEGER, lastUpdatedAt INTEGER, isArchived INTEGER, isSubagent INTEGER, recency INTEGER, value TEXT)');
   db.exec('CREATE TABLE cursorDiskKV (key TEXT, value BLOB)');
   const cid = 'dddd4444-5555-6666-7777-888899990000';
-  db.prepare('INSERT INTO composerHeaders VALUES (?, ?, 1, 2, 0, 0, 3)').run(cid, uuid);
+  db.prepare('INSERT INTO composerHeaders VALUES (?, ?, 1, 2, 0, 0, 3, NULL)').run(cid, uuid);
   db.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)').run(`bubbleId:${cid}:b1`, '正文');
   db.close();
 
@@ -329,10 +330,10 @@ test('Cursor 键族按首个分隔符归并，内容寻址的 hash 不各占一�
   const ide = f.cursorIde;
   const dbPath = path.join(ide, 'User', 'globalStorage', 'state.vscdb');
   const db = new DatabaseSync(dbPath);
-  db.exec('CREATE TABLE composerHeaders (composerId TEXT, workspaceId TEXT, createdAt INTEGER, lastUpdatedAt INTEGER, isArchived INTEGER, isSubagent INTEGER, recency INTEGER)');
+  db.exec('CREATE TABLE composerHeaders (composerId TEXT, workspaceId TEXT, createdAt INTEGER, lastUpdatedAt INTEGER, isArchived INTEGER, isSubagent INTEGER, recency INTEGER, value TEXT)');
   db.exec('CREATE TABLE cursorDiskKV (key TEXT, value BLOB)');
   const cid = 'dddd4444-5555-6666-7777-888899990000';
-  db.prepare('INSERT INTO composerHeaders VALUES (?, ?, 1, 2, 0, 0, 3)').run(cid, 'ws');
+  db.prepare('INSERT INTO composerHeaders VALUES (?, ?, 1, 2, 0, 0, 3, NULL)').run(cid, 'ws');
   const put = db.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)');
   // 三种键写法并存：冒号分隔、点号分隔（内容寻址的 hash）、斜杠分隔
   put.run(`bubbleId:${cid}:b1`, 'a'.repeat(64));
@@ -356,6 +357,39 @@ test('Cursor 键族按首个分隔符归并，内容寻址的 hash 不各占一�
   const contentRow = body.composition.find((c) => c.family === 'composer');
   assert.equal(contentRow.count, 3);
   assert.equal(contentRow.bytes, 64 * 3);
+});
+
+test('Cursor 会话标题取自 composerHeaders.value 的 name，不是拼出来的 UUID', async (t) => {
+  const f = await fixture(t);
+  const dbPath = path.join(f.cursorIde, 'User', 'globalStorage', 'state.vscdb');
+  const db = new DatabaseSync(dbPath);
+  db.exec('CREATE TABLE composerHeaders (composerId TEXT, workspaceId TEXT, createdAt INTEGER, lastUpdatedAt INTEGER, isArchived INTEGER, isSubagent INTEGER, recency INTEGER, value TEXT)');
+  db.exec('CREATE TABLE cursorDiskKV (key TEXT, value BLOB)');
+
+  const named = '11111111-1111-1111-1111-111111111111';
+  const subbed = '22222222-2222-2222-2222-222222222222';
+  const bare = '33333333-3333-3333-3333-333333333333';
+  const ins = db.prepare('INSERT INTO composerHeaders VALUES (?, ?, 1, 2, 0, 0, 3, ?)');
+  // 正常：Cursor 起了名
+  ins.run(named, 'ws', JSON.stringify({ type: 'head', name: 'Write-off time synchronization' }));
+  // 只有改动摘要：拿摘要当标题，总比 UUID 强
+  ins.run(subbed, 'ws', JSON.stringify({ type: 'head', subtitle: 'Edited QueryLoanAccrual.java' }));
+  // 两者都没有：不该冒充成正常标题
+  ins.run(bare, 'ws', JSON.stringify({ type: 'head' }));
+  db.close();
+
+  const { status, body } = await f.get('/api/tasks?app=cursor');
+  assert.equal(status, 200, JSON.stringify(body));
+
+  const byId = new Map(body.tasks.map((x) => [x.id, x]));
+  assert.equal(byId.get(named).title, 'Write-off time synchronization');
+  assert.equal(byId.get(subbed).title, 'Edited QueryLoanAccrual.java');
+  // 无名的那条：用带前缀的占位，并且要能被认出来
+  assert.match(byId.get(bare).title, /^（无标题）/);
+  assert.ok(!byId.get(named).title.includes(named.slice(0, 8)), '有名字的会话不该再露 UUID');
+
+  // 无名的条数要报上去，前端才能主动交代一句
+  assert.equal(body.untitled, 1);
 });
 
 /* ── 契约组：四家的行与统计必须是同一套 ─────────────────── */
