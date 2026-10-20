@@ -390,7 +390,10 @@ function renderGroups() {
 
 function rowHtml(f, cat) {
   const on = state.selection.has(keyOf(f));
-  const protectedRow = cat.verdict === 'never';
+  // 软链接：扫描时按链接本身记录（不跟随），服务端也一律拒绝删除。
+  // 所以这里既不能勾，也要在行上说明白 —— 画成可勾的条目等于骗人点一下再报错。
+  const isLink = Boolean(f.link);
+  const protectedRow = cat.verdict === 'never' || isLink;
   const when = new Date(f.m).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
   const cut = f.p.lastIndexOf('/');
   const dir = cut < 0 ? '' : f.p.slice(0, cut + 1);
@@ -403,11 +406,13 @@ function rowHtml(f, cat) {
   const sidTag = f.sid && f.orphan
     ? `<span class="row-tag is-orphan" title="会话 ${esc(f.sid)} 已不在 ${esc(state.index.label)} 的会话库里，文件是残骸">孤儿</span>`
     : '';
-  return `<div class="row ${on ? 'is-on' : ''}">
+  const linkTag = isLink
+    ? `<span class="row-tag" title="符号链接：不跟随、不删除，删它等于去改别的目录">软链接</span>` : '';
+  return `<div class="row ${on ? 'is-on' : ''}${isLink ? ' is-link' : ''}">
     <input type="checkbox" data-key="${esc(keyOf(f))}" ${on ? 'checked' : ''}
-      ${protectedRow ? 'disabled aria-label="受保护内容"' : ''}>
+      ${protectedRow ? `disabled aria-label="${isLink ? '符号链接，不可清理' : '受保护内容'}"` : ''}>
     <span class="row-path" title="${esc(targetShort(f.t)) + '/' + esc(f.p)}">
-      <span class="row-dir">${esc(dir)}</span><b class="row-name">${esc(name)}</b>${tTag}${sidTag}
+      <span class="row-dir">${esc(dir)}</span><b class="row-name">${esc(name)}</b>${tTag}${linkTag}${sidTag}
     </span>
     <span class="row-size">${fmtBytes(f.s)}</span>
     <span class="row-time">${when}</span>
@@ -683,7 +688,8 @@ function renderSplit() {
      计数用真正"能勾"的条数 —— 受保护的内容（凭据、会话库、配置）不进勾选，
      所以「非会话文件」那块的已选数会比它自己的文件数少，这是对的，照实写。 */
   const protectedIds = new Set(state.index.categories.filter((c) => c.verdict === 'never').map((c) => c.id));
-  const selectable = (xs) => xs.filter((f) => !protectedIds.has(f.c));
+  // 符号链接与"请勿删除"一样不进勾选：服务端一律拒绝，勾了也没用。
+  const selectable = (xs) => xs.filter((f) => !protectedIds.has(f.c) && !f.link);
 
   const anyPicked = state.selection.size > 0;
   const block = (cls, title, desc, xs, extra, split) => {
@@ -919,7 +925,10 @@ document.addEventListener('click', async (e) => {
     // visibleCategories() 已经把筛完的行带出来了，不必再 filter 一遍
     for (const { cat, files } of visibleCategories()) {
       if (cat.verdict === 'never') continue;   // 受保护内容不进全选
-      for (const f of files) state.selection.add(keyOf(f));
+      for (const f of files) {
+        if (f.link) continue;                  // 软链接删不掉，全选也不带上
+        state.selection.add(keyOf(f));
+      }
     }
     renderSplit(); renderGroups(); renderActionbar(); return;
   }
