@@ -1783,13 +1783,6 @@ function openTaskDrawer() {
 
 const closeTaskDrawer = () => { tEls.scrim.hidden = true; tEls.drawer.hidden = true; };
 
-const ROW_LABEL = {
-  session: '会话', message: '消息', part: '附件块', model_usage: '模型调用',
-  turn_usage: '回合', tool_usage: '工具调用', todo: '待办', session_entry: '会话条目',
-  session_input: '输入队列', session_target: '会话目标', session_task_link: '任务链',
-  input_history: '输入历史',
-};
-
 /** 删除后的一致性检查：ZCode 一个库给一个结论，Codex 逐库给一组 —— 都说成人能读的一行。 */
 function checkLine(data) {
   if (!Array.isArray(data.integrity)) {
@@ -1837,12 +1830,9 @@ async function callPurge(dryRun) {
   }
 }
 
-/** 空跑：逐表摊开会删掉的行，数据库没有任何改动。 */
+/** 空跑：逐库逐表摊开会删掉的行，数据库没有任何改动。 */
 function renderDryRun(data) {
-  const rows = Array.isArray(data.perDb)
-    ? data.perDb.map((x) => [`${x.table}（${x.name}）`, x.count ?? 0])
-    : Object.entries(data.counts || {}).filter(([, n]) => n > 0)
-        .map(([k, n]) => [ROW_LABEL[k] || k, n]);
+  const rows = data.perDb.map((x) => [`${x.table}（${x.name}）`, x.count ?? 0]);
   const totalRows = rows.reduce((s, [, c]) => s + c, 0);
   const bodies = data.bodyBytes
     ? `<br>另有 <b>${fmtBytes(data.bodyBytes)}</b> 正文在 rollout 文件里 —— 这里只删索引行，正文要等它们变成孤儿后走文件清理。`

@@ -270,9 +270,12 @@ test('逐 app 的可清会话，过 /api/tasks/purge 的四道闸', async (t) =>
   ]);
   assert.equal(dz.status, 200, JSON.stringify(dz.body));
   assert.equal(dc.status, 200, JSON.stringify(dc.body));
-  assert.ok(dz.body.counts, 'ZCode 空跑报逐表行数');
+  // 两家的空跑现在报同一套形状：逐库逐表数组（不再有 ZCode 专用的 counts 对象）
+  assert.ok(Array.isArray(dz.body.perDb), 'ZCode 空跑也报逐库逐表数组');
   assert.ok(Array.isArray(dc.body.perDb), 'Codex 空跑报逐库逐表数组');
-  assert.ok(dz.body.counts.session >= 1);
+  assert.equal(dz.body.counts, undefined, '同一件事只该有一种形状');
+  assert.ok(dz.body.perDb.some((r) => r.table === 'session' && r.count >= 1), '会话表至少一行');
+  assert.ok(dz.body.perDb.some((r) => r.table === 'message' && r.count >= 1), '消息表至少一行');
   assert.ok(dc.body.perDb.some((r) => r.count > 0));
 
   // 3) 真删：逐批调用（编排由前端做），两边的行都消失、正文文件留下。
