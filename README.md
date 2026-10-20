@@ -1,6 +1,6 @@
 # Agent Inspector
 
-把这台机器上五个 coding agent 的落盘目录摊开看清楚：每一类东西占多少、删了会怎样，然后决定清掉哪些。
+把这台机器上四个 coding agent 的落盘目录摊开看清楚：每一类东西占多少、删了会怎样，然后决定清掉哪些。
 两件事一起做 —— **浏览**（这里到底都放了些什么）和**清理**（哪些能删、删了会怎样）。
 
 | 工具 | 扫哪里 | 能清到什么程度 |
@@ -9,7 +9,6 @@
 | Codex | `~/.codex` | 文件 + 会话库里的**按线程删除**；正文是磁盘上的 rollout 文件，那部分归文件清单 |
 | Claude Code | `~/.claude`、`~/.claude.json` | 文件 —— 它的会话正文本身就是 `.jsonl`，没有库行可删 |
 | Cursor | `~/.cursor`、`~/Library/Application Support/Cursor` | **只读分析** + **孤儿会话回灌** —— 不按行删；界面看不到、transcript 还在的会话可以补回去（只新增，不覆盖） |
-| Gemini | `~/.gemini`、`~/Library/Application Support/Antigravity` | **只读分析** —— 正文在云端，本机只有摘要索引；删摘要只会制造"半删" |
 
 还额外做一件这些工具自己都没做的事：把界面上**早已删掉、正文却还留在磁盘上**的历史会话清干净。
 ZCode 的"删除任务"只是把 `tasks.deleted` 置 1，一行正文都没少。
@@ -48,12 +47,12 @@ cd zcode-inspector
 node server.mjs
 ```
 
-浏览器会自动打开 <http://127.0.0.1:4173>，五个工具排成页面顶部的一排标签。
+浏览器会自动打开 <http://127.0.0.1:4173>，四个工具排成页面顶部的一排标签。
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
 | `--port` | `4173`（或环境变量 `PORT`） | 换端口 |
-| `--app` | 全部五个 | 只装某一个工具的分类表，例如 `--app codex` |
+| `--app` | 全部四个 | 只装某一个工具的分类表，例如 `--app codex` |
 | `--root` | 各工具自己的目录 | 换审计目标，接受 `~/...` 或绝对路径；只作用于第一个目标，并且隐含 `--app zcode` |
 | `--no-open` | — | 不自动打开浏览器 |
 
@@ -65,7 +64,7 @@ node server.mjs
 
 ## 它怎么判断
 
-每个工具一张规则表，在 `lib/apps/` 里各占一个文件（`zcode.mjs`、`codex.mjs`、`claude.mjs`、`cursor.mjs`、`gemini.mjs`），
+每个工具一张规则表，在 `lib/apps/` 里各占一个文件（`zcode.mjs`、`codex.mjs`、`claude.mjs`、`cursor.mjs`），
 共用 `common.mjs` 里的匹配器。规则自上而下，第一个命中的说了算。
 每个分类必须回答四个问题：
 
@@ -94,7 +93,7 @@ node server.mjs
 
 **规则表刻意不做兜底猜测。** `cli/plugins/` 曾经被一条过宽的规则归进"缓存"，
 差点把插件自己的持久数据当缓存推荐删掉。现在读不懂的一律落在 `unknown`，不进默认勾选
-（这台机器上五个工具加起来一万九千多个文件，`unknown` 只有 55 个 —— 而且都是
+（这台机器上四个工具加起来一万九千多个文件，`unknown` 只有 55 个 —— 而且都是
 Electron 自建的状态文件（`Cookies`、`shared_proto_db/`）、各工具自己的备份目录这类
 真正读不懂的东西，不是漏了规则）。
 
@@ -102,7 +101,7 @@ Electron 自建的状态文件（`Cookies`、`shared_proto_db/`）、各工具�
 
 ## 界面
 
-工具选择在页面 header 上：五个 Agent 按名称字母顺序排成一排，每个标签写着它占多少、
+工具选择在页面 header 上：四个 Agent 按名称字母顺序排成一排，每个标签写着它占多少、
 装没装（没装的那一个压暗，但仍然可以点进去确认它真的没落盘）。页面里不再有
 「全部」这种把五张分类表叠起来的合成视图 —— 各工具把东西存在完全不同的地方，
 叠在一起只会骗人。选中谁，整页就只读谁的数据；这个选择记在 localStorage 里。
@@ -113,7 +112,7 @@ Electron 自建的状态文件（`Cookies`、`shared_proto_db/`）、各工具�
 
 ### 总览与清理
 
-首屏是一张卡：左边当前工具的总字节数，右边能清掉什么，底下一行五个工具加起来的总量。
+首屏是一张卡：左边当前工具的总字节数，右边能清掉什么，底下一行四个工具加起来的总量。
 这两件事本来是一句话的两半（左边是分母，右边是分子），拆成两张卡反而要人自己接起来。
 
 ### 可以清理的
@@ -122,7 +121,7 @@ Electron 自建的状态文件（`Cookies`、`shared_proto_db/`）、各工具�
 
 | | 文件与日志 | 历史任务 |
 |---|---|---|
-| 在哪 | 文件树里 | 会话库里（ZCode / Codex），或就是磁盘上的正文文件（Claude Code）；Cursor 与 Gemini 只读摊开 |
+| 在哪 | 文件树里 | 会话库里（ZCode / Codex），或就是磁盘上的正文文件（Claude Code）；Cursor 只读摊开 |
 | 一键操作 | 推荐清理 | 一键清理 |
 | 怎么删 | 移入废纸篓 / 彻底删除 | 事务删除 + VACUUM（先自动备份） |
 
@@ -184,9 +183,6 @@ Cursor 没有这一条：它对会话库只读，页面直接把库的构成摊�
   这里勾选后交给文件清理：默认进废纸篓，可随时恢复。
 - **Cursor** —— 正文以键值对存在 `state.vscdb`，由 IDE 独占写入，键之间没有外键可依。
   只读：按键族（内容寻址 blob、对话气泡、检查点…）把 364.8 MB 的库摊开给你数清楚，不给勾选。
-- **Gemini / Antigravity** —— 正文在云端，本机 `conversation_summaries.db` 只有标题、预览
-  与工作区（`workspace_uris`，从中解出 `file://` 路径）。只读：删摘要等于
-  把界面入口删掉而正文还在，是个"半删"的坏状态，回收不了空间，所以连勾选都不给。
 
 面板做的事：
 
@@ -316,18 +312,17 @@ grep -RIn --exclude-dir=.git -E '<某个内部指标名>' ~/.zcode/cli/exec
 
 ```
 server.mjs             HTTP + API + 静态文件；启动前检查 node:sqlite 是否可用
-lib/apps/index.mjs     五个工具的注册表，扫描顺序与能力位都从这里出
+lib/apps/index.mjs     四个工具的注册表，扫描顺序与能力位都从这里出
 lib/apps/<id>.mjs      每个工具的 targets、分类表、规则、进程名、会话判据
 lib/apps/common.mjs    makeClassify 与共享的分类语义
 lib/scan.mjs           逐目标遍历目录，只 stat；孤儿判定在这里挂会话判据
 lib/tasks.mjs          会话库读取/清理的分发 + 能力位（readOnly / canRecover）+ 静态能力判断
-lib/tasks-shape.mjs    五个工具共用的会话行契约：状态枚举、中性默认、byState 与排序（叶子模块）
+lib/tasks-shape.mjs    四个工具共用的会话行契约：状态枚举、中性默认、byState 与排序（叶子模块）
 lib/tasks-zcode.mjs    ZCode：db.sqlite + tasks-index，按任务删
 lib/tasks-codex.mjs    Codex：三库按线程删，正文文件交给文件线
 lib/tasks-claude.mjs   Claude Code：按文件的历史视图
 lib/tasks-cursor.mjs   Cursor：只读，按键族统计
 lib/cursor-recover.mjs Cursor：孤儿会话扫描与回灌（唯一写 state.vscdb 的路径）
-lib/tasks-gemini.mjs   Gemini/Antigravity：只读摘要，正文在云端
 lib/sqlite-open.mjs    只读打开：必要时连侧文件一起复制到副本上再开
 lib/db-worker.mjs      数据库操作在 worker 线程里跑
 public/index.html      页面骨架
@@ -335,11 +330,11 @@ public/style.css       设计令牌与全部样式
 public/app.js          渲染、勾选、清理流程
 test/server.test.mjs   临时 HOME 中的 HTTP 删除边界回归测试
 test/codex-tasks.test.mjs  Codex 三库夹具：空跑、跨库删除、备份、残骸交接
-test/history-panels.test.mjs  五个工具的会话面板：行与 byState 的同一份契约、能力位、Cursor 反查、并发一致性
+test/history-panels.test.mjs  四个工具的会话面板：行与 byState 的同一份契约、能力位、Cursor 反查、并发一致性
 test/cursor-recover.test.mjs 孤儿会话：扫描、空跑、回灌、幂等、服务端确认闸门
 ```
 
-### 五个工具的共同契约
+### 四个工具的共同契约
 
 各家的会话数据形态完全不同（SQLite 表、`.jsonl` 文件、键值库），取数方式该差就让它差；
 但**会话行长什么样、统计怎么算**是同一套，都在 `lib/tasks-shape.mjs` 里：
@@ -354,7 +349,7 @@ test/cursor-recover.test.mjs 孤儿会话：扫描、空跑、回灌、幂等、
   所以一条会话可以是 `state: 'active'` + `reason: 'wsMissing'`。
 - **`byState` 条目恒为 `{state, count, bytes}`**：键取自 `state`（不是 `reason`，否则筛选钮点了
   永远筛不出东西），`bytes` 只累加行自身的 `bytes`，且各段之和等于 `totals.bytes`。
-- **能力位由后端单源给出**：`readOnly`（不能按行删：Cursor / Gemini）、`readOnlyNote`（只读理由）、
+- **能力位由后端单源给出**：`readOnly`（不能按行删：Cursor）、`readOnlyNote`（只读理由）、
   `fileBased`（正文就是文件：Claude Code）、`canRecover`（有受控回灌路径：只有 Cursor）。
   `/api/scan` 的 app 视图也带 `canRecover`，界面在会话数据到达之前就能决定面板显隐。
 - **排序统一**：体积降序 → 最后使用降序 → id 升序。
@@ -362,7 +357,7 @@ test/cursor-recover.test.mjs 孤儿会话：扫描、空跑、回灌、幂等、
 ### 验证
 
 运行 `npm run check` 检查语法并执行回归测试。测试只使用临时扫描目录和临时 HOME，
-不读取真实会话数据，也不操作真实废纸篓。它覆盖：五个工具的扫描与历史面板、
+不读取真实会话数据，也不操作真实废纸篓。它覆盖：四个工具的扫描与历史面板、
 删除边界（根目录 / 绝对路径 / `..` / 符号链接 / 大小写别名 / 单文件目标 / 未知 app）、
 批量请求的原子性、废纸篓往返，以及"Cursor 与 Claude 的按行删除在任何进程检查之前就被拒"。
 Cursor 回灌那份夹具会核对三组行确实补齐、备份里是回灌前的库、第二次执行导入 0 条，

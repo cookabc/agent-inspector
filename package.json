@@ -1,7 +1,7 @@
 {
   "name": "agent-inspector",
   "version": "2.0.0",
-  "description": "把 ZCode / Codex / Claude Code / Cursor / Gemini 的落盘目录摊开看清楚：每一类占多少、删了会怎样，然后决定清掉哪些",
+  "description": "把 ZCode / Codex / Claude Code / Cursor 的落盘目录摊开看清楚：每一类占多少、删了会怎样，然后决定清掉哪些",
   "type": "module",
   "private": true,
   "license": "MIT",
@@ -14,8 +14,6 @@
     "codex",
     "claude-code",
     "cursor",
-    "gemini",
-    "antigravity",
     "coding-agent",
     "disk-usage",
     "cleanup",
