@@ -1,16 +1,16 @@
 /**
- * 历史会话面板的接口层：五个 app 各扫各的库，形状必须一致。
+ * 历史会话面板的接口层：四个 app 各扫各的库，形状必须一致。
  *
  * 这些接口要读会话库（走的是 worker 链路），所以夹具不用空目录，而是用 node:sqlite
  * 把最小可用的会话库建出来 —— 做法与 codex-tasks.test.mjs 同源。
  * 所有库都在临时 HOME 下，绝不碰真实数据。
  *
  * 这里专门盯四件容易回归的事：
- *   - 五个 app 的会话行与 byState 满足同一份契约（见文件末尾的契约组）
+ *   - 四个 app 的会话行与 byState 满足同一份契约（见文件末尾的契约组）
  *   - Cursor 的 workspaceStorage/<uuid>/workspace.json 能把 UUID 还原成路径，
  *     解析不了时退回 UUID 而不是猜
  *   - 按行清理的四道闸：静态拒绝 → 进程探测 → 备份 → 事务+自检
- *   - 只读的两家（Cursor / Gemini）在任何进程检查之前就被静态拒绝
+ *   - 只读的 Cursor 在任何进程检查之前就被静态拒绝
  */
 
 import test from 'node:test';
@@ -40,7 +40,6 @@ async function fixture(t) {
   await fs.mkdir(path.join(home, '.codex'), { recursive: true });
   await fs.mkdir(path.join(home, '.claude'), { recursive: true });
   await fs.mkdir(path.join(home, '.cursor'), { recursive: true });
-  await fs.mkdir(path.join(home, '.gemini', 'antigravity'), { recursive: true });
   const cursorIde = path.join(home, 'Library', 'Application Support', 'Cursor');
   await fs.mkdir(path.join(cursorIde, 'User', 'globalStorage'), { recursive: true });
   await fs.writeFile(path.join(home, '.claude.json'), '{}');
@@ -122,10 +121,10 @@ function seedZcode(home) {
   ti.close();
 }
 
-/* ── 五家各来一条：契约测试要有行可断言 ─────────────────── */
+/* ── 四家各来一条：契约测试要有行可断言 ─────────────────── */
 
-/** 在同一个临时 HOME 下把五个 app 的最小会话都造出来。 */
-async function seedFive(home) {
+/** 在同一个临时 HOME 下把四个 app 的最小会话都造出来。 */
+async function seedAll(home) {
   seedZcode(home);
 
   // Codex：一条归档线程 + 磁盘上的 rollout 正文
@@ -159,24 +158,6 @@ async function seedFive(home) {
   cursorDb.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)').run(`bubbleId:${cursorId}:b1`, '正文');
   cursorDb.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)').run(`bubbleId:${orphanId}:b1`, '没人认领的正文');
   cursorDb.close();
-
-  // Gemini：两条摘要（一条已终止 → archived，一条活跃）
-  const gDb = new DatabaseSync(path.join(home, '.gemini', 'antigravity', 'conversation_summaries.db'));
-  gDb.exec(`CREATE TABLE conversation_summaries (
-    conversation_id TEXT PRIMARY KEY, title TEXT, preview TEXT, step_count INTEGER,
-    last_modified_time TEXT, last_user_input_time TEXT, workspace_uris TEXT, status TEXT,
-    agent_name TEXT, parent_conversation_id TEXT, nesting_depth INTEGER, killed INTEGER)`);
-  gDb.prepare(`INSERT INTO conversation_summaries
-    (conversation_id, title, preview, step_count, last_modified_time, last_user_input_time,
-     workspace_uris, status, agent_name, parent_conversation_id, nesting_depth, killed)
-    VALUES (?, ?, '', ?, '2026-10-18 10:00:00', '2026-10-18 10:00:00', ?, '', '', '', 0, ?)`)
-    .run('conv-live', 'Gemini 活跃会话', 12, JSON.stringify(['file://' + WS]), 0);
-  gDb.prepare(`INSERT INTO conversation_summaries
-    (conversation_id, title, preview, step_count, last_modified_time, last_user_input_time,
-     workspace_uris, status, agent_name, parent_conversation_id, nesting_depth, killed)
-    VALUES (?, ?, '', ?, '2026-10-18 09:00:00', '2026-10-18 09:00:00', ?, '', '', '', 0, ?)`)
-    .run('conv-killed', 'Gemini 已终止会话', 3, '[]', 1);
-  gDb.close();
 }
 
 /* ── Cursor 工作区反查 ────────────────────────────────────── */
@@ -303,90 +284,6 @@ test('逐 app 的可清会话，过 /api/tasks/purge 的四道闸', async (t) =>
   }
 });
 
-/* ── Gemini / Antigravity：第五个工具 ────────────────────── */
-
-test('Gemini 摘要库只读列出会话，工作区 URI 还原成路径', async (t) => {
-  const f = await fixture(t);
-  const db = new DatabaseSync(path.join(f.home, '.gemini', 'antigravity', 'conversation_summaries.db'));
-  db.exec(`CREATE TABLE conversation_summaries (
-    conversation_id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', preview TEXT NOT NULL DEFAULT '',
-    step_count INTEGER NOT NULL DEFAULT 0, last_modified_time datetime NOT NULL,
-    last_user_input_time datetime NOT NULL, workspace_uris TEXT NOT NULL, status TEXT NOT NULL DEFAULT '',
-    source TEXT NOT NULL DEFAULT '', project_id TEXT NOT NULL DEFAULT '', agent_name TEXT NOT NULL DEFAULT '',
-    parent_conversation_id TEXT NOT NULL DEFAULT '', nesting_depth INTEGER NOT NULL DEFAULT 0,
-    battle_id TEXT NOT NULL DEFAULT '', winning_conversation_id TEXT NOT NULL DEFAULT '',
-    not_fully_idle numeric NOT NULL DEFAULT false, killed numeric NOT NULL DEFAULT false,
-    app_data_dir TEXT NOT NULL DEFAULT '', raw_summary blob, group_id TEXT NOT NULL DEFAULT '')`);
-  // 两条会话：一条带 file:// 工作区（应还原成路径）、一条坏了的 URI（留空不猜）
-  db.prepare(`INSERT INTO conversation_summaries
-    (conversation_id, title, step_count, last_modified_time, last_user_input_time, workspace_uris, nesting_depth, killed)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run('conv-1', 'Gemini 的会话', 12, '2026-10-18 10:00:00', '2026-10-18 10:00:00',
-      JSON.stringify(['file://' + WS]), 0, 0);
-  db.prepare(`INSERT INTO conversation_summaries
-    (conversation_id, title, step_count, last_modified_time, last_user_input_time, workspace_uris, nesting_depth, killed)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run('conv-2', '坏的 URI', 1, '2026-10-18 09:00:00', '2026-10-18 09:00:00', 'not-json', 0, 0);
-  db.close();
-
-  // 单 app 视图：只读、无 reason（正文在云端，删摘要 = 半删）
-  const tasks = await f.get('/api/tasks?app=gemini');
-  assert.equal(tasks.status, 200);
-  assert.equal(tasks.body.readOnly, true);
-  assert.equal(tasks.body.tasks.length, 2);
-  const withWs = tasks.body.tasks.find((x) => x.id === 'conv-1');
-  assert.equal(withWs.workspace, WS);
-  assert.equal(withWs.reason, null);
-  // 坏 URI 的会话留空，不猜
-  assert.equal(tasks.body.tasks.find((x) => x.id === 'conv-2').workspace, '');
-
-  // 行级删除在任何进程检查之前就被静态拒绝
-  const purge = await f.post('/api/tasks/purge', { app: 'gemini', ids: ['conv-1'] });
-  assert.equal(purge.status, 403);
-  assert.match(purge.body.error, /半删/);
-});
-
-test('Gemini 分类规则：摘要库锁定、缓存可清、CLI 经典布局归对类', async (t) => {
-  const f = await fixture(t);
-  // 夹具里放几个真实形态的文件
-  await fs.mkdir(path.join(f.home, '.gemini', 'antigravity', 'cache', 'm'), { recursive: true });
-  await fs.writeFile(path.join(f.home, '.gemini', 'antigravity', 'cache', 'm', 'marketplace.json'), '{}');
-  await fs.writeFile(path.join(f.home, '.gemini', 'jetski-standalone-oauth-token'), 'tok');
-  const summary = path.join(f.home, '.gemini', 'antigravity', 'conversation_summaries.db');
-  await fs.writeFile(summary, 'SQLite format 3');
-
-  const scan = await f.get('/api/scan');
-  const g = scan.body.apps.find((a) => a.app === 'gemini');
-  assert.ok(g, 'scan 里有 gemini');
-  assert.equal(g.installed !== false, true, '夹具装了 .gemini');
-  // 分类表里每个 id 只能出现一次 —— shared(key, ...) 的 id 取自第一个参数，
-  // 写成 shared('database', ...) 挂在 summaryIndex 下会静默产生两个 database、丢掉 summaryIndex。
-  const ids = g.catalog.map((c) => c.id);
-  assert.equal(new Set(ids).size, ids.length, `分类表 id 重复：${ids.join(', ')}`);
-  const idx = g.catalog.find((c) => c.id === 'summaryIndex');
-  assert.ok(idx, '摘要库要有自己的分类 id');
-  assert.equal(idx.locked, true);
-  assert.equal(g.files.find((x) => x.p === 'antigravity/conversation_summaries.db').c, 'summaryIndex');
-
-  // 摘要库是本机唯一的会话入口：整文件锁定，'彻底删除' 也拒绝，且不留半成品
-  const del = await f.post('/api/purge', { app: 'gemini', paths: ['antigravity/conversation_summaries.db'], confirm: '彻底删除', force: true });
-  assert.equal(del.status, 403, JSON.stringify(del.body));
-  assert.equal(await fs.readFile(summary, 'utf8'), 'SQLite format 3');
-  // 也不能靠删父目录绕过
-  const viaParent = await f.post('/api/purge', { app: 'gemini', paths: ['antigravity'], confirm: '彻底删除', force: true });
-  assert.equal(viaParent.status, 403, JSON.stringify(viaParent.body));
-  assert.equal(await fs.readFile(summary, 'utf8'), 'SQLite format 3');
-
-  // 凭据受保护
-  const proj = await f.post('/api/purge', { app: 'gemini', paths: ['jetski-standalone-oauth-token'], confirm: '彻底删除' });
-  assert.equal(proj.status, 403, JSON.stringify(proj.body));
-
-  // 但不是一刀切：缓存照样能清
-  const cache = await f.post('/api/purge', { app: 'gemini', paths: ['antigravity/cache'], confirm: '彻底删除' });
-  assert.equal(cache.status, 200, JSON.stringify(cache.body));
-  await assert.rejects(fs.access(path.join(f.home, '.gemini', 'antigravity', 'cache')));
-});
-
 test('并发读多个 app 的会话库时不互相踩临时副本', async (t) => {
   const f = await fixture(t);
   const ide = f.cursorIde;
@@ -427,7 +324,41 @@ test('并发读多个 app 的会话库时不互相踩临时副本', async (t) =>
   assert.equal(c1.body.totals.bytes, c2.body.totals.bytes);
 });
 
-/* ── 契约组：五家的行与统计必须是同一套 ─────────────────── */
+test('Cursor 键族按首个分隔符归并，内容寻址的 hash 不各占一族', async (t) => {
+  const f = await fixture(t);
+  const ide = f.cursorIde;
+  const dbPath = path.join(ide, 'User', 'globalStorage', 'state.vscdb');
+  const db = new DatabaseSync(dbPath);
+  db.exec('CREATE TABLE composerHeaders (composerId TEXT, workspaceId TEXT, createdAt INTEGER, lastUpdatedAt INTEGER, isArchived INTEGER, isSubagent INTEGER, recency INTEGER)');
+  db.exec('CREATE TABLE cursorDiskKV (key TEXT, value BLOB)');
+  const cid = 'dddd4444-5555-6666-7777-888899990000';
+  db.prepare('INSERT INTO composerHeaders VALUES (?, ?, 1, 2, 0, 0, 3)').run(cid, 'ws');
+  const put = db.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)');
+  // 三种键写法并存：冒号分隔、点号分隔（内容寻址的 hash）、斜杠分隔
+  put.run(`bubbleId:${cid}:b1`, 'a'.repeat(64));
+  put.run('agentKv:blob:1', 'b'.repeat(64));
+  put.run('composer.content.' + 'f'.repeat(64), 'c'.repeat(64));
+  put.run('composer.content.' + 'e'.repeat(64), 'd'.repeat(64));
+  put.run('composer.content.' + 'd'.repeat(64), 'e'.repeat(64));
+  put.run('slashMenuItems/v7/local.glass', 'f'.repeat(16));
+  db.close();
+
+  const { status, body } = await f.get('/api/tasks?app=cursor');
+  assert.equal(status, 200, JSON.stringify(body));
+
+  const families = body.composition.map((c) => c.family);
+  // 三个 composer.content.* 必须合成一族，而不是三个各含一个 hash 的族
+  assert.equal(families.filter((x) => x === 'composer').length, 1, `族列表：${families.join(', ')}`);
+  assert.ok(!families.some((x) => x.startsWith('composer.content.')), 'hash 不该被当成族名');
+  assert.ok(families.includes('slashMenuItems'), '斜杠分隔的键也要归族');
+
+  // 归并后，那一族要装下全部三条
+  const contentRow = body.composition.find((c) => c.family === 'composer');
+  assert.equal(contentRow.count, 3);
+  assert.equal(contentRow.bytes, 64 * 3);
+});
+
+/* ── 契约组：四家的行与统计必须是同一套 ─────────────────── */
 
 /** 每行的核心 13 个字段与类型。只断言"存在 + 值域"，不断言字段集合完全相等 ——
  *  各家可以有附加字段，但缺一个键就会一路以 undefined 画到界面上。 */
@@ -437,11 +368,11 @@ const ROW_FIELDS = {
   createdAt: 'number', updatedAt: 'number', bytes: 'number', rows: 'number', children: 'number',
 };
 
-test('五个 app 的会话行与 byState 遵循同一份契约', async (t) => {
+test('四个 app 的会话行与 byState 遵循同一份契约', async (t) => {
   const f = await fixture(t);
-  await seedFive(f.home);
+  await seedAll(f.home);
 
-  for (const app of ['zcode', 'codex', 'claude', 'cursor', 'gemini']) {
+  for (const app of ['zcode', 'codex', 'claude', 'cursor']) {
     const { status, body } = await f.get('/api/tasks?app=' + app);
     assert.equal(status, 200, `${app}: ${JSON.stringify(body)}`);
     assert.ok(body.tasks.length > 0, `${app} 造了会话就要读得出来`);
@@ -476,9 +407,9 @@ test('五个 app 的会话行与 byState 遵循同一份契约', async (t) => {
   }
 });
 
-test('缺库时五个 app 都返回完整信封，不静默', async (t) => {
+test('缺库时四个 app 都返回完整信封，不静默', async (t) => {
   const f = await fixture(t);   // 只建了目录，一个会话库都没有
-  for (const app of ['zcode', 'codex', 'claude', 'cursor', 'gemini']) {
+  for (const app of ['zcode', 'codex', 'claude', 'cursor']) {
     const { status, body } = await f.get('/api/tasks?app=' + app);
     assert.equal(status, 200, `${app}: ${JSON.stringify(body)}`);
     assert.deepEqual(body.tasks, [], `${app} 缺库时没有会话`);
@@ -490,9 +421,9 @@ test('缺库时五个 app 都返回完整信封，不静默', async (t) => {
   }
 });
 
-test('能力位由后端单源给出：只读两家、可回灌只有 Cursor', async (t) => {
+test('能力位由后端单源给出：只读只有 Cursor、可回灌也只有 Cursor', async (t) => {
   const f = await fixture(t);
-  const readOnly = { zcode: false, codex: false, claude: false, cursor: true, gemini: true };
+  const readOnly = { zcode: false, codex: false, claude: false, cursor: true };
   for (const [app, expected] of Object.entries(readOnly)) {
     const { status, body } = await f.get('/api/tasks?app=' + app);
     assert.equal(status, 200, app);
@@ -520,7 +451,7 @@ test('全域删除边界：未知 app 与空 app 仍是客户端错误', async (
   await fs.mkdir(cache, { recursive: true });
   await fs.writeFile(path.join(cache, 'x.bin'), 'x');
 
-  assert.equal((await f.post('/api/purge', { app: 'gemini', paths: ['v2/cache'], confirm: '彻底删除' })).status, 400);
+  assert.equal((await f.post('/api/purge', { app: 'nosuchtool', paths: ['v2/cache'], confirm: '彻底删除' })).status, 400);
   assert.equal((await f.post('/api/purge', { app: '', paths: ['v2/cache'], confirm: '彻底删除' })).status, 400);
   // 合法 app + 合法路径照旧能删（全域视图的勾选最终走的是这条路）
   const ok = await f.post('/api/purge', { app: 'zcode', target: 'root', paths: ['v2/cache'], confirm: '彻底删除' });
