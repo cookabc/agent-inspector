@@ -1,7 +1,7 @@
 /* Agent Inspector —— 前端
  *
- * 一次只审一个 app：ZCode / Codex / Claude Code / Cursor / Gemini 把东西存在完全不同的地方，
- * 分类表也各自一套。把五张表叠成一个总数只会骗人，所以顶栏那排标签决定下面每一块读谁的数据。
+ * 一次只审一个 app：ZCode / Codex / Claude Code / Cursor 把东西存在完全不同的地方，
+ * 分类表也各自一套。把四张表叠成一个总数只会骗人，所以顶栏那排标签决定下面每一块读谁的数据。
  */
 
 const $ = (id) => document.getElementById(id);
@@ -698,20 +698,30 @@ function renderSplit() {
     const allOn = can.length > 0 && picked.length === can.length;
     const part = picked.length > 0 && !allOn;     // 只勾了这一组的一部分
     const toggle = can.length < xs.length ? '（受保护的几项不会被勾上）' : '';
+    // 空分组没有可勾的东西：不给 tabindex、不写"点这里选"，也不假装是复选框。
+    // 留一个空的 role=checkbox 让人点下去没反应，比不放这块更糟。
+    const empty = can.length === 0;
     // 三种状态说三种话。勾一半时点下去是"补全"，不是"取消" —— 文案写反了就是骗人。
     // 没勾的那两块还要说明：点它不是"加进去"，是"换成它"。
-    const flag = allOn
-      ? `已选 <b>${picked.length.toLocaleString()}</b> 项 · <b>${fmtBytes(sum(picked))}</b>　再点一下取消${toggle}`
-      : part
-        ? `已选 <b>${picked.length.toLocaleString()}</b> / <b>${can.length.toLocaleString()}</b> 项 · ` +
-          `<b>${fmtBytes(sum(picked))}</b>　再点一下补全${toggle}`
-        : anyPicked
-          ? `点这里换成这一组${toggle}`
-          : `点这里选中这一组${toggle}`;
+    const flag = empty
+      ? '这一组没有可勾选的条目'
+      : allOn
+        ? `已选 <b>${picked.length.toLocaleString()}</b> 项 · <b>${fmtBytes(sum(picked))}</b>　再点一下取消${toggle}`
+        : part
+          ? `已选 <b>${picked.length.toLocaleString()}</b> / <b>${can.length.toLocaleString()}</b> 项 · ` +
+            `<b>${fmtBytes(sum(picked))}</b>　再点一下补全${toggle}`
+          : anyPicked
+            ? `点这里换成这一组${toggle}`
+            : `点这里选中这一组${toggle}`;
+    // 空分组整块退出交互：没有 tabindex、没有 role=checkbox、没有 data-split，
+    // 点下去也不会触发任何选择逻辑。
+    const cls2 = `split-block ${cls}${allOn ? ' is-on' : ''}${part ? ' is-part' : ''}` +
+      `${empty ? ' is-empty' : ' is-clickable'}`;
+    const attrs = empty
+      ? ''
+      : ` data-split="${split}" role="checkbox" tabindex="0" aria-checked="${part ? 'mixed' : String(allOn)}"`;
     return `
-    <section class="split-block ${cls}${allOn ? ' is-on' : ''}${part ? ' is-part' : ''} is-clickable"
-      data-split="${split}" role="checkbox" tabindex="0"
-      aria-checked="${part ? 'mixed' : String(allOn)}">
+    <section class="${cls2}"${attrs}>
       <header class="split-head">
         <h3><span class="box" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span>${esc(title)}</h3>
@@ -796,8 +806,10 @@ document.addEventListener('click', async (e) => {
     state.appId = tab.dataset.app;
     applyApp();
     loadTasks();
-    // 会话管理在最上面：换工具后回到页首，而不是滚到磁盘总览。
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    // 只有已经滚下去了才回页首 —— 磁盘占用现在就在首屏，
+    // 站在顶部还硬滚一次等于白抖一下。也不做平滑滚动，
+    // 内容正淡入时再滑一屏会晕。
+    if (window.scrollY > 40) window.scrollTo({ top: 0 });
     return;
   }
 
@@ -1364,6 +1376,7 @@ function renderTasks() {
 
   // 正文不在会话库里的两处：Claude 的正文就是 .jsonl 文件本身；Codex 是索引库 + 磁盘上的
   // rollout。分开说，免得把 Codex 的"两段式"说法安到 Claude 头上。
+  // 只读的只剩 Cursor，它的会话正文就在库里，按键族摊开。
   //
   // 标题来自库里每条会话的 name 字段（Cursor 自己起的名字）。有些会话它没起名，
   // 也没有改动摘要 —— 那几条只能显示 ID。这里主动交代一句，
@@ -1372,14 +1385,9 @@ function renderTasks() {
     ? `其中 <b>${d.untitled}</b> 条 Cursor 没有生成标题（库里没有 name 也没有改动摘要），按 ID 显示。`
     : '';
   tEls.lede.innerHTML = d.readOnly
-    ? (d.composition
-        // Cursor：正文在库里，按键族摊开
-        ? `${esc(who)} 的会话库 <b>${fmtBytes(d.db.total)}</b>，读到 <b>${d.totals.count}</b> 个会话、` +
-          `<b>${fmtBytes(text)}</b> 的正文。下面按键族摊开这 ${fmtBytes(d.db.total)} 到底是怎么分的。` +
-          (untitledNote ? ` ${untitledNote}` : '')
-        // Gemini：正文在云端，本机只有摘要索引
-        : `${esc(who)} 的会话索引 <b>${fmtBytes(d.db.total)}</b>，读到 <b>${d.totals.count}</b> 条会话的摘要。` +
-          `正文在云端，本机没有可回收的会话数据 —— 这里只告诉你有什么、归哪个项目。`)
+    ? `${esc(who)} 的会话库 <b>${fmtBytes(d.db.total)}</b>，读到 <b>${d.totals.count}</b> 个会话、` +
+      `<b>${fmtBytes(text)}</b> 的正文。下面按键族摊开这 ${fmtBytes(d.db.total)} 到底是怎么分的。` +
+      (untitledNote ? ` ${untitledNote}` : '')
     : d.fileBased
       ? `${esc(who)} 的会话正文就是 <b>${d.db.bodies?.count || 0}</b> 个 .jsonl 文件，` +
         `共 <b>${fmtBytes(d.db.bodies?.bytes || 0)}</b>；本机没有会话数据库 —— 清理走文件那条线。` +
@@ -1397,8 +1405,7 @@ function renderTasks() {
   // 动手之前的前提，三个 app 三种说法 —— 都从后端的能力标记来，不在前端猜
   tEls.warn.hidden = false;
   if (d.readOnly) {
-    // 只读的理由由各适配器给（Cursor 与 Gemini 的"为什么不能删"完全不同），
-    // 前端不按 app 名硬编码。
+    // 只读的理由由适配器给，前端不按 app 名硬编码。
     tEls.warn.className = 'app-warn';
     tEls.warn.innerHTML = `${icon('key')}<div><b>${esc(who)} 的会话只读</b>：${esc(d.readOnlyNote || '这个工具的会话数据不提供写路径。')}</div>`;
   } else if (d.fileBased) {

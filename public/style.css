@@ -116,13 +116,56 @@ h1, h2, h3 { text-wrap: balance; margin: 0; }
 p { margin: 0; }
 
 .wrap {
-  max-width: 1220px;
+  /* 1220 在大屏上两边各空掉近 200px，而页面里全是需要横向空间的表格式内容
+     （文件清单三列、会话行的路径 + 体积）。放宽到 1560，窄屏仍由 padding 兜住。 */
+  max-width: 1560px;
   margin: 0 auto;
   padding-block: 22px 140px;
-  padding-inline: clamp(16px, 4vw, 40px);
+  padding-inline: clamp(16px, 3.2vw, 40px);
   display: flex;
   flex-direction: column;
   gap: 18px;
+}
+
+/* 文件清单和会话管理并排：两块都是"一长串可筛可勾的条目"，纵向摞在一起
+   会让人滚两遍长列表。够宽时各占一半，窄屏自动落回单列。 */
+.single {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+@media (min-width: 1180px) {
+  .single {
+    /* 文件清单是主内容（三块分组 + 逐项条目），会话管理是列在旁边的一列，
+       所以给左边多一点。 */
+    grid-template-columns: minmax(0, 1.32fr) minmax(0, 1fr);
+    grid-template-areas:
+      "hero  hero"
+      "files tasks"
+      "diag  diag";
+  }
+  .single > .hero    { grid-area: hero; }
+  .single > #files   { grid-area: files; }
+  .single > #tasks   { grid-area: tasks; }
+  .single > .note    { grid-area: diag; }
+
+  /* 会话管理比文件清单短得多（Claude 这类压根只有一段说明）。
+     让它跟着滚：在左栏那串长清单里往下翻时，右侧的会话过滤与勾选始终在手边，
+     不会翻到一半就只剩空白。 */
+  .single > #tasks {
+    position: sticky;
+    top: 16px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+}
+
+/* 布局落回单列时不许吸顶：那时它是正常的一整块，吸住会把页面盖住。 */
+@media (max-width: 1179px) {
+  .single > #tasks { position: static; max-height: none; overflow: visible; }
 }
 
 /* 让 <a>/按钮 有统一的可见焦点 */
@@ -293,6 +336,7 @@ p { margin: 0; }
   letter-spacing: .1em;
   text-transform: uppercase;
   color: var(--muted);
+  margin: 0;
 }
 
 .hero-figure {
@@ -392,7 +436,9 @@ p { margin: 0; }
   border-top: 1px solid var(--line);
 }
 .lane-foot .btn { padding: 9px 16px; font-size: 13.5px; }
-.lane-cap { font-size: 12px; color: var(--muted); max-width: 34ch; line-height: 1.5; flex: 1 1 160px; }
+/* 说明文字吃掉按钮右边的整片宽度：卡里这么宽的一条底边只放两样东西，
+   再限成 34ch 就是白白留一条空带。 */
+.lane-cap { font-size: 12px; color: var(--muted); line-height: 1.5; flex: 1 1 220px; min-width: 0; }
 .lane-cap b { color: var(--ink-2); font-weight: 600; }
 .lane-cap code { font-size: 11.5px; }
 .rec-off { display: block; margin-top: 2px; }
@@ -599,6 +645,12 @@ pre code { background: none; padding: 0; }
 /* 每一块就是一个勾选框：勾上时整块点亮 —— 框打勾、描边加重、底色跟着来 */
 .split-block.is-clickable { cursor: pointer; transition: border-color .14s ease, box-shadow .14s ease; }
 .split-block.is-clickable:hover { border-color: var(--line-strong); }
+
+/* 空分组：静静地摆在那里交代"这一组没有东西"，不做成可按的样子。
+   勾选框淡出，指针回到普通箭头，避免"点了没反应"那种假交互。 */
+.split-block.is-empty { opacity: .72; cursor: default; }
+.split-block.is-empty .box { opacity: .45; }
+.split-block.is-empty .split-flag { color: var(--muted); font-style: normal; }
 .split-block.is-on {
   border-color: var(--c);
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--c) 16%, transparent);
@@ -649,18 +701,30 @@ pre code { background: none; padding: 0; }
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px 10px;
   padding-bottom: 14px;
   border-bottom: 1px solid var(--line);
+}
+
+/* 工具栏右侧收成一组：排序 + 勾选快捷键。不分组时它们和筛选钮同权重，
+   "全选/取消"看起来跟"筛选"是一类东西 —— 其实一个是过滤、一个是选择。 */
+.toolbar-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
+  flex: none;
 }
 
 .search {
   display: flex;
   align-items: center;
   gap: 7px;
-  flex: 1 1 220px;
+  /* 双栏下工具栏只有 780px 左右。搜索框按比例缩放，别钉死宽度 ——
+     钉死会把筛选钮挤到下一行，工具栏白白多出一行。 */
+  flex: 1 1 150px;
   min-width: 0;
-  max-width: 260px;
+  max-width: 240px;
   padding: 6px 11px;
   background: var(--surface-2);
   border: 1px solid var(--line);
@@ -680,6 +744,21 @@ pre code { background: none; padding: 0; }
 }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* 筛选钮是这一行里最宽的一组（三项常见的状态筛选就有 400px+）。
+   容器不够宽时，与其让三样东西挤成三行碎片，不如明确分工：
+   搜索和排序/勾选占第一行，筛选钮整组落到第二行 —— 稳定两行，
+   不随内容多少在二/三行之间跳。
+   用容器查询而不是媒体查询：决定折行的是面板自己的宽度，
+   视口 1600 时双栏里的单栏也只有 780。 */
+.panel { container-type: inline-size; }
+
+@container (max-width: 900px) {
+  .toolbar { row-gap: 10px; }
+  .toolbar .search { flex: 1 1 auto; max-width: 360px; order: 1; }
+  .toolbar .toolbar-end { margin-inline-start: auto; order: 2; }
+  .toolbar .chips { order: 3; flex: 1 1 100%; }
+}
 .chip {
   font: inherit;
   font-size: 12px;
@@ -831,7 +910,7 @@ pre code { background: none; padding: 0; }
 .group-explain p { font-size: 12.8px; color: var(--ink-2); line-height: 1.6; }
 .group-explain p strong { color: var(--ink); font-weight: 600; }
 
-.group-body { border-top: 1px solid var(--line); max-height: 420px; overflow-y: auto; }
+.group-body { border-top: 1px solid var(--line); max-height: 360px; overflow-y: auto; flex: none; }
 
 .row {
   display: grid;
@@ -877,6 +956,13 @@ pre code { background: none; padding: 0; }
   color: color-mix(in oklab, var(--st-serious) 72%, var(--ink));
   font-weight: 600;
 }
+
+/* 软链接：中性灰，只是"这条为什么勾不上"的说明，不当警告处理 */
+.row.is-link .row-tag {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.row.is-link .row-name { color: var(--ink-2); font-weight: 500; }
 
 .row-size { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 550; white-space: nowrap; }
 .row-time { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 11.5px; white-space: nowrap; }
@@ -1003,10 +1089,13 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   background: var(--surface);
   /* Cursor 的键族能摊出上百行：构成图也关进自己的滚动区，
      否则会话列表还没出现，页面已经被这张图撑长了。 */
-  max-height: min(44vh, 420px);
+  max-height: min(38vh, 340px);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  /* 面板是纵向 flex：不给 flex:none 的话这一块会被压到只剩标题那点高度，
+     max-height 管不住"被压扁"，只会管"被撑高"。 */
+  flex: none;
 }
 .tcomp-title { font-size: 12px; font-weight: 600; color: var(--ink-2); flex: none; }
 .tcomp-row { flex: none; }
@@ -1043,9 +1132,11 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   border: 1px solid var(--line);
   border-radius: var(--r-md);
   overflow: hidden auto;
-  max-height: min(62vh, 640px);
+  max-height: min(52vh, 520px);
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  /* 同样是 panel 的 flex 子项：max-height 只管上限，不管被压扁。 */
+  flex: none;
 }
 .task-list:empty { display: none; }
 
