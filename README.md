@@ -25,7 +25,7 @@ Cursor 是一个反向的例子：会话列表只认 `state.vscdb` 里的 `compo
 > 换一台机器必然不同，页面上显示的才是你这台机器的实时数据。
 
 <p align="center">
-  <img src="docs/images/overview.png" width="880" alt="首屏：磁盘占用与可以清理的，文件清单按「会话是否还在」分成三组，每个分类都标注删了会怎样（这张图是改名前只有 ZCode 一屏的版本）">
+  <img src="docs/images/overview.png" width="880" alt="首屏：header 上四个工具的标签；左边是当前工具的磁盘占用，右边两条并排的清理线（文件与日志、历史会话）；下面是文件清单按「会话是否还在」分成三组，右侧是会话管理面板">
 </p>
 
 ## 环境
@@ -93,17 +93,26 @@ node server.mjs
 
 **规则表刻意不做兜底猜测。** `cli/plugins/` 曾经被一条过宽的规则归进"缓存"，
 差点把插件自己的持久数据当缓存推荐删掉。现在读不懂的一律落在 `unknown`，不进默认勾选
-（这台机器上四个工具加起来一万九千多个文件，`unknown` 只有 55 个 —— 而且都是
-Electron 自建的状态文件（`Cookies`、`shared_proto_db/`）、各工具自己的备份目录这类
+（这台机器上四个工具加起来一万七千多个文件，`unknown` 只有 59 个 —— 而且都是
+Electron 自建的状态文件（`Cookies`、`shared_proto_db/`、`VideoDecodeStats/`）这类
 真正读不懂的东西，不是漏了规则）。
 
+> 这条判据出过一次错，值得记下来：`~/.codex/backups/` 里躺着 44 MB 的项目 zip，
+> 一度整批落进 `unknown`。原因是 `backups/` 这条规则只在 Claude 那一份里写了，
+> 另三家只有靠后缀匹配的 `.bak` 规则 —— 同一个形态在四张表里漂成了两种答案。
+> 现在跨 app 同形的规则收在 `lib/apps/common.mjs` 的 `SHARED_RULES` 里，
+> 并有 `test/classification.test.mjs` 盯着「四家对同一条共享规则是否给出同一个答案」。
+> 顺带分出了 `dataBackup`（完整数据副本）与 `configBackup`（配置副本）两档：
+> 前者里面可能是别人项目的 zip，说成"配置备份"是替它撒谎。
+
 要加一类，在对应工具的规则表里加一条即可 —— 匹配是纯函数，加完刷新页面就能看到。
+跨工具同形的规则请放进 `SHARED_RULES`，别每家抄一份。
 
 ## 界面
 
 工具选择在页面 header 上：四个 Agent 按名称字母顺序排成一排，每个标签写着它占多少、
 装没装（没装的那一个压暗，但仍然可以点进去确认它真的没落盘）。页面里不再有
-「全部」这种把五张分类表叠起来的合成视图 —— 各工具把东西存在完全不同的地方，
+「全部」这种把四张分类表叠起来的合成视图 —— 各工具把东西存在完全不同的地方，
 叠在一起只会骗人。选中谁，整页就只读谁的数据；这个选择记在 localStorage 里。
 
 页面往下依次是：会话管理（最常用的入口，自带滚动区）→ 总览（当前工具的总量与可清理项）
@@ -327,11 +336,14 @@ lib/sqlite-open.mjs    只读打开：必要时连侧文件一起复制到副本
 lib/db-worker.mjs      数据库操作在 worker 线程里跑
 public/index.html      页面骨架
 public/style.css       设计令牌与全部样式
+public/logic.js        纯函数（体积格式化）—— 不碰 DOM，测试直接 import
 public/app.js          渲染、勾选、清理流程
 test/server.test.mjs   临时 HOME 中的 HTTP 删除边界回归测试
 test/codex-tasks.test.mjs  Codex 三库夹具：空跑、跨库删除、备份、残骸交接
 test/history-panels.test.mjs  四个工具的会话面板：行与 byState 的同一份契约、能力位、Cursor 反查、并发一致性
 test/cursor-recover.test.mjs 孤儿会话：扫描、空跑、回灌、幂等、服务端确认闸门
+test/classification.test.mjs  跨 app 分类一致性：共享规则同答、backups/ 不被当成缓存、分类表覆盖规则输出
+test/logic.test.mjs    fmtBytes 的进位边界：任何体积都不印出 1024
 ```
 
 ### 四个工具的共同契约
@@ -364,6 +376,10 @@ Cursor 回灌那份夹具会核对三组行确实补齐、备份里是回灌前�
 以及确认串错误时请求在碰库之前就返回 400、空跑在应用运行中也允许。
 Codex 那份夹具把三个库都建出来 —— 其中两个**没有** `threads` 表，逐库删除必须跳过它们；
 它同时验证"行删完、正文文件还在，并以下一个编号出现在残骸里"这条交接。
+另外两份盯着两类"不会崩、但会说谎"的缺陷：`classification.test.mjs` 确认跨 app 同形的
+规则（`.bak` 副本、顶层 `backups/`）在四家里给出同一个答案，且每个 app 的分类表覆盖
+自己规则可能产出的每个 id；`logic.test.mjs` 确认体积格式化在任何进位边界上都印不出
+`1024.0 MB` 这种不存在的写法。
 CI 在 Linux、macOS 及 Node 22.5 / 24 上执行；Linux 跳过 macOS 废纸篓测试。
 
 ### 为什么要有 worker

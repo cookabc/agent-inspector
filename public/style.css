@@ -223,7 +223,7 @@ p { margin: 0; }
 
 /* ── 工具切换 ───────────────────────────────────────────── */
 
-/* 五个工具并排，装了没、各占多少一眼看完。
+/* 四个工具并排，装了没、各占多少一眼看完。
    没装的那一个压暗但仍然可点 —— 有时人就是想进去确认它真的没落盘。
    标签住在 header 里：切工具是换这一页在读谁，不是页面内的一个段落。 */
 .app-tabs {
@@ -369,7 +369,10 @@ p { margin: 0; }
   .hero {
     display: grid;
     grid-template-columns: minmax(300px, 400px) minmax(0, 1fr);
-    align-items: start;
+    /* 左栏只有"总量 + 一句出处"，右栏叠着两条清理线 —— 高度差被
+       align-items:start 全丢在左下角，看着像块没填满的版面。
+       居中让留白摊到上下两边，读起来是"这栏就这么多内容"，不是"少画了东西"。 */
+    align-items: center;
     gap: 0 32px;
   }
   .hero > .clean {
@@ -389,9 +392,13 @@ p { margin: 0; }
   letter-spacing: -.01em;
 }
 
+/* 两条清理线够宽就并排。330px 这个下限太贪：hero 右栏在常见宽度下只有
+   584px，两栏要 674px 才排得下，于是永远退化成上下堆叠，把左栏那一行数字
+   孤零零留在 300px 的空白里。278px 仍能放下 chip 与按钮（最长的
+   「旧版本运行时 641.4 MB」也在里面），换来的是一整块空白消失。 */
 .lanes {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(278px, 1fr));
   gap: 14px;
 }
 
