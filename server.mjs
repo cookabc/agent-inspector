@@ -73,6 +73,40 @@ const argOf = (flag, fallback) => {
   return i >= 0 && argv[i + 1] ? argv[i + 1] : fallback;
 };
 
+/* 帮助与版本要排在一切扫描之前：`--help` 的作用是"告诉我怎么用"，
+   而不是"起一个服务然后让我按 Ctrl+C"。 */
+const pkg = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'package.json'), 'utf8'));
+
+if (argv.includes('--help') || argv.includes('-h')) {
+  console.log(`
+  Agent Inspector ${pkg.version} —— ${pkg.description}
+
+  用法
+    node server.mjs [选项]
+
+  选项
+    --port <n>    端口，默认 4173（或环境变量 PORT）
+    --app <id>    只装某一个工具的分类表：${APPS.map((a) => a.id).join(' / ')}
+    --root <dir>  换审计目标，接受 ~/... 或绝对路径。
+                  只作用于第一个目标，并且隐含 --app zcode
+    --no-open     不自动打开浏览器
+    -h, --help    显示这段说明
+    -v, --version 只打印版本号
+
+  环境
+    Node >= 22.5（node:sqlite 从这个版本起才有）
+
+  文档
+    https://github.com/cookabc/zcode-inspector
+`);
+  process.exit(0);
+}
+
+if (argv.includes('--version') || argv.includes('-v')) {
+  console.log(pkg.version);
+  process.exit(0);
+}
+
 const PORT = Number(argOf('--port', process.env.PORT || 4173));
 const NO_OPEN = argv.includes('--no-open');
 const ROOT = argOf('--root', null);
@@ -288,6 +322,11 @@ function isProtected(plan, target, rel, directory = false) {
 
 /* ── HTTP ─────────────────────────────────────────────────── */
 
+/** zlib.gzip 的 promise 版。zlib 没有内置 promise API。 */
+const gzipAsync = (buf) => new Promise((resolve, reject) => {
+  zlib.gzip(buf, (err, out) => (err ? reject(err) : resolve(out)));
+});
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
@@ -302,11 +341,18 @@ function send(res, status, body, headers = {}) {
   res.end(body);
 }
 
-function sendJSON(req, res, status, obj) {
+/**
+ * 发 JSON。超过 1 KB 且有 gzip 就压。
+ *
+ * 用异步 gzip 而不是 gzipSync：/api/scan 有 3 MB，同步压缩会在事件循环里
+ * 卡住几十毫秒，正好落在"刚点完重新扫描"那一刻 —— 别的请求（包括同一页
+ * 正在拉 /api/tasks 的那一条）都得排队等它压完。
+ */
+async function sendJSON(req, res, status, obj) {
   const raw = Buffer.from(JSON.stringify(obj));
   const accept = String(req.headers['accept-encoding'] || '');
   if (raw.length > 1024 && accept.includes('gzip')) {
-    const gz = zlib.gzipSync(raw);
+    const gz = await gzipAsync(raw);
     return send(res, status, gz, {
       'Content-Type': 'application/json; charset=utf-8',
       'Content-Encoding': 'gzip',
@@ -485,6 +531,29 @@ function appMustQuit(running) {
     `${running.label} 正在运行（${who}）。请先完全退出它再清理 —— ` +
     `对一个正在被写入的数据库动手会损坏它。`);
 }
+
+/* 端口被占是这个工具最常见的启动失败：多半是上一次的服务还开着。
+   默认的 EADDRINUSE 会甩二十行 Node 内部栈，人只能看出"报错了"，
+   看不出该怎么办 —— 而这个工具别处（node:sqlite 缺失、未知 app、
+   目标不存在）都做到了说人话，这里不该是唯一的例外。 */
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\n  端口 ${PORT} 已经被占用了。\n`);
+    console.error(`  多半是上一次的服务还开着。先看是谁：`);
+    console.error(`    lsof -nP -iTCP:${PORT} -sTCP:LISTEN\n`);
+    console.error(`  两种办法：关掉它，或者换一个端口：`);
+    console.error(`    node server.mjs --port ${PORT + 1}\n`);
+    process.exit(1);
+  }
+  if (err.code === 'EACCES') {
+    console.error(`\n  没有权限监听端口 ${PORT}。`);
+    console.error(`  1024 以下的端口需要 root —— 换个四位数的端口再试：`);
+    console.error(`    node server.mjs --port 4173\n`);
+    process.exit(1);
+  }
+  console.error(`\n  服务启动失败：${err.message}\n`);
+  process.exit(1);
+});
 
 server.listen(PORT, '127.0.0.1', async () => {
   const url = `http://127.0.0.1:${PORT}`;

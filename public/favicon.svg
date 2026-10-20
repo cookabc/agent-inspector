@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- 与 header 里 .brand-mark 同一个图标：一个立着的数据库。
+       底色用墨色块，这样在浅色与深色标签栏上都立得住。 -->
+  <rect width="24" height="24" rx="5" fill="#1a1a1a"/>
+  <g fill="none" stroke="#fafafa" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <ellipse cx="12" cy="6.5" rx="6" ry="2.2"/>
+    <path d="M6 6.5v11c0 1.22 2.69 2.2 6 2.2s6-.98 6-2.2v-11"/>
+    <path d="M6 12c0 1.22 2.69 2.2 6 2.2s6-.98 6-2.2"/>
+  </g>
+</svg>

@@ -278,13 +278,19 @@ function renderAppTabs() {
     const empty = a.totals.files === 0;
     // 标签上只写名字：体积字数不一样，塞进来会让相邻的名字跟着左右挪。
     // 数值放进 title，鼠标停上去仍然看得到。
+    /* tablist 的标准键盘模型是 roving tabindex：整排只占一个 Tab 位，
+       进了组之后用左右箭头换标签。四个都是 tabindex=0 的话，键盘用户
+       每过一个工具就得按一次 Tab，而这四个本来是一件事的四个选项。 */
     return `<button type="button" class="app-tab ${on ? 'is-on' : ''}${empty ? ' is-empty' : ''}"
-      role="tab" aria-selected="${on}" data-app="${esc(a.app)}"
+      role="tab" id="apptab-${esc(a.app)}" aria-selected="${on}" tabindex="${on ? '0' : '-1'}"
+      aria-controls="single" data-app="${esc(a.app)}"
       title="${esc(a.targets.map((t) => `${t.short}${t.exists ? '' : '（没有）'}`).join('、'))} · ${
         empty ? '未安装' : `${fmtBytes(a.totals.bytes)} · ${a.totals.files.toLocaleString()} 个文件`}">
       <span class="app-tab-name">${esc(a.label)}</span>
     </button>`;
   }).join('');
+  // 内容区（tabpanel）的名字跟着选中项走。写死在 HTML 里会在切换后说错话。
+  if (state.appId) els.single.setAttribute('aria-labelledby', `apptab-${state.appId}`);
 }
 
 function filesOf(catId) {
@@ -620,11 +626,66 @@ function openDrawer() {
 
   els.scrim.hidden = false;
   els.drawer.hidden = false;
+  openModal(els.drawer);
 }
 
 function closeDrawer() {
   els.scrim.hidden = true;
   els.drawer.hidden = true;
+  closeModal(els.drawer);
+}
+
+/* ── 模态抽屉的焦点 ───────────────────────────────────────
+   两个抽屉都声明了 aria-modal="true"，但之前只有"看得见"这件事做对了：
+   焦点还留在后面那个按钮上，Tab 会一路跑到抽屉背后的页面里去。
+   读屏用户听到"对话框"，按 Tab 却走出了对话框 —— 比不声明更糟。
+
+   这里只管三件事：进来时把焦点放到第一个可操作元素、Tab / Shift+Tab
+   在抽屉内部循环、关掉之后把焦点还给打开它的那个按钮。 */
+
+let lastFocused = null;
+
+const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+function focusablesIn(root) {
+  // 不能用 offsetParent 判可见：抽屉本身就是 fixed + 滚动容器。
+  // 用 getClientRects 判"有没有盒子"，再排除 hidden 属性带来的 display:none。
+  return [...root.querySelectorAll(FOCUSABLE)].filter((el) => el.getClientRects().length > 0);
+}
+
+function openModal(root) {
+  lastFocused = document.activeElement;
+  document.body.classList.add('is-modal');
+  /* 这里不能用 requestAnimationFrame 等"布局完成" —— 抽屉的 hidden 刚被
+     摘掉，rAF 有可能在样式重算之前就跑了，那时 focusablesIn() 拿到的是
+     空数组，焦点留在背后那个按钮上（实测就是这样）。同步读一次
+     getClientRects() 会把布局强制做完，紧接着就能安全地取第一个元素。 */
+  void root.getClientRects();
+  const first = focusablesIn(root)[0];
+  (first || root).focus?.();
+}
+
+function closeModal(root) {
+  document.body.classList.remove('is-modal');
+  if (lastFocused && document.contains(lastFocused)) {
+    lastFocused.focus?.();
+  }
+  lastFocused = null;
+  void root;
+}
+
+/** 抽屉里按 Tab：走到头就回到开头，Shift+Tab 反之。 */
+function trapTab(e, root) {
+  const items = focusablesIn(root);
+  if (!items.length) return;
+  const first = items[0];
+  const last = items[items.length - 1];
+  const active = document.activeElement;
+  if (e.shiftKey && (active === first || !root.contains(active))) {
+    e.preventDefault(); last.focus();
+  } else if (!e.shiftKey && (active === last || !root.contains(active))) {
+    e.preventDefault(); first.focus();
+  }
 }
 
 const mode = () => document.querySelector('input[name="mode"]:checked').value;
@@ -1065,6 +1126,13 @@ document.addEventListener('scroll', hideTip, true);
 
 // 键盘
 document.addEventListener('keydown', (e) => {
+  // 抽屉开着时，Tab 只在抽屉里循环 —— 否则焦点会溜到背后的页面上，
+  // 而屏幕上那层 scrim 让人看不见自己focus到哪了。
+  if (e.key === 'Tab') {
+    if (!els.drawer.hidden) { trapTab(e, els.drawer); return; }
+    if (!tEls.drawer.hidden) { trapTab(e, tEls.drawer); return; }
+  }
+
   if (e.key === '/' && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
     e.preventDefault(); els.search.focus(); els.search.select();
   }
@@ -1086,6 +1154,28 @@ document.addEventListener('keydown', (e) => {
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('[data-split]')) {
     e.preventDefault();
     e.target.click();
+  }
+
+  /* tablist 的键盘模型：左右箭头在标签之间走，Home/End 到两头。
+     走的同时就切换（这是"自动激活"模式，四个工具切换没有副作用，
+     不需要用户再按一次回车确认）。roving tabindex 让 Tab 只停在
+     当前选中的那一个上。 */
+  if (e.target.matches?.('#appTabs [role="tab"]')) {
+    const tabs = [...els.appTabs.querySelectorAll('[role="tab"]')];
+    const i = tabs.indexOf(e.target);
+    let next = null;
+    if (e.key === 'ArrowRight') next = tabs[(i + 1) % tabs.length];
+    else if (e.key === 'ArrowLeft') next = tabs[(i - 1 + tabs.length) % tabs.length];
+    else if (e.key === 'Home') next = tabs[0];
+    else if (e.key === 'End') next = tabs[tabs.length - 1];
+    if (next) {
+      e.preventDefault();
+      const id = next.id;
+      next.click();
+      // 切换会重画整排标签，刚才那个元素已经不在文档里了 ——
+      // 按 id 重新拿一次，否则焦点会掉到 body 上，键盘走到这里就断了。
+      document.getElementById(id)?.focus();
+    }
   }
 });
 
@@ -1941,9 +2031,14 @@ function openTaskDrawer() {
 
   tEls.scrim.hidden = false;
   tEls.drawer.hidden = false;
+  openModal(tEls.drawer);
 }
 
-const closeTaskDrawer = () => { tEls.scrim.hidden = true; tEls.drawer.hidden = true; };
+const closeTaskDrawer = () => {
+  tEls.scrim.hidden = true;
+  tEls.drawer.hidden = true;
+  closeModal(tEls.drawer);
+};
 
 /** 删除后的一致性检查：ZCode 一个库给一个结论，Codex 逐库给一组 —— 都说成人能读的一行。 */
 function checkLine(data) {
