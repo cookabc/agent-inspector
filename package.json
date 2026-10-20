@@ -26,7 +26,7 @@
   "scripts": {
     "start": "node server.mjs",
     "test": "node --experimental-sqlite --test",
-    "check": "node --check server.mjs && node --check public/app.js && npm test"
+    "check": "node --check server.mjs && node --check public/app.js && node --check public/logic.js && npm test"
   },
   "author": "cookabc"
 }

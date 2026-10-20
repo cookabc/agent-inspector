@@ -85,10 +85,11 @@
       <h2 class="section-title" id="cleanTitle">可以清理的</h2>
 
       <div class="lanes">
-        <!-- 文件与日志 -->
+        <!-- 推荐清理。名字不写死"文件与日志"：Cursor 的推荐项是已安装扩展，
+             写死会让标题和下面的范围对不上。由 renderRecommend 按实际范围填。 -->
         <article class="lane" id="rec">
           <header class="lane-head">
-            <span class="lane-name">文件与日志</span>
+            <span class="lane-name" id="recName">推荐清理</span>
             <span class="lane-figure" id="recFigure">—</span>
           </header>
           <p class="lane-sub" id="recSub"></p>
@@ -387,6 +388,6 @@
 
 <div class="tooltip" id="tooltip" hidden></div>
 
-<script src="app.js"></script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

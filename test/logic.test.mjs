@@ -1,0 +1,72 @@
+/**
+ * 纯函数的行为。这些函数不碰 DOM，所以能在 node --test 里直接跑。
+ *
+ * 重点是 fmtBytes 的进位边界：它在屏幕上印出来的每个数字，都是这套工具
+ * 说"我算的是真的"的依据。印成 "1024.0 MB" 这种不存在于任何量级的写法，
+ * 比少一位小数糟得多。
+ */
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { fmtBytes } from '../public/logic.js';
+
+const KB = 1024, MB = 1024 ** 2, GB = 1024 ** 3, TB = 1024 ** 4;
+
+test('常规量级与精度', () => {
+  assert.equal(fmtBytes(0), '0 B');
+  assert.equal(fmtBytes(512), '512 B');
+  assert.equal(fmtBytes(KB), '1 KB');
+  assert.equal(fmtBytes(1536), '2 KB');
+  assert.equal(fmtBytes(1536 * KB), '1.5 MB');
+  assert.equal(fmtBytes(2.84 * GB), '2.84 GB');
+  // 10 GB 以上只留一位
+  assert.equal(fmtBytes(12.345 * GB), '12.3 GB');
+  assert.equal(fmtBytes(1.234 * TB), '1.23 TB');
+});
+
+test('进位边界：不能印出 1024', () => {
+  // 这几个数按小单位四舍五入会到 1024 —— 必须换到再大的单位重新算。
+  assert.equal(fmtBytes(1073741000), '1.00 GB');   // 1023.999 MB → 1024
+  assert.equal(fmtBytes(1048570), '1.0 MB');       // 1023.99 KB  → 1024
+  assert.equal(fmtBytes(1048575), '1.0 MB');
+  assert.equal(fmtBytes(1048064), '1.0 MB');
+  assert.equal(fmtBytes(10 * GB - 1), '10.00 GB');   // 还差一点到 10 GB，走两位档
+  assert.equal(fmtBytes(10 * GB), '10.0 GB');        // 刚好到 10 GB，换成一位档
+  assert.equal(fmtBytes(TB - 1), '1.00 TB');
+});
+
+test('任何体积都不会印出 1024 或更高', () => {
+  // 扫一遍有代表性的量级（含各单位的进位点附近），确认没有任何一个
+  // 输出真的写成 "1024.x"。这是上一个测试的兜底：边界不只是一两个数。
+  const probe = [];
+  for (const size of [KB, MB, GB, TB]) {
+    for (let delta = -3; delta <= 3; delta++) probe.push(size + delta);
+    for (const f of [0.999, 0.9999, 0.99999]) probe.push(Math.floor(size * f));
+  }
+  for (const n of probe) {
+    const out = fmtBytes(n);
+    const value = Number(out.split(' ')[0]);
+    assert.ok(!(value >= 1024), `${n} 印成了 ${out}`);
+  }
+});
+
+test('输出永远不出现 undefined / NaN / 科学计数法', () => {
+  for (const n of [0, 1, KB, MB, GB, TB, 5 * TB, 123456789012]) {
+    const out = fmtBytes(n);
+    assert.match(out, /^[\d.]+ (B|KB|MB|GB|TB)$/, `${n} → ${out}`);
+    assert.ok(!out.includes('NaN') && !out.includes('e+'));
+  }
+});
+
+test('单调：更大的数不会印出更小的值', () => {
+  // 单位换档时最容易翻车的地方，用一组递增样本对一下
+  const samples = [0, 1, KB - 1, KB, MB - 1, MB, GB - 1, GB, 10 * GB, TB - 1, TB];
+  const rank = { B: 1, KB: 2, MB: 3, GB: 4, TB: 5 };
+  let prev = -Infinity;
+  for (const n of samples) {
+    const [v, u] = fmtBytes(n).split(' ');
+    const abs = Number(v) * (1024 ** (rank[u] - 1));
+    assert.ok(abs >= prev, `${n} 折算后比前一个小`);
+    prev = abs;
+  }
+});

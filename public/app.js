@@ -13,7 +13,7 @@ const els = {
   skeleton: $('skeleton'),
   heroBytes: $('heroBytes'), heroSub: $('heroSub'),
   diagnosis: $('diagnosis'), diagLede: $('diagLede'), diagTitleText: $('diagTitleText'),
-  rec: $('rec'), recBtn: $('recBtn'), recCap: $('recCap'), recScope: $('recScope'),
+  rec: $('rec'), recName: $('recName'), recBtn: $('recBtn'), recCap: $('recCap'), recScope: $('recScope'),
   recFigure: $('recFigure'), recSub: $('recSub'),
   taskQuick: $('taskQuick'), tqFigure: $('tqFigure'), tqSub: $('tqSub'),
   taskQuickBtn: $('taskQuickBtn'), taskQuickCap: $('taskQuickCap'),
@@ -56,16 +56,8 @@ const keyOf = (f, appId) => f.k || `${appId !== undefined ? appId : (f.app ?? st
 
 /* ── 工具 ───────────────────────────────────────────────── */
 
-const GB = 1024 ** 3, MB = 1024 ** 2, KB = 1024;
-
-function fmtBytes(n) {
-  if (n >= 1024 ** 4) return (n / 1024 ** 4).toFixed(2) + ' TB';
-  if (n >= 10 * GB)   return (n / GB).toFixed(1) + ' GB';
-  if (n >= GB)        return (n / GB).toFixed(2) + ' GB';
-  if (n >= MB)        return (n / MB).toFixed(1) + ' MB';
-  if (n >= KB)        return (n / KB).toFixed(0) + ' KB';
-  return n + ' B';
-}
+/* fmtBytes 在 logic.js —— 纯函数，node --test 能直接 import 测。 */
+import { fmtBytes } from './logic.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -231,7 +223,13 @@ function pickApp() {
 function applyApp() {
   state.index = state.apps.find((a) => a.app === state.appId) || null;
   state.selection.clear();
-  state.group = null;   // 换 app，筛选也从头开始
+  // 换 app，筛选也从头开始。搜索词与状态筛选同样是"这一屏的读法"，
+  // 留着上一个工具的词会让新工具一进来就是空白（Cursor 里搜不到
+  // ZCode 那些 sess_ 路径），看起来像工具坏了。
+  state.group = null;
+  state.q = '';
+  state.statuses.clear();
+  els.search.value = '';
   state.recReady = false;
 
   if (state.index) {
@@ -807,16 +805,27 @@ function renderSplit() {
 /* 按钮上直接写出这批有多大，点之前就知道会发生什么。
    下面的条目可以逐项开关，按钮数字跟着变。 */
 function renderRecommend() {
-  const all = recommendAll();
+  // 一个字节都没有的推荐项不立空壳 —— 跟分类卡片同一条规矩
+  const all = recommendAll().filter((c) => c.bytes > 0);
   if (!all.length) { els.rec.hidden = true; return; }
   els.rec.hidden = false;
 
-  const { cats, bytes, count } = sumCats(recommendOn());
+  const on = all.filter((c) => !state.recOff.has(c.id));
+  const { cats, bytes, count } = sumCats(on);
   const off = all.filter((c) => state.recOff.has(c.id));
 
   els.recFigure.textContent = fmtBytes(bytes);
-  els.recSub.innerHTML =
-    `日志、缓存与系统垃圾，共 <b>${count.toLocaleString()}</b> 项。删掉不影响会话、配置和凭据。`;
+
+  /* 这一句得跟着实际范围变。写死"日志、缓存与系统垃圾"只在
+     ZCode/Codex/Claude 下成立；Cursor 的推荐项是「已安装扩展」，
+     那句"删掉不影响会话、配置和凭据"对它就是假话。 */
+  els.recName.textContent = all.length <= 2 ? all.map((c) => c.label).join(' · ') : '文件与日志';
+  els.recSub.innerHTML = !on.length
+    ? `推荐项已全部排除 —— 点上面的条目可以放回来。`
+    : `${esc(cats.map((c) => c.label).join('、'))}，共 <b>${count.toLocaleString()}</b> 项。` +
+      (cats.every((c) => c.verdict === 'safe' || c.verdict === 'junk')
+        ? `删掉不影响会话、配置和凭据。`
+        : `删了有代价 —— 每一类下面都写了具体会怎样。`);
 
   els.recBtn.disabled = !count;
   els.recBtn.innerHTML = count
@@ -833,9 +842,9 @@ function renderRecommend() {
       : '');
 
   els.recScope.innerHTML = all.map((c) => {
-    const on = !state.recOff.has(c.id);
-    return `<button type="button" class="rec-chip ${STATUS_CLASS[c.status]} ${on ? 'is-on' : ''}"
-      data-rec="${c.id}" aria-pressed="${on}" title="${esc(c.what)}">
+    const isOn = !state.recOff.has(c.id);
+    return `<button type="button" class="rec-chip ${STATUS_CLASS[c.status]} ${isOn ? 'is-on' : ''}"
+      data-rec="${c.id}" aria-pressed="${isOn}" title="${esc(c.what)}">
       <span class="box" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
         stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span>
       ${esc(c.label)} <em>${fmtBytes(c.bytes)}</em>
@@ -1150,6 +1159,36 @@ const fmtDateTime = (ms) => {
   return `${fmtDate(ms)} ${p(d.getHours())}:${p(d.getMinutes())}`;
 };
 
+/**
+ * 把会话面板擦回到"还没有任何数据"的样子。
+ *
+ * 切工具时数据是异步来的（Cursor 要读 364 MB 的库，约 3.5 秒），这中间
+ * 标签已经高亮成新工具了，面板里却还可能挂着上一个工具的数字。这台工具
+ * 的全部卖点就是"屏幕上的数字是真的"，所以这里必须一次擦干净 ——
+ * 包括那几个平时只在新数据到达时才重画的元素（快捷项、构成条、筛选钮）。
+ */
+function resetTaskPanel() {
+  tEls.warn.hidden = true;
+  tEls.warn.innerHTML = '';
+  tEls.comp.hidden = true;
+  tEls.comp.innerHTML = '';
+  tEls.foot.hidden = true;
+  tEls.list.innerHTML = '';
+  tEls.empty.hidden = true;
+  tEls.dbBar.innerHTML = '';
+  tEls.chips.innerHTML = '';
+  tEls.lede.classList.remove('is-loading');
+  tEls.dryWrap.hidden = true;
+
+  // 首屏那条「历史会话」快捷线：没有数据就不该立着，更不该留着别人的句子
+  els.taskQuick.hidden = true;
+  els.tqFigure.textContent = '—';
+  els.tqSub.innerHTML = '';
+  els.taskQuickBtn.disabled = true;
+  els.taskQuickBtn.textContent = '一键清理';
+  els.taskQuickCap.innerHTML = '';
+}
+
 async function loadTasks(refresh = false) {
   const appId = state.appId;
   const view = state.index;
@@ -1157,18 +1196,13 @@ async function loadTasks(refresh = false) {
   taskState.sel.clear();
   taskState.states.clear();
   taskState.open.clear();
-  tEls.warn.hidden = true;
-  tEls.comp.hidden = true;
-  tEls.foot.hidden = true;
-  tEls.list.innerHTML = '';
+  resetTaskPanel();
   if (!view || !view.canRecover) hideRecoverable();
 
   // 全域模式没有"某一个工具"的会话面板：任务区直接说去看哪个工具
   if (!view) {
     hideRecoverable();
     tEls.lede.textContent = '总览模式下不读会话库 —— 切到具体工具后这里显示它的历史会话。';
-    tEls.dbBar.innerHTML = '';
-    tEls.chips.innerHTML = '';
     renderTaskFoot();
     renderTaskQuick();
     return;
