@@ -355,5 +355,12 @@ test('every history panel scans and reports its own shape', async t => {
     assert.ok(Array.isArray(body.tasks), app);
     assert.equal(typeof body.writable, 'boolean', app);
     assert.ok(body.app, app);
+    // 返回信封恒定：哪怕库不存在，下面这些也必须在 —— 前端按字段名取值
+    assert.ok(Array.isArray(body.totals.byState), `${app} 的 totals.byState 要是数组`);
+    assert.equal(typeof body.totals.bytes, 'number', app);
+    assert.ok(Array.isArray(body.db.dbs), `${app} 的 db.dbs 要是数组`);
+    assert.equal(typeof body.db.total, 'number', `${app} 的 db.total 要是数字`);
+    assert.ok(Array.isArray(body.problems), `${app} 的 problems 要是数组`);
+    assert.equal(typeof body.scanMs, 'number', `${app} 的 scanMs 要是数字`);
   }
 });

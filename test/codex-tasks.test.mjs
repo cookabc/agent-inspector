@@ -96,6 +96,10 @@ test('Codex 的历史视图把三个库和磁盘正文对齐', async (t) => {
   assert.equal(archived.updatedAt, 3000, '归档时间优先，单位换成毫秒');
   // 正文合计必须等于磁盘上 rollout 文件的总和 —— 少算的那块在界面上永远找不回来
   assert.equal(d.totals.bytes, d.db.bodies.bytes);
+  // byState 只承载真实存在的状态桶：没有 deleted 这种永远为空的条目；
+  // 各段体积加起来必须正好是总量 —— 把投影体积重复算进去会在这里暴露。
+  assert.ok(d.totals.byState.every((g) => g.state !== 'deleted'), 'Codex 不该有 deleted 桶');
+  assert.equal(d.totals.byState.reduce((s, g) => s + g.bytes, 0), d.totals.bytes);
 });
 
 test('空跑逐库清点，在没有 threads 表的库里也不会炸', async (t) => {

@@ -25,6 +25,7 @@ import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { workspaceFolders } from '../lib/apps/cursor.mjs';
+import { STATES, REASONS } from '../lib/tasks-shape.mjs';
 
 const project = fileURLToPath(new URL('..', import.meta.url));
 
@@ -119,6 +120,63 @@ function seedZcode(home) {
   ti.exec("INSERT INTO tasks VALUES ('sess_a', 'ZCode 的已删会话', '" + WS + "', '" + WS + "', 0, 1, 0, 1, 2, 'm', 'build', 'completed', 0)");
   ti.exec("INSERT INTO tasks VALUES ('sess_b', 'ZCode 的活跃会话', '" + WS + "', '" + WS + "', 0, 0, 0, 1, 2, 'm', 'build', 'completed', 0)");
   ti.close();
+}
+
+/* ── 五家各来一条：契约测试要有行可断言 ─────────────────── */
+
+/** 在同一个临时 HOME 下把五个 app 的最小会话都造出来。 */
+async function seedFive(home) {
+  seedZcode(home);
+
+  // Codex：一条归档线程 + 磁盘上的 rollout 正文
+  const codexUuid = '01ab0000-0000-0000-0000-0000000000aa';
+  const codexRel = `sessions/2026/10/01/rollout-2026-10-01T00-00-00-${codexUuid}.jsonl`;
+  await fs.mkdir(path.dirname(path.join(home, '.codex', codexRel)), { recursive: true });
+  await fs.writeFile(path.join(home, '.codex', codexRel), '正文'.repeat(64));
+  const codexDb = new DatabaseSync(path.join(home, '.codex', 'state_5.sqlite'));
+  codexDb.exec(`CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT, name TEXT, cwd TEXT, rollout_path TEXT,
+    created_at INTEGER, updated_at INTEGER, archived INTEGER, archived_at INTEGER,
+    is_pinned INTEGER, tokens_used INTEGER, model TEXT, model_provider TEXT,
+    history_mode TEXT, thread_source TEXT, preview TEXT)`);
+  codexDb.prepare('INSERT INTO threads VALUES (?, ?, NULL, ?, ?, 1, 2, 1, 3, 0, 0, ?, ?, ?, ?, ?)')
+    .run(codexUuid, 'Codex 的会话', WS, path.join(home, '.codex', codexRel), 'gpt', 'openai', 'paginated', 'user', 'p');
+  codexDb.close();
+
+  // Claude：正文就是 .jsonl，第一行带 cwd / 时间 / 模型
+  const slug = '-tmp-agent-inspector-ws-test';
+  await fs.mkdir(path.join(home, '.claude', 'projects', slug), { recursive: true });
+  await fs.writeFile(path.join(home, '.claude', 'projects', slug, 'claude-sess-1.jsonl'),
+    JSON.stringify({ type: 'user', cwd: WS, timestamp: '2026-10-01T00:00:00Z',
+      message: { content: 'Claude 的会话' }, model: 'claude-x' }) + '\n');
+
+  // Cursor：一条界面里的会话 + 一组没有会话头的残骸气泡
+  const cursorDb = new DatabaseSync(path.join(home, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage', 'state.vscdb'));
+  cursorDb.exec('CREATE TABLE composerHeaders (composerId TEXT, workspaceId TEXT, createdAt INTEGER, lastUpdatedAt INTEGER, isArchived INTEGER, isSubagent INTEGER, recency INTEGER)');
+  cursorDb.exec('CREATE TABLE cursorDiskKV (key TEXT, value BLOB)');
+  const cursorId = 'dddd4444-5555-6666-7777-888899990000';
+  const orphanId = 'ffff1111-2222-3333-4444-555566667777';
+  cursorDb.prepare('INSERT INTO composerHeaders VALUES (?, ?, 1, 2, 0, 0, 3)').run(cursorId, 'nowhere-uuid');
+  cursorDb.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)').run(`bubbleId:${cursorId}:b1`, '正文');
+  cursorDb.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)').run(`bubbleId:${orphanId}:b1`, '没人认领的正文');
+  cursorDb.close();
+
+  // Gemini：两条摘要（一条已终止 → archived，一条活跃）
+  const gDb = new DatabaseSync(path.join(home, '.gemini', 'antigravity', 'conversation_summaries.db'));
+  gDb.exec(`CREATE TABLE conversation_summaries (
+    conversation_id TEXT PRIMARY KEY, title TEXT, preview TEXT, step_count INTEGER,
+    last_modified_time TEXT, last_user_input_time TEXT, workspace_uris TEXT, status TEXT,
+    agent_name TEXT, parent_conversation_id TEXT, nesting_depth INTEGER, killed INTEGER)`);
+  gDb.prepare(`INSERT INTO conversation_summaries
+    (conversation_id, title, preview, step_count, last_modified_time, last_user_input_time,
+     workspace_uris, status, agent_name, parent_conversation_id, nesting_depth, killed)
+    VALUES (?, ?, '', ?, '2026-10-18 10:00:00', '2026-10-18 10:00:00', ?, '', '', '', 0, ?)`)
+    .run('conv-live', 'Gemini 活跃会话', 12, JSON.stringify(['file://' + WS]), 0);
+  gDb.prepare(`INSERT INTO conversation_summaries
+    (conversation_id, title, preview, step_count, last_modified_time, last_user_input_time,
+     workspace_uris, status, agent_name, parent_conversation_id, nesting_depth, killed)
+    VALUES (?, ?, '', ?, '2026-10-18 09:00:00', '2026-10-18 09:00:00', ?, '', '', '', 0, ?)`)
+    .run('conv-killed', 'Gemini 已终止会话', 3, '[]', 1);
+  gDb.close();
 }
 
 /* ── Cursor 工作区反查 ────────────────────────────────────── */
@@ -365,6 +423,71 @@ test('并发读多个 app 的会话库时不互相踩临时副本', async (t) =>
   assert.equal(c1.body.tasks.length, c2.body.tasks.length);
   assert.equal(c1.body.totals.bytes, c2.body.totals.bytes);
 });
+
+/* ── 契约组：五家的行与统计必须是同一套 ─────────────────── */
+
+/** 每行的核心 13 个字段与类型。只断言"存在 + 值域"，不断言字段集合完全相等 ——
+ *  各家可以有附加字段，但缺一个键就会一路以 undefined 画到界面上。 */
+const ROW_FIELDS = {
+  id: 'string', title: 'string', workspace: 'string', state: 'string',
+  pinned: 'boolean', model: 'string', typeLabel: 'string',
+  createdAt: 'number', updatedAt: 'number', bytes: 'number', rows: 'number', children: 'number',
+};
+
+test('五个 app 的会话行与 byState 遵循同一份契约', async (t) => {
+  const f = await fixture(t);
+  await seedFive(f.home);
+
+  for (const app of ['zcode', 'codex', 'claude', 'cursor', 'gemini']) {
+    const { status, body } = await f.get('/api/tasks?app=' + app);
+    assert.equal(status, 200, `${app}: ${JSON.stringify(body)}`);
+    assert.ok(body.tasks.length > 0, `${app} 造了会话就要读得出来`);
+    assert.equal(body.totals.count, body.tasks.length, `${app} 的总数要等于行数`);
+
+    for (const row of body.tasks) {
+      for (const [field, type] of Object.entries(ROW_FIELDS)) {
+        assert.equal(typeof row[field], type, `${app} 的行缺少 ${field}（值：${JSON.stringify(row[field])}）`);
+      }
+      // 必填的两个字段不能是空串 —— 空串会画成一张没有名字、也选不中的卡片
+      assert.notEqual(row.id, '', `${app} 的行必须有 id`);
+      assert.notEqual(row.title, '', `${app} 的行必须有标题`);
+      assert.ok(STATES.includes(row.state), `${app} 的 state 越界：${row.state}`);
+      assert.ok(row.reason === null || REASONS.includes(row.reason), `${app} 的 reason 越界：${row.reason}`);
+      // 可选但恒定存在的两个字段
+      assert.ok(row.bodyRel === null || typeof row.bodyRel === 'string', `${app} 的 bodyRel 类型不对`);
+      assert.equal(typeof row.residual, 'boolean', `${app} 的 residual 要是布尔`);
+    }
+
+    // byState：每条恰好三个键、键取自 state（不是 reason）、只留真实存在的桶。
+    // 拿 reason 当键的钮点了永远筛不出东西：Claude 曾经就是 'wsMissing' 不在状态表里，
+    // 界面上渲染成字面量 undefined。
+    for (const g of body.totals.byState) {
+      assert.deepEqual(Object.keys(g).sort(), ['bytes', 'count', 'state'], `${app} 的 byState 条目形状不对`);
+      assert.ok(STATES.includes(g.state), `${app} 的 byState 键必须是 state：${g.state}`);
+      assert.ok(g.count > 0, `${app} 不该输出空桶`);
+      assert.equal(typeof g.bytes, 'number', `${app} 的 byState.bytes 要是数字`);
+    }
+    // 核心回归钉：各段体积之和 == 总量。Codex 的投影双算与 Claude 的旧键空间都会在这里红。
+    assert.equal(body.totals.byState.reduce((s, g) => s + g.bytes, 0), body.totals.bytes,
+      `${app} 的 byState 体积合计必须等于 totals.bytes`);
+  }
+});
+
+test('缺库时五个 app 都返回完整信封，不静默', async (t) => {
+  const f = await fixture(t);   // 只建了目录，一个会话库都没有
+  for (const app of ['zcode', 'codex', 'claude', 'cursor', 'gemini']) {
+    const { status, body } = await f.get('/api/tasks?app=' + app);
+    assert.equal(status, 200, `${app}: ${JSON.stringify(body)}`);
+    assert.deepEqual(body.tasks, [], `${app} 缺库时没有会话`);
+    assert.ok(Array.isArray(body.totals.byState), `${app} 的 byState 要是数组`);
+    assert.ok(Array.isArray(body.db.dbs), `${app} 的 db.dbs 要是数组`);
+    assert.equal(typeof body.db.total, 'number', `${app} 的 db.total 要是数字`);
+    assert.ok(body.problems.length > 0, `${app} 缺库必须报出来 —— 静默看起来就像"装了但空的"`);
+    assert.equal(typeof body.scanMs, 'number', `${app} 的 scanMs 要是数字`);
+  }
+});
+
+/* ── 全域删除边界 ─────────────────────────────────────────── */
 
 test('全域删除边界：未知 app 与空 app 仍是客户端错误', async (t) => {
   const f = await fixture(t);
