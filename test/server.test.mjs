@@ -354,6 +354,8 @@ test('every history panel scans and reports its own shape', async t => {
     assert.equal(status, 200, app);
     assert.ok(Array.isArray(body.tasks), app);
     assert.equal(typeof body.writable, 'boolean', app);
+    assert.equal(typeof body.readOnly, 'boolean', app);
+    assert.equal(typeof body.canRecover, 'boolean', app);
     assert.ok(body.app, app);
     // 返回信封恒定：哪怕库不存在，下面这些也必须在 —— 前端按字段名取值
     assert.ok(Array.isArray(body.totals.byState), `${app} 的 totals.byState 要是数组`);

@@ -487,6 +487,27 @@ test('缺库时五个 app 都返回完整信封，不静默', async (t) => {
   }
 });
 
+test('能力位由后端单源给出：只读两家、可回灌只有 Cursor', async (t) => {
+  const f = await fixture(t);
+  const readOnly = { zcode: false, codex: false, claude: false, cursor: true, gemini: true };
+  for (const [app, expected] of Object.entries(readOnly)) {
+    const { status, body } = await f.get('/api/tasks?app=' + app);
+    assert.equal(status, 200, app);
+    assert.equal(body.readOnly, expected, `${app} 的 readOnly`);
+    assert.equal(body.canRecover, app === 'cursor', `${app} 的 canRecover 只有 Cursor 为真`);
+    if (expected) assert.ok((body.readOnlyNote || '').length > 0, `${app} 只读必须给出理由`);
+  }
+
+  // /api/scan 的 app 视图也要带 canRecover —— 前端在 /api/tasks 到达之前就要决定面板显隐
+  const scan = await f.get('/api/scan');
+  const cursorView = scan.body.apps.find((a) => a.app === 'cursor');
+  assert.ok(cursorView, 'scan 里要有 cursor');
+  for (const a of scan.body.apps) {
+    assert.equal(typeof a.canRecover, 'boolean', `${a.app} 的 scan 视图缺 canRecover`);
+    assert.equal(a.canRecover, a.app === 'cursor', `${a.app} 的 canRecover`);
+  }
+});
+
 /* ── 全域删除边界 ─────────────────────────────────────────── */
 
 test('全域删除边界：未知 app 与空 app 仍是客户端错误', async (t) => {
