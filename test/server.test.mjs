@@ -13,7 +13,7 @@ const project = fileURLToPath(new URL('..', import.meta.url));
 
 /**
  * 每个 (app, target) 对应的落盘位置 —— 全部在临时 HOME 之下，
- * 这样测试可以同时对五个 app 的删除边界下手，而不会碰到真实数据。
+ * 这样测试可以同时对四个 app 的删除边界下手，而不会碰到真实数据。
  */
 const LOC = {
   'zcode/root': '.zcode',
@@ -22,7 +22,6 @@ const LOC = {
   'claude/dotfile': '',                       // 单文件目标：<home>/.claude.json
   'cursor/cli': '.cursor',
   'cursor/ide': 'Library/Application Support/Cursor',
-  'gemini/root': '.gemini',
 };
 
 // 每个 app 里必须"删不掉"的东西：库、凭据、配置
@@ -36,8 +35,6 @@ const PROTECTED = {
   'cursor/cli': ['mcp.json', 'cli-config.json'],
   'cursor/ide': ['User/globalStorage/state.vscdb', 'User/globalStorage/conversation-search.db',
                  'User/settings.json', 'ai-tracking/events.sqlite'],
-  'gemini/root': ['antigravity/conversation_summaries.db', 'jetski-standalone-oauth-token',
-                  'config/config.json'],
 };
 
 /** 每个 app 里明确可删的安全内容，用来确认保护没有一刀切。 */
@@ -47,7 +44,6 @@ const SAFE = {
   'claude/home': 'cache/x/blob.bin',
   'cursor/cli': 'projects/ws/keep.log',
   'cursor/ide': 'logs/window1/main.log',
-  'gemini/root': 'antigravity/cache/x/marketplace.json',
 };
 
 async function fixture(t) {
@@ -246,7 +242,7 @@ test('foreign origins and simple cross-site POSTs cannot delete files', async t 
 
 test('unknown app and target are client errors', async t => {
   const f = await fixture(t);
-  assert.equal((await f.post('/api/purge', { app: 'gemini', paths: ['cache'], confirm: '彻底删除' })).status, 400);
+  assert.equal((await f.post('/api/purge', { app: 'nosuchtool', paths: ['cache'], confirm: '彻底删除' })).status, 400);
   assert.equal((await f.post('/api/purge', { paths: ['cache'], confirm: '彻底删除' })).status, 400);
   assert.equal((await f.post('/api/purge', { app: 'zcode', target: 'nope', paths: ['v2/cache'], confirm: '彻底删除' })).status, 400);
   // cursor 的 ide 目标不在 zcode 的分类表里，反过来也一样
@@ -289,6 +285,23 @@ test('traversal, absolute paths, direct links and links within root are rejected
     assert.equal(result.status, 400, rel);
     assert.equal(await fs.readFile(file, 'utf8'), 'keep me');
   }
+
+  // 软链接本身 vs 路径里夹着软链接，是两回事：前者换条路径也删不了，
+  // 后者改选真实路径就行。报错必须分得开，否则人会对着同一条再试一遍。
+  const itself = await f.post('/api/purge', { app: 'zcode', paths: ['alias'], confirm: '彻底删除' });
+  assert.equal(itself.status, 400);
+  assert.match(itself.body.error, /本身是符号链接/, itself.body.error);
+  const through = await f.post('/api/purge', { app: 'zcode', paths: ['alias/log/old.log'], confirm: '彻底删除' });
+  assert.equal(through.status, 400);
+  assert.match(through.body.error, /路径里有符号链接/, through.body.error);
+
+  // 扫描结果要把软链接标出来，界面才能不把它画成可勾条目
+  const scan = await f.get('/api/scan');
+  const alias = scan.body.apps.find((a) => a.app === 'zcode').files.find((x) => x.p === 'alias');
+  assert.ok(alias, '软链接应该出现在文件清单里');
+  assert.equal(alias.link, true, '软链接要带 link 标记');
+  const plain = scan.body.apps.find((a) => a.app === 'zcode').files.find((x) => x.p === 'cli/log/old.log');
+  assert.equal(plain.link, undefined, '普通文件不该带 link 标记');
 });
 
 test('safe files can still move to the isolated wastebasket', { skip: process.platform !== 'darwin' }, async t => {
@@ -349,7 +362,7 @@ for (const [app, status, why] of [
 
 test('every history panel scans and reports its own shape', async t => {
   const f = await fixture(t);
-  for (const app of ['zcode', 'codex', 'claude', 'cursor', 'gemini']) {
+  for (const app of ['zcode', 'codex', 'claude', 'cursor']) {
     const { status, body } = await f.get('/api/tasks?app=' + app);
     assert.equal(status, 200, app);
     assert.ok(Array.isArray(body.tasks), app);
