@@ -1335,10 +1335,16 @@ function renderTasks() {
     renderTaskQuick();
     // Claude Code 这类"正文就是文件"的工具，就算一条会话没读到，也要说清楚
     // 为什么这里没有可勾的东西 —— 否则人会以为文件清单里那堆 .jsonl 失踪了。
-    if (d?.fileBased) {
+    // 后端报的读取问题也要上屏："库打不开"与"库是空的"必须能分清。
+    const notes = [];
+    if (d?.fileBased) notes.push(fileBasedNote(d.appLabel));
+    if (d?.problems?.length) {
+      notes.push(`${icon('alert')}<div>${d.problems.map((p) => esc(p)).join('<br>')}</div>`);
+    }
+    if (notes.length) {
       tEls.warn.hidden = false;
-      tEls.warn.className = 'app-warn is-ok';
-      tEls.warn.innerHTML = fileBasedNote(d.appLabel);
+      tEls.warn.className = d.problems?.length ? 'app-warn' : 'app-warn is-ok';
+      tEls.warn.innerHTML = notes.join('<br>');
     }
     return;
   }
@@ -1413,7 +1419,9 @@ function renderDbBar() {
   // ZCode / Cursor 的正文就在库里，分母就是库文件大小；Codex 的正文是磁盘上的 rollout
   // 文件，分母必须把库和文件加起来 —— 否则"活跃任务"那一根会画到 374% 宽。
   const bodies = d.db.bodies?.bytes || 0;
-  const total = (d.db.total || 1) + bodies;
+  // 分母是"库 + 库外正文"。没有库时（Claude 的正文全是 .jsonl）total 为 0，
+  // 不能拿 1 去垫 —— 那会凭空多出一个 1 字节的"开销"段。
+  const total = (d.db.total || 0) + bodies;
   const byState = d.totals.byState.map((g) => ({
     // 兜底：将来后端多一个状态桶而前端没跟上时，退化成可读的词，而不是 undefined
     label: STATE_META_CN[g.state] || g.state, bytes: g.bytes, tone: STATE_TONE[g.state] || '', key: g.state,
@@ -1435,7 +1443,7 @@ function renderDbBar() {
   ].filter((s) => s.bytes > 0);
 
   const W = 100;
-  const pct = segs.map((s) => (s.bytes / total) * W);
+  const pct = segs.map((s) => (total ? (s.bytes / total) * W : 0));
   const floors = pct.map(Math.floor);
   let rest = Math.round(W - floors.reduce((a, b) => a + b, 0));
   const order = pct.map((v, i) => [v - Math.floor(v), i]).sort((a, b) => b[0] - a[0]);
