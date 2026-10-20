@@ -320,7 +320,8 @@ lib/apps/index.mjs     五个工具的注册表，扫描顺序与能力位都从
 lib/apps/<id>.mjs      每个工具的 targets、分类表、规则、进程名、会话判据
 lib/apps/common.mjs    makeClassify 与共享的分类语义
 lib/scan.mjs           逐目标遍历目录，只 stat；孤儿判定在这里挂会话判据
-lib/tasks.mjs          会话库读取/清理的分发 + 静态能力判断（rowPurgeBlocked）
+lib/tasks.mjs          会话库读取/清理的分发 + 能力位（readOnly / canRecover）+ 静态能力判断
+lib/tasks-shape.mjs    五个工具共用的会话行契约：状态枚举、中性默认、byState 与排序（叶子模块）
 lib/tasks-zcode.mjs    ZCode：db.sqlite + tasks-index，按任务删
 lib/tasks-codex.mjs    Codex：三库按线程删，正文文件交给文件线
 lib/tasks-claude.mjs   Claude Code：按文件的历史视图
@@ -334,9 +335,29 @@ public/style.css       设计令牌与全部样式
 public/app.js          渲染、勾选、清理流程
 test/server.test.mjs   临时 HOME 中的 HTTP 删除边界回归测试
 test/codex-tasks.test.mjs  Codex 三库夹具：空跑、跨库删除、备份、残骸交接
-test/history-panels.test.mjs  五个工具的会话面板：行与 byState 的同一份契约、Cursor 反查、并发一致性
+test/history-panels.test.mjs  五个工具的会话面板：行与 byState 的同一份契约、能力位、Cursor 反查、并发一致性
 test/cursor-recover.test.mjs 孤儿会话：扫描、空跑、回灌、幂等、服务端确认闸门
 ```
+
+### 五个工具的共同契约
+
+各家的会话数据形态完全不同（SQLite 表、`.jsonl` 文件、键值库），取数方式该差就让它差；
+但**会话行长什么样、统计怎么算**是同一套，都在 `lib/tasks-shape.mjs` 里：
+
+- **每行固定这些字段**：`id`、`title`、`workspace`、`state`、`reason`、`pinned`、`model`、
+  `typeLabel`、`createdAt`、`updatedAt`、`bytes`、`rows`、`children`，外加恒定存在的
+  `bodyRel`、`residual`。不适用就给中性默认值（空串 / `0` / `false` / `null`），**不留空键** ——
+  少一个键就是 `undefined`，而 `undefined` 会一路画到界面上。
+- **`state` 与 `reason` 是两个轴**：`state` 是生命周期桶（`deleted` / `archived` / `untracked` /
+  `empty` / `active`），驱动 `byState` 与筛选钮；`reason` 是唯一的"能不能从这里清"信号
+  （`deleted` / `archived` / `untracked` / `wsMissing` / `bodyMissing` / `empty` / `null`）。
+  所以一条会话可以是 `state: 'active'` + `reason: 'wsMissing'`。
+- **`byState` 条目恒为 `{state, count, bytes}`**：键取自 `state`（不是 `reason`，否则筛选钮点了
+  永远筛不出东西），`bytes` 只累加行自身的 `bytes`，且各段之和等于 `totals.bytes`。
+- **能力位由后端单源给出**：`readOnly`（不能按行删：Cursor / Gemini）、`readOnlyNote`（只读理由）、
+  `fileBased`（正文就是文件：Claude Code）、`canRecover`（有受控回灌路径：只有 Cursor）。
+  `/api/scan` 的 app 视图也带 `canRecover`，界面在会话数据到达之前就能决定面板显隐。
+- **排序统一**：体积降序 → 最后使用降序 → id 升序。
 
 ### 验证
 
