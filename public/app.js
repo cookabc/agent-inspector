@@ -1075,7 +1075,7 @@ async function loadTasks(refresh = false) {
   tEls.comp.hidden = true;
   tEls.foot.hidden = true;
   tEls.list.innerHTML = '';
-  if (appId !== 'cursor') hideRecoverable();
+  if (!view || !view.canRecover) hideRecoverable();
 
   // 全域模式没有"某一个工具"的会话面板：任务区直接说去看哪个工具
   if (!view) {
@@ -1102,8 +1102,8 @@ async function loadTasks(refresh = false) {
     if (state.appId !== appId || data.appId !== appId) return;
     taskState.data = data;
     renderTasks();
-    // Cursor 另外有一条"界面看不到的会话"线，独立懒加载
-    if (appId === 'cursor') loadRecoverable();
+    // 有回灌写路径的工具另外有一条"界面看不到的会话"线，独立懒加载
+    if (data.canRecover) loadRecoverable();
   } catch (err) {
     if (state.appId !== appId) return;
     tEls.lede.innerHTML = `<b>读取失败：</b>${esc(err.message)}`;
@@ -1125,7 +1125,9 @@ function hideRecoverable() {
 }
 
 async function loadRecoverable() {
-  if (state.appId !== 'cursor' || !rEls.panel) { hideRecoverable(); return; }
+  // 晚到的旧响应要丢掉：切走之后能力位可能仍为真，只能比身份
+  const appIdAtCall = state.appId;
+  if (!state.index?.canRecover || !rEls.panel) { hideRecoverable(); return; }
   rEls.panel.hidden = false;
   rEls.lede.textContent = '正在找界面里看不到的会话…';
   rEls.list.innerHTML = '';
@@ -1139,14 +1141,14 @@ async function loadRecoverable() {
     const res = await fetch('/api/tasks/cursor/orphans');
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.statusText);
-    if (state.appId !== 'cursor') return;
+    if (state.appId !== appIdAtCall) return;
     recoverState.data = data;
     // 上次勾了、这次已经回灌掉的会话不能继续留在选择集里
     const ids = new Set((data.sessions || []).map((s) => s.id));
     for (const id of [...recoverState.sel]) if (!ids.has(id)) recoverState.sel.delete(id);
     renderRecoverable();
   } catch (err) {
-    if (state.appId !== 'cursor') return;
+    if (state.appId !== appIdAtCall) return;
     recoverState.data = null;
     rEls.panel.hidden = false;
     rEls.lede.innerHTML = `<b>读取失败：</b>${esc(err.message)}`;
@@ -1345,8 +1347,8 @@ function renderTasks() {
   const del = d.totals.byState.find((g) => g.state === 'deleted');
   const text = d.totals.bytes;
 
-  // Codex 是两段式存储：库里只有索引和投影，正文在 sessions/ 的 rollout 文件里。
-  // 那句话要是照抄 ZCode 的说法，就成了"158 MB 的库装着 581 MB 的正文"。
+  // 正文不在会话库里的两处：Claude 的正文就是 .jsonl 文件本身；Codex 是索引库 + 磁盘上的
+  // rollout。分开说，免得把 Codex 的"两段式"说法安到 Claude 头上。
   tEls.lede.innerHTML = d.readOnly
     ? (d.composition
         // Cursor：正文在库里，按键族摊开
@@ -1355,15 +1357,19 @@ function renderTasks() {
         // Gemini：正文在云端，本机只有摘要索引
         : `${esc(who)} 的会话索引 <b>${fmtBytes(d.db.total)}</b>，读到 <b>${d.totals.count}</b> 条会话的摘要。` +
           `正文在云端，本机没有可回收的会话数据 —— 这里只告诉你有什么、归哪个项目。`)
-    : d.db.bodies
-      ? `${esc(who)} 的会话分两处存：索引库 <b>${fmtBytes(d.db.total)}</b>，` +
-        `正文文件 <b>${fmtBytes(d.db.bodies.bytes)}</b>（<b>${d.db.bodies.count}</b> 个 rollout 文件）。` +
+    : d.fileBased
+      ? `${esc(who)} 的会话正文就是 <b>${d.db.bodies?.count || 0}</b> 个 .jsonl 文件，` +
+        `共 <b>${fmtBytes(d.db.bodies?.bytes || 0)}</b>；本机没有会话数据库 —— 清理走文件那条线。` +
         `读到 <b>${d.totals.count}</b> 个会话。`
-      : `会话库 <b>${fmtBytes(d.db.total)}</b>，装着 <b>${d.totals.count}</b> 个会话、` +
-        `<b>${fmtBytes(text)}</b> 的正文。` +
-        (del
-          ? `其中 <b>${del.count}</b> 个已在界面上删除，仍占 <b>${fmtBytes(del.bytes)}</b>。`
-          : '');
+      : d.db.bodies
+        ? `${esc(who)} 的会话分两处存：索引库 <b>${fmtBytes(d.db.total)}</b>，` +
+          `正文文件 <b>${fmtBytes(d.db.bodies.bytes)}</b>（<b>${d.db.bodies.count}</b> 个 rollout 文件）。` +
+          `读到 <b>${d.totals.count}</b> 个会话。`
+        : `会话库 <b>${fmtBytes(d.db.total)}</b>，装着 <b>${d.totals.count}</b> 个会话、` +
+          `<b>${fmtBytes(text)}</b> 的正文。` +
+          (del
+            ? `其中 <b>${del.count}</b> 个已在界面上删除，仍占 <b>${fmtBytes(del.bytes)}</b>。`
+            : '');
 
   // 动手之前的前提，三个 app 三种说法 —— 都从后端的能力标记来，不在前端猜
   tEls.warn.hidden = false;
@@ -1386,6 +1392,13 @@ function renderTasks() {
     tEls.warn.innerHTML = `${icon('box')}<div>${esc(who)} 没在运行，可以安全清理。动手前会自动把库完整备份到 <code>${esc(shortPath(d.backupDir))}</code>。</div>`;
   }
 
+  // 读取问题（某个库打不开、文件缺失）后端一直在报，以前只有回灌面板显示 ——
+  // 静默会让人以为"这里本来就是空的"。
+  if (d.problems?.length) {
+    tEls.warn.classList.remove('is-ok');
+    tEls.warn.innerHTML += `<br>${d.problems.map((p) => esc(p)).join('<br>')}`;
+  }
+
   renderDbBar();
   renderTaskChips();
   renderTaskList();
@@ -1402,7 +1415,8 @@ function renderDbBar() {
   const bodies = d.db.bodies?.bytes || 0;
   const total = (d.db.total || 1) + bodies;
   const byState = d.totals.byState.map((g) => ({
-    label: STATE_META_CN[g.state], bytes: g.bytes, tone: STATE_TONE[g.state], key: g.state,
+    // 兜底：将来后端多一个状态桶而前端没跟上时，退化成可读的词，而不是 undefined
+    label: STATE_META_CN[g.state] || g.state, bytes: g.bytes, tone: STATE_TONE[g.state] || '', key: g.state,
   }));
   // 余量按"每一段真正占了分母多少"来算，不能用 totals.bytes —— Codex 的分段里还叠了
   // 库中的条目体积，减错就会让整排色块加起来超过 100%。
@@ -1432,7 +1446,7 @@ function renderDbBar() {
   tEls.dbBar.innerHTML =
     `<div class="dbbar-track">` +
     segs.map((s, i) => {
-      const cls = s.tone === 'is-neutral' ? 'is-neutral' : STATUS_CLASS_TONE[s.tone];
+      const cls = s.tone === 'is-neutral' ? 'is-neutral' : (STATUS_CLASS_TONE[s.tone] || '');
       const wide = floors[i] > 14;
       const mid = floors[i] > 7;
       return `<div class="dbbar-seg ${cls}" style="width:${floors[i]}%"
@@ -1469,13 +1483,16 @@ const STATUS_CLASS_TONE = { 'st-serious': 'st-serious', 'st-warning': 'st-warnin
 
 function renderTaskChips() {
   const d = taskState.data;
-  // 体积写在上面那根条上，这里改说"几个任务" —— 换个数字，不把同一件事念两遍
-  tEls.chips.innerHTML = d.totals.byState.map((g) =>
-    `<button type="button" class="chip ${STATE_TONE[g.state]} ${taskState.states.has(g.state) ? 'is-on' : ''}"
+  // 体积写在上面那根条上，这里改说"几个任务" —— 换个数字，不把同一件事念两遍。
+  // 标签与配色都带兜底：后端多一个状态桶时退化成可读的词，不画 undefined。
+  tEls.chips.innerHTML = d.totals.byState.map((g) => {
+    const label = STATE_META_CN[g.state] || g.state;
+    return `<button type="button" class="chip ${STATE_TONE[g.state] || ''} ${taskState.states.has(g.state) ? 'is-on' : ''}"
       data-tstate="${g.state}" aria-pressed="${taskState.states.has(g.state)}"
-      title="${esc(STATE_META_CN[g.state])} ${g.count} 个 · ${fmtBytes(g.bytes)}">
-      <i></i>${esc(STATE_META_CN[g.state])} <em style="font-style:normal;opacity:.7">${g.count}</em>
-    </button>`).join('');
+      title="${esc(label)} ${g.count} 个 · ${fmtBytes(g.bytes)}">
+      <i></i>${esc(label)} <em style="font-style:normal;opacity:.7">${g.count}</em>
+    </button>`;
+  }).join('');
 }
 
 function renderTaskList() {
@@ -1731,8 +1748,7 @@ function openTaskDrawer() {
        <div class="dstat"><span>正文合计</span><b>${fmtBytes(bytes)}</b></div>`;
 
   // 会写到哪几个库，由后端报的路径决定 —— 各工具不一样，前端不硬编码文件名
-  const dbFiles = (d.db.dbs || [d.db.main, d.db.index].filter(Boolean))
-    .map((x) => shortPath(x.path));
+  const dbFiles = d.db.dbs.map((x) => shortPath(x.path));
   const dbsTxt = dbFiles.map((p) => `<code>${esc(p)}</code>`).join(' 和 ');
   const backupTxt = `动手前会把库完整备份到 <code>${esc(shortPath(d.backupDir))}</code>。`;
   tEls.note.innerHTML = d.app.running
