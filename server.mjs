@@ -183,7 +183,12 @@ function safeResolve(appId, targetKey, rel) {
     for (const part of normalized.split(path.sep)) {
       current = path.join(current, part);
       if (fs.lstatSync(current).isSymbolicLink()) {
-        throw httpError(400, `拒绝：${rel} 包含符号链接`);
+        // 说清楚是"这一段是软链接"还是"你点的就是一条软链接" ——
+        // 前者换一条路径就能删，后者这条路径永远删不了。混成一句话会害人反复重试。
+        const itself = path.resolve(root, normalized) === current;
+        throw httpError(400, itself
+          ? `拒绝：${rel} 本身是符号链接 —— 这个工具不跟随、也不删除软链接，请在 Finder 里手动处理`
+          : `拒绝：${rel} 的路径里有符号链接（${path.relative(root, current)}），请改选它指向的真实路径`);
       }
     }
     // 返回 realpath 而不是拼出来的 abs：macOS 默认文件系统不区分大小写，
