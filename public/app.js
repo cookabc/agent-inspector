@@ -100,11 +100,29 @@ const canPick = (f, cat) => isSelectable(f, cat || catOfRow(f));
 /** 一批文件里真正能被选中的那些。 */
 const selectableOnly = (files, cat) => files.filter((f) => canPick(f, cat));
 
-const sumCats = (cats) => ({
-  cats,
-  bytes: cats.reduce((s, c) => s + c.bytes, 0),
-  count: cats.reduce((s, c) => s + c.count, 0),
-});
+/**
+ * 一批推荐分类的"可清"合计。
+ *
+ * 不能直接用分类的 bytes/count —— 那是分类里**所有**文件的体积，而软链接
+ * 与受保护项一个也删不掉。实测 Codex 的推荐范围（缓存 71 B + 临时目录 46 B）
+ * 三个文件全是软链接：按钮写着"推荐清理 117 B"，按下去却什么都不发生，
+ * 因为选区是空的。按钮上的数字必须等于按下去会发生的事。
+ */
+const sumCats = (cats) => {
+  let bytes = 0, count = 0, blocked = 0, blockedBytes = 0;
+  for (const c of cats) {
+    const all = filesOf(c.id);
+    const pick = selectableOnly(all, c);
+    bytes += pick.reduce((s, f) => s + f.s, 0);
+    count += pick.length;
+    const rest = all.length - pick.length;
+    if (rest > 0) {
+      blocked += rest;
+      blockedBytes += all.reduce((s, f) => s + f.s, 0) - pick.reduce((s, f) => s + f.s, 0);
+    }
+  }
+  return { cats, bytes, count, blocked, blockedBytes };
+};
 
 const REC_KEY = 'zci-rec-off';   // 每个 app 各记一份：分类表本来就不共用
 
@@ -393,7 +411,22 @@ function visibleCategories() {
 function renderGroups() {
   const cats = visibleCategories();
 
+  /* 空态要说清是**哪个条件**筛空的。原来是光秃秃一句"没有匹配的条目"，
+     而搜索框、状态钮、分组筛选三个条件叠在一起，用户不知道该改哪个。 */
   els.emptyHint.hidden = cats.length > 0;
+  if (!cats.length) {
+    const why = [];
+    if (state.q) why.push(`搜索「${esc(state.q)}」`);
+    if (state.statuses.size) {
+      const names = [...state.statuses].map((s) => STATUS_LABEL[s] || s).join('、');
+      why.push(`只看「${esc(names)}」`);
+    }
+    if (state.group) why.push(`只在这一组里`);
+    els.emptyHint.innerHTML = why.length
+      ? `没有匹配的条目 —— ${why.join(' + ')} 一起筛下来是空的。` +
+        `<span class="empty-act">按 <kbd>Esc</kbd> 清掉搜索，或点已亮的筛选钮取消它。</span>`
+      : '没有匹配的条目。';
+  }
 
   els.groups.innerHTML = cats.map(({ cat, files }) => {
     // 一切以"当前看得见的这些行"为准：卡片头上的勾选框、计数、已选数都算这一批。
@@ -425,7 +458,12 @@ function renderGroups() {
 
     return `<article class="group ${isOpen ? 'is-open' : ''} ${cat.verdict === 'never' ? 'is-locked' : ''}" data-cat="${cat.id}">
       <header class="group-head">
-        <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+        <!-- 展开/收起单独一个 button：组头里还嵌着"全选"复选框，
+             整个 header 套 role=button 会把 checkbox 卷进按钮语义里。 -->
+        <button class="caret-btn" type="button" data-group-toggle="${cat.id}"
+          aria-expanded="${isOpen}" aria-label="${esc(cat.label)}：${isOpen ? '收起' : '展开'}清单">
+          <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
         <div class="group-title">
           <h3>${esc(cat.label)}</h3>
           ${badge(cat)}
@@ -581,7 +619,14 @@ function openDrawer() {
   if (dropped) {
     for (const f of raw) if (!canPick(f)) state.selection.delete(keyOf(f));
   }
-  if (!rows.length) return;
+  /* 一个都删不掉时不能默默 return —— 用户刚按了一个按钮，屏幕上什么也没发生，
+     看起来像工具坏了。说一句他在哪一步被挡住。 */
+  if (!rows.length) {
+    showToast(dropped
+      ? `选中的 ${dropped} 项都删不掉：它们是软链接或受保护内容。`
+      : '没有选中任何可以删除的条目。', { error: true });
+    return;
+  }
   const bytes = rows.reduce((s, f) => s + f.s, 0);
   const biggest = rows.reduce((a, b) => (a.s >= b.s ? a : b), rows[0]);
 
@@ -724,6 +769,10 @@ function syncDrawerMode() {
   els.purgeConfirm.hidden = !purge;
   els.drawerGo.textContent = purge ? '彻底删除' : '移入废纸篓';
   els.drawerGo.className = 'btn ' + (purge ? 'btn-danger' : 'btn-primary');
+  /* 切到"彻底删除"时按钮先按不动 —— 确认串还空着。
+     切回"移入废纸篓"则一律恢复可点（除非整批被堵死，那个由 openDrawer 管）。 */
+  if (purge) syncPurgeWord();
+  else els.drawerGo.disabled = false;
 }
 
 async function runClean() {
@@ -992,16 +1041,23 @@ function renderRecommend() {
   els.rec.hidden = false;
 
   const on = all.filter((c) => !state.recOff.has(c.id));
-  const { cats, bytes, count } = sumCats(on);
+  const { cats, bytes, count, blocked } = sumCats(on);
   const off = all.filter((c) => state.recOff.has(c.id));
+
+  /* 范围里全是软链接 / 受保护项时，一个也删不掉。
+     Codex 现在就是这样：缓存与临时目录里那三个文件全是软链接，界面原本
+     还写着"推荐清理 117 B"，按下去毫无反应 —— 按钮在承诺一件做不到的事。
+     这种时候不摆按钮，直接说清为什么。 */
+  const nothingPickable = on.length > 0 && count === 0;
+
   /* 全被排除时不该还立着"标题 + 0 B + 禁用的按钮"这个空壳。
      Cursor 只有一类推荐项（已安装扩展），用户把它关掉之后整块就变成
      一个看得见但按不动的胖子，占着 hero 右栏。收成一个提示行：
      说清"为什么没东西可清"，并把分类 chip 留在那儿（那是放回来的入口）。 */
   const nothingOn = !on.length;
 
-  els.recHead.hidden = nothingOn;
-  els.recFoot.hidden = nothingOn;
+  els.recHead.hidden = nothingOn || nothingPickable;
+  els.recFoot.hidden = nothingOn || nothingPickable;
   els.rec.hidden = false;
   if (nothingOn) {
     els.recFigure.textContent = '';
@@ -1009,6 +1065,15 @@ function renderRecommend() {
     els.recSub.innerHTML =
       `推荐里的 <b>${all.length}</b> 类都被排除了（${all.map((c) => esc(c.label)).join('、')}）—— ` +
       `点下面的条目可以放回来。`;
+    els.recScope.innerHTML = recChips(all);
+    return;
+  }
+  if (nothingPickable) {
+    els.recFigure.textContent = '';
+    els.recName.textContent = '';
+    els.recSub.innerHTML =
+      `推荐范围里的 <b>${blocked}</b> 个文件都删不掉 —— 它们是软链接（这个工具不跟随、不删除）` +
+      `或受保护内容。没有可清理的东西。`;
     els.recScope.innerHTML = recChips(all);
     return;
   }
@@ -1025,7 +1090,11 @@ function renderRecommend() {
     `${esc(cats.map((c) => c.label).join('、'))}，共 <b>${count.toLocaleString()}</b> 项。` +
     (cats.every((c) => c.verdict === 'safe' || c.verdict === 'junk')
       ? `删掉不影响会话、配置和凭据。`
-      : `删了有代价 —— 每一类下面都写了具体会怎样。`);
+      : `删了有代价 —— 每一类下面都写了具体会怎样。`) +
+    // 范围里有删不掉的（软链接、受保护）就照实说，别让"共 N 项"显得比实际多
+    (blocked > 0
+      ? `<span class="rec-off">另有 ${blocked.toLocaleString()} 项删不掉（软链接或受保护内容），已排除。</span>`
+      : '');
 
   els.recBtn.disabled = !count;
   els.recBtn.innerHTML = count
@@ -1098,7 +1167,19 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
-  // 分组展开 / 收起
+  /* 展开按钮优先于整行点击：放在 group-head 那条之前，
+     否则点三角会被当成点组头，走同一条逻辑（结果一样，但会绕一圈重画）。 */
+  const gToggle = t.closest('[data-group-toggle]');
+  if (gToggle) {
+    const id = gToggle.dataset.groupToggle;
+    state.open.has(id) ? state.open.delete(id) : state.open.add(id);
+    renderGroups();
+    // 重画后原按钮已经不在文档里，焦点得按 id 找回来，否则键盘走到这里就断了
+    els.groups.querySelector(`[data-group-toggle="${id}"]`)?.focus();
+    return;
+  }
+
+  // 分组展开 / 收起（点组头的空白处也仍然有效）
   const head = t.closest('.group-head');
   if (head && !t.matches('input[type="checkbox"]')) {
     const id = head.closest('.group').dataset.cat;
@@ -1259,12 +1340,25 @@ document.addEventListener('change', (e) => {
   if (e.target.name === 'mode') syncDrawerMode();
 });
 
-els.purgeWord.addEventListener('input', () => {
-  if (els.purgeWord.value === '彻底删除' && els.drawerMsg.classList.contains('is-err')) {
+/* 彻底删除的确认串：输对之前按钮按不动。
+   以前是"按钮一直可点，点了才报错" —— 那等于故意让人先撞一次墙。
+   现在按钮状态直接反映"这句话你确认了没有"，顺带把还差几个字告诉人。 */
+const PURGE_WORD = '彻底删除';
+function syncPurgeWord() {
+  if (mode() !== 'purge') return;
+  const ok = els.purgeWord.value === PURGE_WORD;
+  els.drawerGo.disabled = !ok;
+  els.drawerMsg.className = 'drawer-msg';
+  if (ok) {
+    // 输对了就把"还差…"那行擦掉 —— 留着它等于说"你还没输完"
     els.drawerMsg.textContent = '';
-    els.drawerMsg.className = 'drawer-msg';
+  } else if (els.purgeWord.value.length) {
+    els.drawerMsg.textContent = `还差「${PURGE_WORD.slice(els.purgeWord.value.length)}」—— 输全四个字才能彻底删除。`;
+  } else {
+    els.drawerMsg.textContent = '';
   }
-});
+}
+els.purgeWord.addEventListener('input', syncPurgeWord);
 
 // 提示气泡
 document.addEventListener('mouseover', (e) => {
@@ -1286,10 +1380,21 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault(); els.search.focus(); els.search.select();
   }
   if (e.key === 'Escape') {
+    /* 由近及远一层层退：先关浮层，再撤搜索，最后撤筛选。
+       原来只在焦点恰好在搜索框里时才清搜索 —— 而人通常是点完筛选钮、
+       或者滚到清单里才发现筛空了，那时焦点早就不在输入框上，Esc 什么也不做。 */
     if (!els.drawer.hidden) closeDrawer();
     else if (!tEls.drawer.hidden) closeTaskDrawer();
-    else if (document.activeElement === els.search) {
-      els.search.value = ''; state.q = ''; els.search.blur(); renderSplit(); renderGroups();
+    else if (state.q || state.statuses.size || state.group) {
+      const wasSearch = Boolean(state.q);
+      state.q = '';
+      els.search.value = '';
+      state.statuses.clear();
+      state.group = null;
+      renderChips(); renderSplit(); renderGroups(); renderActionbar();
+      if (wasSearch) els.search.blur();
+    } else if (document.activeElement === els.search) {
+      els.search.blur();
     }
   }
 
@@ -2315,7 +2420,8 @@ function openTaskDrawer() {
   tEls.confirmBox.hidden = false;
   tEls.msg.textContent = '';
   tEls.msg.className = 'drawer-msg';
-  tEls.go.disabled = false;
+  // 确认串还空着 → 删除按钮先按不动（和文件清理那条线一致）
+  tEls.go.disabled = true;
   tEls.go.textContent = '删除';
   tEls.dryBtn.disabled = false;
 
@@ -2349,6 +2455,10 @@ function checkLine(data) {
  * 执行删除（或空跑）。一条请求过完服务端的四道闸：
  * 进程探测 → 备份 → 事务+外键 → VACUUM+自检。被拒时服务端说清卡在哪一步。
  */
+/* 会话清理的确认串，与文件清理同一条规矩：输对之前按钮按不动。
+   两个抽屉做同一件事，交互不该一个"先点再报错"、一个"输对才亮"。 */
+const TASK_PURGE_WORD = '清理';
+
 async function callPurge(dryRun) {
   const d = taskState.data;
   const ids = [...taskState.sel];
@@ -2376,7 +2486,8 @@ async function callPurge(dryRun) {
     tEls.msg.className = 'drawer-msg is-err';
     tEls.msg.textContent = err.message;
   } finally {
-    tEls.go.disabled = false;
+    // 收尾时按确认串的真实状态恢复，不要无条件打开 —— 那会绕过刚加的门控
+    tEls.go.disabled = tEls.word.value !== TASK_PURGE_WORD;
     tEls.dryBtn.disabled = false;
     tEls.go.textContent = '删除';
   }
@@ -2532,11 +2643,18 @@ tEls.age.addEventListener('change', () => {
 
 tEls.search.addEventListener('input', () => { taskState.q = tEls.search.value.trim().toLowerCase(); renderTaskList(); });
 tEls.sort.addEventListener('change', () => { taskState.sort = tEls.sort.value; renderTaskList(); });
-tEls.word.addEventListener('input', () => {
-  if (tEls.word.value === '清理' && tEls.msg.classList.contains('is-err')) {
-    tEls.msg.textContent = ''; tEls.msg.className = 'drawer-msg';
+function syncTaskWord() {
+  const ok = tEls.word.value === TASK_PURGE_WORD;
+  tEls.go.disabled = !ok;
+  if (ok) {
+    tEls.msg.textContent = '';
+    tEls.msg.className = 'drawer-msg';
+  } else if (tEls.word.value.length) {
+    tEls.msg.className = 'drawer-msg';
+    tEls.msg.textContent = `还差「${TASK_PURGE_WORD.slice(tEls.word.value.length)}」—— 输全才能删除。`;
   }
-});
+}
+tEls.word.addEventListener('input', syncTaskWord);
 
 loadTqScope();
 

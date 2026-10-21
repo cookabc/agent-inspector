@@ -175,6 +175,16 @@ p { margin: 0; }
   border-radius: 4px;
 }
 
+/* 被 overflow:hidden 的卡片裁掉焦点环的几个位置。
+   `.group` 为了圆角裁切设了 overflow:hidden，而 `role=button` 的组头就在
+   它里面 —— outline 往外扩 2px 会被整个切掉，键盘走到这里时屏幕上什么都没变。
+   这些元素改成往里描（负 offset），边线仍然贴着元素自己。 */
+.group-head:focus-visible,
+.group-more:focus-visible,
+.tgroup-head:focus-visible,
+.trow:focus-visible,
+.trow-caret:focus-visible { outline-offset: -2px; }
+
 /* ── 顶栏 ───────────────────────────────────────────────── */
 
 .topbar {
@@ -872,6 +882,22 @@ pre code { background: none; padding: 0; }
 }
 .group-head:hover { background: var(--surface-2); }
 
+/* 展开按钮：视觉上还是那个小三角，但它是一个真的 button ——
+   键盘能走到、能按回车。原来整个 header 靠 click 展开，键盘用户进不去。 */
+.caret-btn {
+  display: grid;
+  place-items: center;
+  width: 24px; height: 24px;
+  margin: -4px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+.caret-btn:focus-visible { outline-offset: 2px; }
+
 .caret {
   width: 16px; height: 16px;
   flex: none;
@@ -1071,6 +1097,17 @@ input[type="checkbox"]:indeterminate::after {
 input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
 
 .empty { color: var(--muted); font-size: 13px; padding: 14px 0; }
+/* 空态里给出下一步怎么做 —— 只说"没有"而不说"怎么办"，等于把人晾在那儿 */
+.empty-act { display: block; margin-top: 6px; font-size: 12.5px; }
+.empty kbd {
+  font: inherit;
+  font-size: 11.5px;
+  padding: 1px 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--ink-2);
+}
 
 /* ── 历史任务 ───────────────────────────────────────────── */
 

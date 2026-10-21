@@ -248,7 +248,9 @@ test('三块分组的数字跟着筛选走，且勾选只覆盖筛出来的那�
   // 三处触发筛选的地方都要重画 split
   assert.match(app, /renderChips\(\); renderSplit\(\); renderGroups\(\);/);
   assert.match(app, /els\.search\.addEventListener\('input'[\s\S]{0,200}renderSplit\(\); renderGroups\(\)/);
-  assert.match(app, /els\.search\.blur\(\); renderSplit\(\); renderGroups\(\)/);
+  // Esc 一次清掉搜索 + 状态 + 分组，不管焦点在哪
+  assert.match(app, /else if \(state\.q \|\| state\.statuses\.size \|\| state\.group\)/);
+  assert.match(app, /renderChips\(\); renderSplit\(\); renderGroups\(\); renderActionbar\(\);/);
 
   // 点整块只勾筛出来的那些，不偷偷扩大范围
   assert.match(app, /groupOf\(f\) === g && canPick\(f\) && matches\(f\)/);
@@ -269,4 +271,47 @@ test('Cursor 的连带回收进详情与抽屉，不进清单行', () => {
   assert.match(app, /删除会连带回收/);
   assert.match(app, /const exPending = taskState\.exclusive === null && d\.history === 'cursor-db'/);
   assert.match(app, /dstat-pending/, '还没算完时要说"正在算"，不能装作没有连带');
+});
+
+test('分类的展开/收起是真正的 button，键盘能走到', () => {
+  /* 原来整个 .group-head 靠 click 展开，没有任何可聚焦元素 ——
+     键盘用户进不去任何一张分类卡。现在三角是一个真的 <button>，
+     带 aria-expanded 与 aria-label；组头里那个"全选"复选框不被卷进按钮语义。 */
+  assert.match(app, /<button class="caret-btn" type="button" data-group-toggle=/);
+  assert.match(app, /aria-expanded="\$\{isOpen\}" aria-label="\$\{esc\(cat\.label\)\}：/);
+  // 重画后要把焦点找回来，否则键盘走到这里就断了
+  assert.match(app, /els\.groups\.querySelector\(`\[data-group-toggle="\$\{id\}"\]`\)\?\.focus\(\)/);
+  assert.match(css, /\.caret-btn \{[\s\S]{0,300}border: 0/);
+});
+
+test('空态要说清是哪个条件筛空的，并给出下一步', () => {
+  /* 原来只有一句"没有匹配的条目"，而搜索、状态、分组三个条件可能叠在一起，
+     用户不知道该改哪个；提示还挂在列表末尾，离搜索框一百多像素。 */
+  assert.match(app, /const why = \[\]/);
+  assert.match(app, /一起筛下来是空的/);
+  assert.match(app, /按 <kbd>Esc<\/kbd> 清掉搜索/);
+  // 提示挪到工具栏正下方
+  const html2 = html;
+  assert.ok(html2.indexOf('id="emptyHint"') < html2.indexOf('id="groups"'), '空提示要在分组之前');
+});
+
+test('点推荐清理却什么都删不掉时，不许给一个按了没反应的按钮', () => {
+  /* 实测：Codex 的推荐范围（缓存 71 B + 临时目录 46 B）三个文件全是软链接，
+     按钮写着"推荐清理 117 B"，按下去选区是空的、抽屉也不开 —— 屏幕上
+     什么也没发生，看起来像工具坏了。 */
+  const r = app.slice(app.indexOf('const sumCats'), app.indexOf('const REC_KEY'));
+  assert.match(r, /selectableOnly\(all, c\)/, '按钮数字要按"真正能删的"算');
+  assert.match(app, /const nothingPickable = on\.length > 0 && count === 0/);
+  assert.match(app, /都删不掉 —— 它们是软链接/);
+  // openDrawer 里空选区也要有反馈，不能默默 return
+  assert.match(app, /showToast\(dropped/);
+});
+
+test('两个抽屉的确认串都是"输对才亮"，不是"点了才报错"', () => {
+  assert.match(app, /const PURGE_WORD = '彻底删除'/);
+  assert.match(app, /const TASK_PURGE_WORD = '清理'/);
+  assert.match(app, /els\.drawerGo\.disabled = !ok/);
+  assert.match(app, /tEls\.go\.disabled = !ok/);
+  // 收尾时按真实状态恢复，不要无条件打开
+  assert.match(app, /tEls\.go\.disabled = tEls\.word\.value !== TASK_PURGE_WORD/);
 });
