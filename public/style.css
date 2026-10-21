@@ -353,7 +353,7 @@ p { margin: 0; }
 
 /* ── 可以清理的：两条并排的清理线 ───────────────────────── */
 
-.clean { display: flex; flex-direction: column; gap: 12px; }
+.clean { display: flex; flex-direction: column; justify-content: center; gap: 12px; }
 
 /* 清理线现在长在总览卡里面：左边是分母，右边是分子。一条细线分开就够，
    不再各占一张卡 —— 中间隔一道页面底色，反而要人自己把两件事接起来。 */
@@ -687,6 +687,23 @@ pre code { background: none; padding: 0; }
 .split-block.is-empty { opacity: .72; cursor: default; }
 .split-block.is-empty .box { opacity: .45; }
 .split-block.is-empty .split-flag { color: var(--muted); font-style: normal; }
+
+/* 两块"会话"分组都为空时折成的一行说明。
+   不是卡片：它就是一句话，不该有边框、勾选框和 126px 的身高。 */
+.split-note {
+  grid-column: 1 / -1;   /* 一句说明占满整行，不要跟卡片挤在一列里 */
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.split-note svg { width: 14px; height: 14px; flex: none; margin-top: 2px; color: var(--muted); }
 .split-block.is-on {
   border-color: var(--c);
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--c) 16%, transparent);

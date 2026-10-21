@@ -13,7 +13,8 @@ const els = {
   skeleton: $('skeleton'),
   heroBytes: $('heroBytes'), heroSub: $('heroSub'),
   diagnosis: $('diagnosis'), diagLede: $('diagLede'), diagTitleText: $('diagTitleText'),
-  rec: $('rec'), recName: $('recName'), recBtn: $('recBtn'), recCap: $('recCap'), recScope: $('recScope'),
+  rec: $('rec'), recHead: $('recHead'), recFoot: $('recFoot'),
+  recName: $('recName'), recBtn: $('recBtn'), recCap: $('recCap'), recScope: $('recScope'),
   recFigure: $('recFigure'), recSub: $('recSub'),
   taskQuick: $('taskQuick'), tqFigure: $('tqFigure'), tqSub: $('tqSub'),
   taskQuickBtn: $('taskQuickBtn'), taskQuickCap: $('taskQuickCap'),
@@ -868,11 +869,17 @@ function renderSplit() {
 
   const sum = (xs) => xs.reduce((a, f) => a + f.s, 0);
   const sids = (xs) => new Set(xs.map((f) => f.sid)).size;
+  /* 两块"会话"分组都空的时候这里只剩一块，说"分成三组"就是假话 ——
+     而这句说明的主要作用恰恰是解释"为什么没有那两组"。
+     这种情况下下面那块 split-note 已经把原因说清了，这里不再重复一遍，
+     只留操作提示。 */
+  const twoEmpty = orphan.length === 0 && live.length === 0;
 
-  // 数字全部长在下面三块上，这里只交代"为什么这么分"，不再把同一批数字念一遍
-  els.splitLede.innerHTML =
-    `按<b>会话是否还在</b>分成三组 —— 点一块就选中那一组，再点一下取消。` +
-    `受保护的内容不会被选中。`;
+  // 数字全部长在下面几块上，这里只交代"为什么这么分"，不再把同一批数字念一遍
+  els.splitLede.innerHTML = twoEmpty
+    ? `点一块选中整块，再点一下取消；受保护的内容不会被选中。`
+    : `按<b>会话是否还在</b>分成三组 —— 点一块就选中那一组，再点一下取消。` +
+      `受保护的内容不会被选中。`;
 
   /* 每块自己就是一个勾选框：点一下把这一组整个勾上，行也跟着筛到这一组，
      在下面的清单里能看见勾。再点一下取消。
@@ -922,13 +929,24 @@ function renderSplit() {
     </section>`;
   };
 
-  els.split.innerHTML = [
+  /* 两块"会话"分组都没内容时（Claude Code 与 Cursor 是常态：前者没有索引库
+     可比对，后者的文件路径里不带 sess_ id），各立一张 126px 的空卡片只是
+     白白吃掉半屏。折成一行摘要：仍然交代"这里本来会有什么、为什么没有"，
+     但不再假装它是一个可点的分组。 */
+  const bothEmpty = orphan.length === 0 && live.length === 0;
+  const sessNote = bothEmpty
+    ? `<p class="split-note">${icon('box')}<span>
+         ${esc(state.index.label)} 的文件里没有能对上会话库的条目 —— ` +
+       `所以「会话已不存在 / 会话仍在」这两组都是空的。下面全是与会话无关的文件。
+       </span></p>`
+    : '';
+
+  els.split.innerHTML = sessNote + (bothEmpty ? '' : [
     block('is-orphan', '会话已不存在', '会话库里找不到它，只剩文件残留。可以直接清理。', orphan,
       sids(orphan) ? ` · ${sids(orphan).toLocaleString()} 个会话` : '', 'orphan'),
     block('is-live', '会话仍在', `这些会话还在 ${esc(state.index.label)} 里，文件有用，请谨慎。`, live,
       sids(live) ? ` · ${sids(live).toLocaleString()} 个会话` : '', 'live'),
-    block('is-other', '非会话文件', '日志、缓存、配置等，不属于任何会话。', other, '', 'other'),
-  ].join('');
+  ].join('')) + block('is-other', '非会话文件', '日志、缓存、配置等，不属于任何会话。', other, '', 'other');
 }
 
 /* 按钮上直接写出这批有多大，点之前就知道会发生什么。
@@ -955,6 +973,26 @@ function renderRecommend() {
   const on = all.filter((c) => !state.recOff.has(c.id));
   const { cats, bytes, count } = sumCats(on);
   const off = all.filter((c) => state.recOff.has(c.id));
+  /* 全被排除时不该还立着"标题 + 0 B + 禁用的按钮"这个空壳。
+     Cursor 只有一类推荐项（已安装扩展），用户把它关掉之后整块就变成
+     一个看得见但按不动的胖子，占着 hero 右栏。收成一个提示行：
+     说清"为什么没东西可清"，并把分类 chip 留在那儿（那是放回来的入口）。 */
+  const nothingOn = !on.length;
+
+  els.recHead.hidden = nothingOn;
+  els.recFoot.hidden = nothingOn;
+  els.rec.hidden = false;
+  if (nothingOn) {
+    els.recFigure.textContent = '';
+    els.recName.textContent = '';
+    els.recSub.innerHTML =
+      `推荐里的 <b>${all.length}</b> 类都被排除了（${all.map((c) => esc(c.label)).join('、')}）—— ` +
+      `点下面的条目可以放回来。`;
+    els.recScope.innerHTML = recChips(all);
+    return;
+  }
+  els.recHead.hidden = false;
+  els.recFoot.hidden = false;
 
   els.recFigure.textContent = fmtBytes(bytes);
 
@@ -962,12 +1000,11 @@ function renderRecommend() {
      ZCode/Codex/Claude 下成立；Cursor 的推荐项是「已安装扩展」，
      那句"删掉不影响会话、配置和凭据"对它就是假话。 */
   els.recName.textContent = all.length <= 2 ? all.map((c) => c.label).join(' · ') : '文件与日志';
-  els.recSub.innerHTML = !on.length
-    ? `推荐项已全部排除 —— 点上面的条目可以放回来。`
-    : `${esc(cats.map((c) => c.label).join('、'))}，共 <b>${count.toLocaleString()}</b> 项。` +
-      (cats.every((c) => c.verdict === 'safe' || c.verdict === 'junk')
-        ? `删掉不影响会话、配置和凭据。`
-        : `删了有代价 —— 每一类下面都写了具体会怎样。`);
+  els.recSub.innerHTML =
+    `${esc(cats.map((c) => c.label).join('、'))}，共 <b>${count.toLocaleString()}</b> 项。` +
+    (cats.every((c) => c.verdict === 'safe' || c.verdict === 'junk')
+      ? `删掉不影响会话、配置和凭据。`
+      : `删了有代价 —— 每一类下面都写了具体会怎样。`);
 
   els.recBtn.disabled = !count;
   els.recBtn.innerHTML = count
@@ -983,7 +1020,12 @@ function renderRecommend() {
       ? `<span class="rec-off">已排除 <code>${off.map((c) => esc(c.label)).join('、')}</code> — 点上面的条目可以放回来。</span>`
       : '');
 
-  els.recScope.innerHTML = all.map((c) => {
+  els.recScope.innerHTML = recChips(all);
+}
+
+/** 推荐范围里的分类开关。全排除那一条也要用它，所以单独提出来。 */
+function recChips(list) {
+  return list.map((c) => {
     const isOn = !state.recOff.has(c.id);
     return `<button type="button" class="rec-chip ${STATUS_CLASS[c.status]} ${isOn ? 'is-on' : ''}"
       data-rec="${c.id}" aria-pressed="${isOn}" title="${esc(c.what)}">
@@ -1268,6 +1310,7 @@ window.addEventListener('resize', () => { hideTip(); renderSplit(); });
 
 const tEls = {
   warn: $('taskWarn'), lede: $('taskLede'), dbBar: $('dbBar'), comp: $('taskComp'),
+  toolbar: $('taskToolbar'), empty: $('taskEmpty'),
   chips: $('taskChips'), search: $('taskSearch'), sort: $('taskSort'),
   pickAll: $('taskPickAll'), clearSel: $('taskClearSel'),
   list: $('taskList'), empty: $('taskEmpty'), foot: $('taskFoot'),
@@ -1357,6 +1400,8 @@ function resetTaskPanel() {
   tEls.foot.hidden = true;
   tEls.list.innerHTML = '';
   tEls.empty.hidden = true;
+  // 工具栏默认收起：没有数据时它全是摆设。有数据的那个分支会把它放回来。
+  tEls.toolbar.hidden = true;
   tEls.dbBar.innerHTML = '';
   tEls.chips.innerHTML = '';
   tEls.lede.classList.remove('is-loading');
@@ -1689,6 +1734,10 @@ function renderTasks() {
     tEls.lede.textContent = d ? `没有读到任何 ${d.appLabel} 的历史会话。` : tEls.lede.textContent;
     tEls.list.innerHTML = '';
     tEls.comp.hidden = true;
+    /* 一条会话都没有时，搜索框 / 排序 / 分组 / 全选全是摆设 —— 它们操作不了
+       任何东西，却让面板看起来"有内容"。一起收起来，只留那句说明。 */
+    tEls.toolbar.hidden = true;
+    tEls.empty.hidden = true;
     // 上一个 app 的警示条和体积柱得擦干净 —— 切到一个没有历史的工具，
     // 屏幕上不能还留着别人的数字。
     tEls.warn.hidden = true;
@@ -1713,6 +1762,7 @@ function renderTasks() {
     return;
   }
   const who = d.appLabel;
+  tEls.toolbar.hidden = false;   // 有数据了，把搜索/排序/分组放回来
 
   const del = d.totals.byState.find((g) => g.state === 'deleted');
   const text = d.totals.bytes;

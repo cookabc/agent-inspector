@@ -93,7 +93,7 @@
         <!-- 推荐清理。名字不写死"文件与日志"：Cursor 的推荐项是已安装扩展，
              写死会让标题和下面的范围对不上。由 renderRecommend 按实际范围填。 -->
         <article class="lane" id="rec">
-          <header class="lane-head">
+          <header class="lane-head" id="recHead">
             <span class="lane-name" id="recName">推荐清理</span>
             <span class="lane-figure" id="recFigure">—</span>
           </header>
@@ -101,7 +101,7 @@
 
           <div class="lane-scope" id="recScope" role="group" aria-label="推荐清理包含哪些"></div>
 
-          <footer class="lane-foot">
+          <footer class="lane-foot" id="recFoot">
             <button class="btn btn-primary" id="recBtn" type="button">推荐清理</button>
             <p class="lane-cap" id="recCap"></p>
           </footer>
@@ -185,7 +185,7 @@
     <div class="dbbar" id="dbBar"></div>
     <div class="tcomp" id="taskComp" hidden></div>
 
-    <div class="toolbar">
+    <div class="toolbar" id="taskToolbar">
       <label class="search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
           <circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>

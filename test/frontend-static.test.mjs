@@ -202,3 +202,36 @@ test('会话行契约的字段确实在 tasks-shape 里，前端不该凭空取'
     assert.match(shape, new RegExp(`\\b${field}\\b`), `tasks-shape 里应当有 ${field}`);
   }
 });
+
+test('推荐项全被排除时不立空壳：标题、0 B、禁用按钮都收起来', () => {
+  /* 实测：Cursor 只有一类推荐项（已安装扩展），用户把它关掉之后整块变成
+     "标题 + 0 B + 按不动的按钮"，占着 hero 右栏 230px 什么也不提供。
+     那不是"没有推荐"，那是三个元素各自说了一遍"没东西"。 */
+  const rec = app.slice(app.indexOf('function renderRecommend'), app.indexOf('function renderChips'));
+  assert.match(rec, /const nothingOn = !on\.length/, '要按"选中的推荐项"判断，不是"存在的推荐项"');
+  assert.match(rec, /els\.recHead\.hidden = nothingOn/);
+  assert.match(rec, /els\.recFoot\.hidden = nothingOn/);
+  // chip 必须留在那儿 —— 那是把分类放回来的唯一入口
+  assert.match(rec, /els\.recScope\.innerHTML = recChips\(all\)/);
+});
+
+test('两块会话分组都为空时折成一行说明，并改掉"分成三组"的说法', () => {
+  /* Claude Code 与 Cursor 是常态：前者没有索引库可比对，后者文件路径里
+     不带 sess_ id。各立一张 126px 的空卡片白白吃掉半屏。 */
+  assert.match(app, /const bothEmpty = orphan\.length === 0 && live\.length === 0/);
+  assert.match(app, /class="split-note"/);
+  // 只剩一块时说"分成三组"是假话；但原因已由 split-note 交代，这里只留操作提示
+  assert.match(app, /const twoEmpty = orphan\.length === 0 && live\.length === 0/);
+  assert.match(app, /点一块选中整块，再点一下取消/);
+  assert.doesNotMatch(app, /所以只有<b>「非会话文件」<\/b>一块/, '别把 split-note 的话再说一遍');
+  assert.match(css, /\.split-note \{[\s\S]{0,200}grid-column: 1 \/ -1/);
+});
+
+test('一条会话都没有时，搜索/排序/分组/全选这些摆设一起收起', () => {
+  const tasks = app.slice(app.indexOf('function renderTasks'), app.indexOf('function renderDbBar'));
+  assert.match(tasks, /tEls\.toolbar\.hidden = true/, '空态要收起工具栏');
+  assert.match(tasks, /tEls\.toolbar\.hidden = false/, '有数据要把工具栏放回来');
+  // 切工具的清场也要重置，否则从空工具切过去会留着隐藏状态
+  const reset = app.slice(app.indexOf('function resetTaskPanel'), app.indexOf('async function loadTasks'));
+  assert.match(reset, /tEls\.toolbar\.hidden = true/);
+});
