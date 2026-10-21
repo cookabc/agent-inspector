@@ -1633,6 +1633,8 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
 .drawer-msg { font-size: 12.5px; color: var(--ink-2); min-height: 1.4em; }
 .drawer-msg.is-err { color: var(--st-critical); }
 .drawer-msg.is-ok { color: var(--st-good); }
+/* "自动剔除了 N 项"是提示不是错误：用 warn 色，别让人以为整批又失败了 */
+.drawer-msg.is-warn { color: var(--st-warning); }
 .drawer-btns { display: flex; justify-content: flex-end; gap: 8px; }
 
 /* ── 提示气泡 ───────────────────────────────────────────── */

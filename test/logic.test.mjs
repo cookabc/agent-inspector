@@ -8,7 +8,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fmtBytes } from '../public/logic.js';
+import { fmtBytes, isSelectable } from '../public/logic.js';
 
 const KB = 1024, MB = 1024 ** 2, GB = 1024 ** 3, TB = 1024 ** 4;
 
@@ -69,4 +69,46 @@ test('单调：更大的数不会印出更小的值', () => {
     assert.ok(abs >= prev, `${n} 折算后比前一个小`);
     prev = abs;
   }
+});
+
+/* ── isSelectable ──────────────────────────────────────────
+   这个判据漏过一次：行级复选框是对的，但批量入口各自判断、各自漏了
+   软链接那一半。点「推荐清理」→ 选区里混进一个软链接 → 服务端
+   "先校验全批再动手" → 整批被拒，用户看到的是"勾上了却删不掉"。 */
+
+test('软链接一律不可选，不管它在哪个分类', () => {
+  const cats = [
+    { verdict: 'safe', id: 'cache' },
+    { verdict: 'junk', id: 'junk' },
+    { verdict: 'review', id: 'oldRelease' },
+    { verdict: 'never', id: 'database' },
+    undefined,
+  ];
+  for (const cat of cats) {
+    assert.equal(isSelectable({ link: true }, cat), false, `cat=${cat?.id}`);
+  }
+});
+
+test('受保护分类一律不可选，哪怕它是普通文件', () => {
+  assert.equal(isSelectable({}, { verdict: 'never' }), false);
+  assert.equal(isSelectable({ link: false }, { verdict: 'never' }), false);
+});
+
+test('普通文件在非保护分类里可选', () => {
+  for (const v of ['safe', 'junk', 'review', 'serious']) {
+    assert.equal(isSelectable({}, { verdict: v }), true, v);
+  }
+});
+
+test('分类缺失时按 review 处理 —— 不因为查不到就放行，也不误锁', () => {
+  assert.equal(isSelectable({}), true);
+  assert.equal(isSelectable({ link: true }), false);
+});
+
+test('真实形态：Codex 旧版本目录里的 codex 是个软链接，同目录的其他文件不是', () => {
+  // 这就是用户实际撞到的那一条：
+  //   packages/app-server-daemon/releases/0.159.3-aarch64-apple-darwin/codex
+  const oldRelease = { verdict: 'review', id: 'oldRelease' };
+  assert.equal(isSelectable({ p: 'packages/app-server-daemon/releases/0.159.3/codex', link: true }, oldRelease), false);
+  assert.equal(isSelectable({ p: 'packages/app-server-daemon/releases/0.159.3/README.md' }, oldRelease), true);
 });

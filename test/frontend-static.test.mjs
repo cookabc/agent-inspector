@@ -88,3 +88,33 @@ test('切换到另一个工具时，会话面板与搜索状态一起归零', ()
   assert.match(reset, /tEls\.chips\.innerHTML = ''/, '筛选钮要擦干净');
   assert.match(reset, /els\.taskQuick\.hidden = true/, '首屏快捷项要收起');
 });
+
+test('所有批量入口都过同一个可选中判据，没有各自为政', () => {
+  /* 这是一次真实故障的回归锁：行级复选框早就按 verdict/link 禁用了，
+     而「分组全选」「推荐清理」「三块分组」各自判断，各自漏了软链接。
+     结果点「推荐清理」→ 选区混进一个软链接 → 服务端先校验全批 →
+     整批被拒，界面上只报那一个文件。 */
+  const routes = [
+    ['分组全选', 'selectableOnly(filesOf(id).filter(matches), cat)'],
+    ['推荐清理', 'selectableOnly(filesOf(c.id), c)'],
+    ['全选可见', 'selectableOnly(files, cat)'],
+    ['三块分组', 'groupOf(f) === g && canPick(f)'],
+    ['定位会话正文', 'if (f && canPick(f))'],
+    ['发送前兜底', 'if (!canPick(f)) continue;'],
+    ['抽屉兜底', 'const rows = raw.filter((f) => canPick(f));'],
+  ];
+  for (const [name, needle] of routes) {
+    assert.ok(app.includes(needle), `${name} 没有过可选中判据：找不到 ${needle}`);
+  }
+  // 判据本体只有 logic.js 一份，app.js 里只是转发
+  assert.match(app, /const canPick = \(f, cat\) => isSelectable\(f, cat \|\| catOfRow\(f\)\)/);
+  assert.match(app, /import \{ fmtBytes, isSelectable \} from '\.\/logic\.js'/);
+});
+
+test('分组复选框的状态按"真正能勾的行"算', () => {
+  // 用全部行算的话，软链接与受保护项永远勾不上，框就永远停在半选 ——
+  // 点一次还是半选，两次才取消，人看到的是"这个框坏了"。
+  assert.match(app, /const pickable = selectableOnly\(all, cat\)/);
+  assert.match(app, /selCount === pickable\.length \? 'checked'/);
+  assert.match(app, /selCount < pickable\.length \? 'data-indeterminate/);
+});

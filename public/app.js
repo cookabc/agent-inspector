@@ -56,8 +56,8 @@ const keyOf = (f, appId) => f.k || `${appId !== undefined ? appId : (f.app ?? st
 
 /* ── 工具 ───────────────────────────────────────────────── */
 
-/* fmtBytes 在 logic.js —— 纯函数，node --test 能直接 import 测。 */
-import { fmtBytes } from './logic.js';
+/* fmtBytes 与 isSelectable 在 logic.js —— 纯函数，node --test 能直接 import 测。 */
+import { fmtBytes, isSelectable } from './logic.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -89,6 +89,15 @@ const STATUS_LABEL = { good: '可安全清理', warning: '谨慎清理', serious
 
 const recommendAll = () => state.index.categories.filter((c) => c.recommend);
 const recommendOn = () => recommendAll().filter((c) => !state.recOff.has(c.id));
+
+/**
+ * 一行能不能被选中 —— 判据本体在 logic.js 的 isSelectable（有测试）。
+ * 这里只做一件事：分类元信息从当前视图里查出来再交给它。
+ */
+const canPick = (f, cat) => isSelectable(f, cat || catOfRow(f));
+
+/** 一批文件里真正能被选中的那些。 */
+const selectableOnly = (files, cat) => files.filter((f) => canPick(f, cat));
 
 const sumCats = (cats) => ({
   cats,
@@ -391,7 +400,12 @@ function renderGroups() {
     const all = sortFiles(files);
     const isOpen = state.open.has(cat.id);
     const totalHere = filesOf(cat.id).length;
-    const selCount = all.filter((f) => state.selection.has(keyOf(f))).length;
+    /* 卡片头那个框的状态只能按"真正能勾的行"来算。
+       用 all 算的话：软链接、受保护项永远勾不上，于是这个框永远停在
+       "勾了一半"（indeterminate）—— 点一次全选它还是半选，点第二次才取消，
+       人看到的是"这个框坏了"。 */
+    const pickable = selectableOnly(all, cat);
+    const selCount = pickable.filter((f) => state.selection.has(keyOf(f))).length;
     // 右上角那个数说的是"这张卡里现在装着的东西"，不是这个分类一共有多少 ——
     // 筛过之后还写整类的体积，就会跟卡里勾着的行对不上（2.84 GB 的卡里躺着 9.2 MB 的勾）。
     const filtered = all.length !== totalHere;
@@ -426,8 +440,8 @@ function renderGroups() {
             visLabel}${showAll ? `<em> / ${allLabel}</em>` : ''}</span>
           <input type="checkbox" data-group-box="${cat.id}"
             ${cat.verdict === 'never' ? 'disabled aria-label="受保护内容，不可清理"' : ''}
-            ${selCount && selCount === all.length ? 'checked' : ''}
-            ${selCount && selCount < all.length ? 'data-indeterminate="1"' : ''}
+            ${selCount && selCount === pickable.length ? 'checked' : ''}
+            ${selCount && selCount < pickable.length ? 'data-indeterminate="1"' : ''}
             aria-label="选择 ${esc(cat.label)} 的全部条目">
         </div>
       </header>
@@ -507,6 +521,10 @@ function selectionStats() {
   const batches = new Map();
   for (const f of state.fileByKey.values()) {
     if (!state.selection.has(f.k)) continue;
+    /* 最后一道：真正发出去的那些路径也只留能删的。
+       上面每个入口都过了 isSelectable，但这条线上任何一条脏数据都会让
+       整个批次被服务端拒绝（服务端先校验全批再动手），所以宁可在这里再挡一次。 */
+    if (!canPick(f)) continue;
     bytes += f.s;
     count += 1;
     const key = `${f.app}\u0000${f.t}`;
@@ -552,7 +570,16 @@ function catOfRow(f) {
 }
 
 function openDrawer() {
-  const rows = allFiles().filter((f) => state.selection.has(keyOf(f)));
+  /* 兜底：选区里理论上不该有软链接或受保护项（所有入口都过了 isSelectable），
+     但凡是"整批删不掉"的代价，都值得在这里再拦一次 —— 一条脏数据混进来，
+     抽屉照样会打开、按钮照样会亮，然后整批被服务端拒绝。
+     真发生了就把它从选区里剔掉，并在下面说明剔了几个。 */
+  const raw = allFiles().filter((f) => state.selection.has(keyOf(f)));
+  const rows = raw.filter((f) => canPick(f));
+  const dropped = raw.length - rows.length;
+  if (dropped) {
+    for (const f of raw) if (!canPick(f)) state.selection.delete(keyOf(f));
+  }
   if (!rows.length) return;
   const bytes = rows.reduce((s, f) => s + f.s, 0);
   const biggest = rows.reduce((a, b) => (a.s >= b.s ? a : b), rows[0]);
@@ -597,8 +624,10 @@ function openDrawer() {
         : '');
   els.drawerListCount.textContent = `${rows.length.toLocaleString()} 项`;
 
-  els.drawerMsg.textContent = '';
-  els.drawerMsg.className = 'drawer-msg';
+  els.drawerMsg.textContent = dropped
+    ? `已自动剔除 ${dropped} 项不能删除的条目（软链接、受保护内容）—— 它们留在原处，这一批照样能清。`
+    : '';
+  els.drawerMsg.className = dropped ? 'drawer-msg is-warn' : 'drawer-msg';
   els.purgeWord.value = '';
   els.drawerGo.disabled = false;
 
@@ -806,11 +835,9 @@ function renderSplit() {
 
   /* 每块自己就是一个勾选框：点一下把这一组整个勾上，行也跟着筛到这一组，
      在下面的清单里能看见勾。再点一下取消。
-     计数用真正"能勾"的条数 —— 受保护的内容（凭据、会话库、配置）不进勾选，
-     所以「非会话文件」那块的已选数会比它自己的文件数少，这是对的，照实写。 */
-  const protectedIds = new Set(state.index.categories.filter((c) => c.verdict === 'never').map((c) => c.id));
-  // 符号链接与"请勿删除"一样不进勾选：服务端一律拒绝，勾了也没用。
-  const selectable = (xs) => xs.filter((f) => !protectedIds.has(f.c) && !f.link);
+     计数用真正"能勾"的条数 —— 受保护的内容（凭据、会话库、配置）与软链接
+     都不进勾选，所以「非会话文件」那块的已选数会比它自己的文件数少，这是对的，照实写。 */
+  const selectable = (xs) => xs.filter((f) => canPick(f));
 
   const anyPicked = state.selection.size > 0;
   const block = (cls, title, desc, xs, extra, split) => {
@@ -968,8 +995,10 @@ document.addEventListener('click', async (e) => {
   if (gbox) {
     const id = gbox.dataset.groupBox;
     const checked = gbox.checked;
-    // 只动当前看得见的那些行，跟卡片头上那个框自身的勾选状态对得上
-    for (const f of filesOf(id).filter(matches)) {
+    const cat = state.index.categories.find((c) => c.id === id);
+    // 只动当前看得见的那些行，跟卡片头上那个框自身的勾选状态对得上；
+    // 软链接与受保护项不进选区 —— 服务端会拒绝，选了等于白选。
+    for (const f of selectableOnly(filesOf(id).filter(matches), cat)) {
       checked ? state.selection.add(keyOf(f)) : state.selection.delete(keyOf(f));
     }
     state.open.add(id);
@@ -1004,8 +1033,8 @@ document.addEventListener('click', async (e) => {
   const sp = t.closest('[data-split]');
   if (sp) {
     const g = sp.dataset.split;
-    const protectedIds = new Set(state.index.categories.filter((c) => c.verdict === 'never').map((c) => c.id));
-    const mine = state.index.files.filter((f) => groupOf(f) === g && !protectedIds.has(f.c));
+    // 受保护内容与软链接都不进勾选 —— 判据只有 isSelectable 一处
+    const mine = state.index.files.filter((f) => groupOf(f) === g && canPick(f));
     const allOn = mine.length > 0 && mine.every((f) => state.selection.has(keyOf(f)));
     // 三块互斥：它们是把全部文件劈成三份，一组就是一组。
     // 所以换一组是"换成它"，不是"再加上它" —— 先清干净再勾。
@@ -1053,7 +1082,9 @@ document.addEventListener('click', async (e) => {
     state.group = null;   // 先清掉筛选，否则勾中的东西会被筛掉、看不见
     state.selection.clear();
     for (const c of recommendOn()) {
-      for (const f of filesOf(c.id)) state.selection.add(keyOf(f));
+      // 推荐分类里也可能混着软链接（插件缓存里的 .bin、app-server 的旧版本
+      // 可执行文件都是）。带上它们 → 服务端拒绝整批 → 一个都删不掉。
+      for (const f of selectableOnly(filesOf(c.id), c)) state.selection.add(keyOf(f));
     }
     renderChips(); renderSplit(); renderGroups(); renderActionbar();
     openDrawer();
@@ -1068,11 +1099,7 @@ document.addEventListener('click', async (e) => {
   if (t.closest('#fileSelAll')) {
     // visibleCategories() 已经把筛完的行带出来了，不必再 filter 一遍
     for (const { cat, files } of visibleCategories()) {
-      if (cat.verdict === 'never') continue;   // 受保护内容不进全选
-      for (const f of files) {
-        if (f.link) continue;                  // 软链接删不掉，全选也不带上
-        state.selection.add(keyOf(f));
-      }
+      for (const f of selectableOnly(files, cat)) state.selection.add(keyOf(f));
     }
     renderSplit(); renderGroups(); renderActionbar(); return;
   }
@@ -1975,7 +2002,9 @@ function openTaskAsFiles() {
   state.selection.clear();
   for (const x of taskState.data.tasks.filter((t) => taskState.sel.has(t.id))) {
     const f = byRel.get(x.bodyRel);
-    if (f) state.selection.add(keyOf(f));
+    // 会话正文正常都是普通文件；万一它被换成了软链接，同样不能选 ——
+    // 否则这一批又会被服务端整批拒绝。
+    if (f && canPick(f)) state.selection.add(keyOf(f));
   }
   if (!state.selection.size) {
     tEls.warn.className = 'app-warn';
