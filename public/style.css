@@ -150,6 +150,10 @@ p { margin: 0; }
   .single > #files   { grid-area: files; }
   .single > #tasks   { grid-area: tasks; }
   .single > .note    { grid-area: diag; }
+  /* 「全部」视图占满整行：它不属于 files/tasks 任何一栏，
+     不指定会落在第一列，右边空掉一大块。别的块在全部模式下都 hidden，
+     所以它自然落在第一行，不需要再写 grid-row。 */
+  .single > .all-view { grid-column: 1 / -1; }
 
   /* 会话管理比文件清单短得多（Claude 这类压根只有一段说明）。
      让它跟着滚：在左栏那串长清单里往下翻时，右侧的会话过滤与勾选始终在手边，
@@ -2009,4 +2013,91 @@ body.is-busy .topbar::after {
     animation-iteration-count: 1 !important;
     transition-duration: .001ms !important;
   }
+}
+
+/* ── 「全部」：跨四个工具的会话一览 ───────────────────────── */
+
+/* 这一屏只回答"我刚才在哪个工具里干活"。它不摆文件清单、不摆清理线 ——
+   那些是"这个工具里有什么"的问题，混进来这一屏就会同时说两件事。 */
+
+.all-head { display: flex; flex-direction: column; gap: 6px; }
+.all-head h2 { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.all-lede { color: var(--ink-2); font-size: 13px; }
+.all-lede b { color: var(--ink); font-weight: 600; }
+.all-note { color: var(--muted); }
+
+/* 每个工具一个筛选钮，顺带交代它在这次汇总里贡献了多少 */
+.all-tools { display: flex; flex-wrap: wrap; gap: 8px; }
+.all-tool {
+  font-size: 12px;
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.all-tool.is-err { color: var(--st-critical); border-color: color-mix(in oklab, var(--st-critical) 30%, var(--line)); }
+
+.all-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.all-filter .search { flex: 0 1 320px; }
+
+/* 会话一览：按文件夹分组，组内一行一个会话 */
+.all-list { display: flex; flex-direction: column; gap: 14px; }
+
+.all-group { border: 1px solid var(--line); border-radius: var(--r-md); overflow: hidden; }
+
+.all-group-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 13px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+.all-group-name { font-size: 12.5px; font-weight: 600; }
+.all-group-path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.all-group-n { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.all-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 13px;
+  font-size: 13px;
+  border-bottom: 1px solid color-mix(in oklab, var(--line) 55%, transparent);
+}
+.all-row:last-child { border-bottom: 0; }
+.all-row:hover { background: var(--surface-2); }
+
+/* 工具名做成一个小色签：这一屏一眼要能分出"哪一行是哪个工具的" */
+.all-app {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.all-app[data-app-tone="zcode"]  { background: var(--accent-soft); color: var(--ink); }
+.all-app[data-app-tone="codex"]  { background: color-mix(in oklab, var(--st-good) 14%, var(--surface)); color: var(--ink); }
+.all-app[data-app-tone="claude"] { background: color-mix(in oklab, var(--st-serious) 14%, var(--surface)); color: var(--ink); }
+.all-app[data-app-tone="cursor"] { background: color-mix(in oklab, var(--st-warning) 18%, var(--surface)); color: var(--ink); }
+
+.all-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.all-when { font-size: 11.5px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.all-size { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+@media (max-width: 620px) {
+  .all-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .all-when { display: none; }
 }

@@ -31,6 +31,8 @@ const els = {
   purgeConfirm: $('purgeConfirm'), purgeWord: $('purgeWord'),
   drawerMsg: $('drawerMsg'), drawerCancel: $('drawerCancel'), drawerGo: $('drawerGo'),
   tooltip: $('tooltip'), toast: $('toast'),
+  allView: $('allView'), allLede: $('allLede'), allTools: $('allTools'),
+  allChips: $('allChips'), allList: $('allList'), allEmpty: $('allEmpty'), allSearch: $('allSearch'),
 };
 
 const state = {
@@ -249,7 +251,7 @@ function pickApp() {
 
 /** 把渲染层切到当前 app 的那一份视图。 */
 function applyApp() {
-  state.index = state.apps.find((a) => a.app === state.appId) || null;
+  state.index = isAll() ? null : (state.apps.find((a) => a.app === state.appId) || null);
   state.selection.clear();
   // 换 app，筛选也从头开始。搜索词与状态筛选同样是"这一屏的读法"，
   // 留着上一个工具的词会让新工具一进来就是空白（Cursor 里搜不到
@@ -259,6 +261,22 @@ function applyApp() {
   state.statuses.clear();
   els.search.value = '';
   state.recReady = false;
+  if (isAll()) {
+    /* 「全部」不扫文件树，也不做清理 —— 它只回答"我刚才在哪个工具里干活"。
+       所以文件清单、推荐清理、诊断这些块整块收起，只留会话一览。
+       收起而不是"显示空的"：一块说自己 0 B 的卡片，比不出现更让人困惑。 */
+    state.byCat = new Map();
+    try { localStorage.setItem(APP_KEY, ALL_ID); } catch {}
+    els.rootPath.textContent = '四个工具的会话';
+    els.scanNote.textContent = `扫描用时 ${(state.scan.durationMs / 1000).toFixed(1)}s`;
+    renderAppTabs();
+    renderAllAll();
+    flashSwitch();
+    return;
+  }
+
+  // 从「全部」切回来：把常规那几块放出来，并把会话一览收走
+  hideAllView();
 
   if (state.index) {
     // 按分类预分组，避免每次渲染都全量过滤
@@ -300,8 +318,21 @@ function flashSwitch() {
 
 const APP_KEY = 'zci-app';
 
+/** 「全部」不是一个 app，是一个跨工具的只读视图。 */
+const ALL_ID = 'all';
+const isAll = () => state.appId === ALL_ID;
+
 function renderAppTabs() {
-  els.appTabs.innerHTML = sortedApps().map((a) => {
+  /* 「全部」排在最前：它回答的是"我刚才在哪个工具里干活"，
+     而这个问题在选中某一个工具时是问不出来的。 */
+  const allTab = `<button type="button" class="app-tab app-tab-all ${isAll() ? 'is-on' : ''}"
+      role="tab" id="apptab-${ALL_ID}" aria-selected="${isAll()}" tabindex="${isAll() ? '0' : '-1'}"
+      aria-controls="single" data-app="${ALL_ID}"
+      title="四个工具的会话合成一张表，按最近使用排序（只读：要删请点进对应工具）">
+      <span class="app-tab-name">全部</span>
+    </button>`;
+
+  els.appTabs.innerHTML = allTab + sortedApps().map((a) => {
     const on = a.app === state.appId;
     const empty = a.totals.files === 0;
     // 标签上只写名字：体积字数不一样，塞进来会让相邻的名字跟着左右挪。
@@ -906,6 +937,122 @@ function renderAll() {
   renderActionbar();
 }
 
+/* ── 「全部」：跨四个工具的会话一览 ──────────────────────── */
+
+const allState = { data: null, q: '', tools: new Set(), loading: false };
+
+function renderAllAll() {
+  // 常规那几块全部收起：这一屏只回答"我刚才在哪个工具里干活"
+  for (const id of ['overview', 'files', 'tasks', 'diagnosis']) {
+    const el = document.getElementById(id);
+    if (el) el.hidden = true;
+  }
+  els.allView.hidden = false;
+  if (!allState.data && !allState.loading) loadAllSessions();
+  renderAllSessions();
+}
+
+function hideAllView() {
+  els.allView.hidden = true;
+  for (const id of ['overview', 'files', 'tasks']) {
+    const el = document.getElementById(id);
+    if (el) el.hidden = false;
+  }
+  // 诊断块由 renderHero 决定显隐，这里不强行打开
+}
+
+async function loadAllSessions(refresh = false) {
+  allState.loading = true;
+  els.allLede.textContent = '正在汇总四个工具的会话…';
+  try {
+    const res = await fetch('/api/tasks/all' + (refresh ? '?refresh=1' : ''));
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    if (!isAll()) return;   // 切走了就丢掉
+    allState.data = data;
+  } catch (err) {
+    if (!isAll()) return;
+    allState.data = null;
+    els.allLede.innerHTML = `<b>汇总失败：</b>${esc(err.message)}`;
+  } finally {
+    allState.loading = false;
+    if (isAll()) renderAllSessions();
+  }
+}
+
+function renderAllSessions() {
+  const d = allState.data;
+  if (!d) return;
+
+  els.allLede.innerHTML =
+    `四个工具一共 <b>${d.total.toLocaleString()}</b> 个会话、<b>${fmtBytes(d.bytes)}</b> 正文，` +
+    `分布在 <b>${d.groups.length}</b> 个文件夹里。按最近使用排序。` +
+    `<span class="all-note">这一屏只读 —— 要清理请点进对应的工具。</span>`;
+
+  // 每个工具一个筛选钮，顺带交代"它在这次汇总里贡献了多少"
+  els.allTools.innerHTML = d.tools.map((t) => {
+    if (t.error) {
+      return `<span class="all-tool is-err" title="${esc(t.error)}">${esc(t.label)} 读不到</span>`;
+    }
+    /* 0 个会话的工具不给筛选钮：点了只会得到一个空列表，那是在让人
+       点一个必然没有结果的东西。（Claude Code 在这台机器上就没有会话。） */
+    if (!t.count) {
+      return `<span class="all-tool" title="${esc(t.label)}：这次汇总里没有它的会话">${esc(t.label)} 0</span>`;
+    }
+    const on = !allState.tools.size || allState.tools.has(t.app);
+    return `<button type="button" class="chip ${on ? 'is-on' : ''}" data-all-tool="${esc(t.app)}"
+      aria-pressed="${on}" title="${esc(t.label)}：${t.count} 个会话">
+      <i></i>${esc(t.label)} <em style="font-style:normal;opacity:.7">${t.count}</em>
+    </button>`;
+  }).join('');
+
+  const q = allState.q;
+  const rows = d.tasks.filter((t) => {
+    if (allState.tools.size && !allState.tools.has(t.app)) return false;
+    if (q && !(`${t.title} ${t.workspace}`.toLowerCase().includes(q))) return false;
+    return true;
+  });
+
+  els.allEmpty.hidden = rows.length > 0;
+  if (!rows.length) {
+    els.allEmpty.innerHTML = q
+      ? `没有匹配的会话 —— 搜索「${esc(q)}」筛下来是空的。`
+      : '没有匹配的会话。';
+    els.allList.innerHTML = '';
+    return;
+  }
+
+  /* 按文件夹分组，组头给完整路径与合计。组内按最近使用降序 ——
+     这一屏的用途就是"找刚才那段"，时间比体积更相关。 */
+  const byWs = new Map();
+  for (const t of rows) {
+    const key = t.workspace || '';
+    let g = byWs.get(key);
+    if (!g) byWs.set(key, g = { ws: key, rows: [], bytes: 0 });
+    g.rows.push(t);
+    g.bytes += t.bytes;
+  }
+
+  els.allList.innerHTML = [...byWs.values()].map((g) => {
+    const named = g.ws ? shortPath(g.ws) : '（还原不出文件夹）';
+    const base = g.ws ? (g.ws.split('/').filter(Boolean).pop() || g.ws) : '（还原不出文件夹）';
+    return `<section class="all-group">
+      <header class="all-group-head">
+        <span class="all-group-name" title="${esc(g.ws || '库里只有工作区 id，还原不出路径')}">${esc(base)}</span>
+        <span class="all-group-path">${esc(named)}</span>
+        <span class="all-group-n">${g.rows.length.toLocaleString()} 个 · ${fmtBytes(g.bytes)}</span>
+      </header>
+      ${g.rows.map((t) => `
+        <div class="all-row">
+          <span class="all-app" data-app-tone="${esc(t.app)}">${esc(t.appLabel)}</span>
+          <span class="all-title" title="${esc(t.title)}">${esc(t.title)}</span>
+          <span class="all-when">${fmtDate(t.updatedAt)}</span>
+          <span class="all-size">${fmtBytes(t.bytes)}</span>
+        </div>`).join('')}
+    </section>`;
+  }).join('');
+}
+
 /* ── 会话与非会话 ──────────────────────────────────────────
    会话相关：文件路径里带 sess_<id>，按会话是否仍在会话库里分成两组。
    非会话：日志、缓存、配置等，不属于任何会话。
@@ -1150,11 +1297,22 @@ document.addEventListener('click', async (e) => {
     if (tab.dataset.app === state.appId) return;
     state.appId = tab.dataset.app;
     applyApp();
-    loadTasks();
+    /* 「全部」没有单 app 的会话面板要读 —— 它自己走 /api/tasks/all。
+       还去调 loadTasks() 会拿一个不存在的 app 去扫，白等一次。 */
+    if (!isAll()) loadTasks();
     // 只有已经滚下去了才回页首 —— 磁盘占用现在就在首屏，
     // 站在顶部还硬滚一次等于白抖一下。也不做平滑滚动，
     // 内容正淡入时再滑一屏会晕。
     if (window.scrollY > 40) window.scrollTo({ top: 0 });
+    return;
+  }
+
+  /* 「全部」视图里的工具筛选与搜索 */
+  const allTool = t.closest('[data-all-tool]');
+  if (allTool) {
+    const id = allTool.dataset.allTool;
+    allState.tools.has(id) ? allState.tools.delete(id) : allState.tools.add(id);
+    renderAllSessions();
     return;
   }
 
@@ -1329,6 +1487,11 @@ els.search.addEventListener('input', () => {
   state.q = els.search.value.trim().toLowerCase();
   // 三块的数字跟着搜索走，见上面 renderSplit 里的 vis()
   renderSplit(); renderGroups();
+});
+
+els.allSearch.addEventListener('input', () => {
+  allState.q = els.allSearch.value.trim().toLowerCase();
+  renderAllSessions();
 });
 
 els.sortSel.addEventListener('change', () => {

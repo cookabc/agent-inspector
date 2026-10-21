@@ -27,9 +27,9 @@ import { Worker } from 'node:worker_threads';
 /* 自己的模块用动态 import：本地这几个都依赖内置的 node:sqlite，
    而它是 Node 22.5 才有的。更早的版本上静态 import 会在任何提示之前直接崩掉，
    用户只看到一句 "Cannot find module 'node:sqlite'"。这里接住它，说人话。 */
-let APPS, getApp, planApps, scanApps, appRunning, rowPurgeBlocked, CURSOR_CONFIRM;
+let APPS, getApp, planApps, scanApps, appRunning, rowPurgeBlocked, CURSOR_CONFIRM, aggregateSessions;
 try {
-  [{ APPS, getApp, planApps }, { scanApps }, { appRunning, rowPurgeBlocked },
+  [{ APPS, getApp, planApps }, { scanApps }, { appRunning, rowPurgeBlocked, aggregateSessions },
     { CONFIRM_WORD: CURSOR_CONFIRM }] = await Promise.all([
     import('./lib/apps/index.mjs'),
     import('./lib/scan.mjs'),
@@ -443,6 +443,18 @@ const server = http.createServer(async (req, res) => {
       const data = await getTasks(appId, url.searchParams.get('refresh') === '1');
       const app = await appRunning(plan.app);
       return await sendJSON(req, res, 200, { ...data, app, appId, appLabel: plan.app.label, backupDir: BACKUP_DIR });
+    }
+
+    /* 跨工具：把所有 app 的会话合成一张表，按最近用排序。
+       回答的是"我刚才在哪个工具里干活" —— 各工具视图回答不了这个问题。
+       只读：不给删除入口，因为四家的删除路径完全不同，混批没有统一的闸。
+
+       顺序也重要：getTasks 内部走缓存（60 秒），所以切过一次工具之后
+       这里几乎不花时间；但 Cursor 的库要读 445 MB，第一次会慢几秒。 */
+    if (p === '/api/tasks/all' && req.method === 'GET') {
+      const refresh = url.searchParams.get('refresh') === '1';
+      const data = await aggregateSessions(plans, (app, targets) => getTasks(app.id, refresh));
+      return await sendJSON(req, res, 200, { ...data, appId: 'all', readOnly: true });
     }
 
     /* Cursor 的会话清理要先把内容寻址池解一遍才知道"删这条能带走多少"，

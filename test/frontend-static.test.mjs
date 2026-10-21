@@ -21,6 +21,8 @@ const html = await fs.readFile(path.join(root, 'public/index.html'), 'utf8');
 const app = await fs.readFile(path.join(root, 'public/app.js'), 'utf8');
 const css = await fs.readFile(path.join(root, 'public/style.css'), 'utf8');
 const shapeSrc = await fs.readFile(path.join(root, 'lib/tasks-shape.mjs'), 'utf8');
+const tasksSrc = await fs.readFile(path.join(root, 'lib/tasks.mjs'), 'utf8');
+const serverSrc = await fs.readFile(path.join(root, 'server.mjs'), 'utf8');
 
 test('工具标签是标准 tablist：roving tabindex + aria-controls + tabpanel', () => {
   assert.match(html, /role="tablist"/);
@@ -181,18 +183,25 @@ test('构成条按量出来的像素决定放不放文字，不按百分比也�
   assert.doesNotMatch(dbCode, /floors\[i\] > 1[0-9]/);
 });
 
-test('界面上不许把 undefined 印出来：会话行没有 appLabel 字段', () => {
+test('界面上不许把 undefined 印出来：单 app 的会话行没有 appLabel 字段', () => {
   /* 实测 bug：抽屉清单里写 `${esc(t.appLabel)} · ${esc(t.title)}`，
      而任何后端适配器都没有给会话行塞过 appLabel —— 于是每个 app 的清单
      第一项都是 "undefined · 标题"。这类缺陷不会报错，只是把实现细节
      漏到屏幕上，而这套工具的全部信任都建立在"屏幕上的字是真的"上。
 
-     判据：模板里凡是用了 t.X 的地方，X 必须是 tasks-shape 契约里的字段
-     （或适配器确实写了）。这里锁具体这一处，并顺带禁止其它的 t.appLabel。 */
-  assert.doesNotMatch(app, /\$\{esc\(t\.appLabel\)\}/, '会话行契约里没有 appLabel');
-  // 抽屉用的是这一屏的 appLabel，那来自 /api/tasks 的响应，是有的
+     唯一例外是跨工具的「全部」视图：那边每一行必须自带归属，
+     aggregateSessions() 确实给每行赋了 appLabel。 */
   assert.match(app, /const who = d\.appLabel/);
   assert.match(app, /<span>\$\{esc\(who\)\} · \$\{esc\(t\.title\)\}<\/span>/);
+
+  // 抽屉那段不许再取行上的 appLabel（只看代码，注释里正解释这件事）
+  const drawer = app.slice(app.indexOf('function openTaskDrawer'), app.indexOf('function checkLine'))
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.doesNotMatch(drawer, /t\.appLabel/, '抽屉要用这一屏的 who，不是行上的字段');
+
+  // 跨工具视图可以，而且必须有（否则那一屏分不清哪行是哪个工具）
+  const agg = tasksSrc;
+  assert.match(agg, /appLabel: app\.label/, 'aggregateSessions 要给每行赋 appLabel');
 });
 
 test('会话行契约的字段确实在 tasks-shape 里，前端不该凭空取', () => {
@@ -314,4 +323,25 @@ test('两个抽屉的确认串都是"输对才亮"，不是"点了才报错"', (
   assert.match(app, /tEls\.go\.disabled = !ok/);
   // 收尾时按真实状态恢复，不要无条件打开
   assert.match(app, /tEls\.go\.disabled = tEls\.word\.value !== TASK_PURGE_WORD/);
+});
+
+test('跨工具的「全部」视图是只读的，且不污染单 app 视图', () => {
+  /* 这一屏回答的是"我刚才在哪个工具里干活" —— 各工具视图回答不了。
+     只读是刻意的：四家的删除路径完全不同（事务+VACUUM / 文件 / 可达性分析），
+     混进一次删除请求里没有统一的闸。 */
+  assert.match(app, /const ALL_ID = 'all'/);
+  assert.match(app, /const isAll = \(\) => state\.appId === ALL_ID/);
+  // 「全部」不去扫单 app 的会话库
+  assert.match(app, /if \(!isAll\(\)\) loadTasks\(\);/);
+  // 后端那条聚合入口显式标只读（在 server 层，不在 tasks.mjs）
+  assert.match(serverSrc, /appId: 'all', readOnly: true/);
+  // 聚合要给每行自带归属，否则那一屏分不清哪行是哪个工具
+  assert.match(tasksSrc, /app: app\.id,\s*\n\s*appLabel: app\.label/);
+  // 按最近使用排序
+  assert.match(tasksSrc, /all\.sort\(\(a, b\) => \(b\.updatedAt - a\.updatedAt\)/);
+});
+
+test('0 个会话的工具不给筛选钮（点了必然空）', () => {
+  assert.match(app, /if \(!t\.count\) \{/, '没有会话的工具要给不可点的标签');
+  assert.match(app, /这次汇总里没有它的会话/);
 });
