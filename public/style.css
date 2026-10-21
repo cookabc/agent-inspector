@@ -1656,8 +1656,11 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
 
 /* ── 操作结果提示 ───────────────────────────────────────── */
 
-/* 抽屉关掉之后，结果还得留在屏幕上。放在底部居中，避开顶栏与滚动条；
-   pointer-events:none —— 它只是通知，不该挡住任何东西。 */
+/* 抽屉关掉之后，结果还得留在屏幕上。放在底部居中，避开顶栏与滚动条。
+
+   这里不能写 pointer-events:none：那会让悬停完全落空，而 README 承诺
+   "屏幕上每个体积都可以悬停看精确字节数" —— toast 里的回收量也算。
+   它是浮在最上层的一条通知，只活几秒，允许悬停不会挡住任何实际控件。 */
 .toast {
   position: fixed;
   z-index: 90;
@@ -1673,7 +1676,6 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
   font-size: 12.5px;
   line-height: 1.5;
   box-shadow: var(--shadow-lg);
-  pointer-events: none;
   animation: toast-in .18s ease;
 }
 .toast b { font-variant-numeric: tabular-nums; }

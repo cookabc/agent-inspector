@@ -39,15 +39,27 @@ test('任何体积都不会印出 1024 或更高', () => {
   // 扫一遍有代表性的量级（含各单位的进位点附近），确认没有任何一个
   // 输出真的写成 "1024.x"。这是上一个测试的兜底：边界不只是一两个数。
   const probe = [];
-  for (const size of [KB, MB, GB, TB]) {
+  for (const size of [KB, MB, GB, TB, 1024 ** 5, 1024 ** 6]) {
     for (let delta = -3; delta <= 3; delta++) probe.push(size + delta);
     for (const f of [0.999, 0.9999, 0.99999]) probe.push(Math.floor(size * f));
   }
+  // 顶上那两档：TB 满了要能进位到 PB，PB 满了要能进位到 EB
+  probe.push(1024 ** 5, 1024 ** 5 - 1, 1024 ** 6, 1024 ** 6 - 1);
   for (const n of probe) {
     const out = fmtBytes(n);
     const value = Number(out.split(' ')[0]);
     assert.ok(!(value >= 1024), `${n} 印成了 ${out}`);
   }
+});
+
+test('单位阶梯到 EB 才封顶，中间没有卡住的地方', () => {
+  assert.equal(fmtBytes(TB), '1.00 TB');
+  assert.equal(fmtBytes(1023 * TB), '1023.00 TB');
+  assert.equal(fmtBytes(1024 * TB), '1.00 PB');   // 曾经在这里印出 1024.00 TB
+  assert.equal(fmtBytes(1024 ** 5), '1.00 PB');
+  assert.equal(fmtBytes(1024 ** 6), '1.00 EB');
+  // 9.007e15 字节 ≈ 8 PB —— 顺带确认这个量级也不会掉进科学计数法
+  assert.equal(fmtBytes(Number.MAX_SAFE_INTEGER), '8.00 PB');
 });
 
 test('输出永远不出现 undefined / NaN / 科学计数法', () => {

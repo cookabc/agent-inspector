@@ -151,7 +151,11 @@ test('失败时保留抽屉，不吐成功 toast', () => {
 
 test('toast 是个 aria-live 的独立元素，不靠抽屉承载结果', () => {
   assert.match(html, /id="toast"[^>]*role="status"[^>]*aria-live="polite"/);
-  assert.match(css, /\.toast\s*\{[\s\S]{0,400}pointer-events:\s*none/);
+  /* 不能写 pointer-events:none —— 那会让悬停彻底落空，而 README 承诺
+     "屏幕上每个体积都可以悬停看精确字节数"，toast 里的回收量也算。
+     所以两个断言反过来锁：既有精确字节的 title，也确实能悬停。 */
+  assert.doesNotMatch(css, /\.toast\s*\{[\s\S]{0,600}?pointer-events:\s*none/);
+  assert.match(app, /const bytesWithExact = \(n\) => `<b title="\$\{n\.toLocaleString\(\)\} 字节">/);
   // 首屏推荐 lane 收起时要把里面的数字擦掉，别留上一轮的残留
   const rec = app.slice(app.indexOf('function renderRecommend'), app.indexOf('function renderChips'));
   assert.match(rec, /els\.recFigure\.textContent = '—'/);

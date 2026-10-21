@@ -25,14 +25,19 @@ const mainTarget = (app) => app.targets()[0].key;
 const ctxOf = (app) => ({ app: app.id, t: mainTarget(app) });
 
 test('共享规则在四家给出同一个答案', () => {
-  // 只挑与目标无关、且四家语义确实相同的共享规则。
-  // dataBackupDir 不在此列：Claude 的 backups/ 里就是 .claude.json 的配置副本，
-  // 对它而言 configBackup 才是真话；Codex/ZCode/Cursor 的 backups/ 装的是数据副本。
-  // 这里锁的是"同一个规则对象被四家引用"，不是"四家对 backups/ 下同一个结论"。
+  /* 这里锁的是"同一个路径在四家得到同一个分类"。
+     dataBackupDir 曾经被排除在外（理由是 Claude 的 backups/ 更像配置副本），
+     结果四家对 backups/x.sqlite 给出三种答案：claude=configBackup、
+     codex=database（扩展名规则抢在前面）、zcode/cursor=dataBackup。
+     测试绕开不一致，等于把 bug 写进了契约 —— 现在四家都过同一条规则。 */
   const cases = [
     ['config.toml.bak-1792466836243', 'configBackup'],
     ['.claude.json.backup.1792466836243', 'configBackup'],
     ['settings.json.bak', 'configBackup'],
+    // 备份目录里的 .sqlite 是**副本**，不该被 database 规则锁成"请勿删除"
+    ['backups/2026/state_5.sqlite', 'dataBackup'],
+    ['backups/run/originals.zip', 'dataBackup'],
+    ['backup/cli-1792472417012/tables.sqlite', 'dataBackup'],
   ];
   for (const [rel, want] of cases) {
     for (const app of APPS) {
@@ -40,6 +45,16 @@ test('共享规则在四家给出同一个答案', () => {
       assert.equal(got, want, `${app.id} 把 ${rel} 归成了 ${got}，应为 ${want}`);
     }
   }
+});
+
+test('Cursor 的两个目标语义不同: cli 侧 backups/ 是数据副本, ide 侧是未保存内容', () => {
+  const cursor = APPS.find((a) => a.id === 'cursor');
+  // cli 侧（~/.cursor）跟其余三家一样
+  assert.equal(cursor.classify('backups/run/x.zip', 1, { app: 'cursor', t: 'cli' }), 'dataBackup');
+  // ide 侧（App Support）的 Backups/ 是编辑器崩溃备份，有自己的一档
+  assert.equal(cursor.classify('Backups/abc', 1, { app: 'cursor', t: 'ide' }), 'backups');
+  // 两侧都不能掉进 unknown
+  assert.notEqual(cursor.classify('backup/x', 1, { app: 'cursor', t: 'cli' }), 'unknown');
 });
 
 test('共享规则本身是纯函数，不看体积与目标', () => {

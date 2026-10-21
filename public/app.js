@@ -661,7 +661,7 @@ function openDrawer() {
 function closeDrawer() {
   els.scrim.hidden = true;
   els.drawer.hidden = true;
-  closeModal(els.drawer);
+  closeModal();
 }
 
 /* ── 模态抽屉的焦点 ───────────────────────────────────────
@@ -694,13 +694,12 @@ function openModal(root) {
   (first || root).focus?.();
 }
 
-function closeModal(root) {
+function closeModal() {
   document.body.classList.remove('is-modal');
   if (lastFocused && document.contains(lastFocused)) {
     lastFocused.focus?.();
   }
   lastFocused = null;
-  void root;
 }
 
 /** 抽屉里按 Tab：走到头就回到开头，Shift+Tab 反之。 */
@@ -769,9 +768,12 @@ async function runClean() {
        之前是反过来 —— await load(true) 重扫一遍（约 1 秒）之后才开始
        1.2 秒的延时，于是"转圈停了，侧栏还杵着"，人以为没反应。
        动作在这一刻已经完成了，抽屉就没有继续开着的理由。 */
+    // 回收量也带上精确字节：抽屉关掉之后，这里是唯一还能看到总数的地方
+    const freed = done.reduce((s, x) => s + (x.bytes > 0 ? x.bytes : 0), 0);
+    const sizeTxt = freed > 0 ? `，共 ${bytesWithExact(freed)}` : '';
     const msg = purge
-      ? `已彻底删除 <b>${done.length.toLocaleString()}</b> 项。`
-      : `已把 <b>${done.length.toLocaleString()}</b> 项移入废纸篓，可在 Finder 的「废纸篓」中恢复。`;
+      ? `已彻底删除 <b>${done.length.toLocaleString()}</b> 项${sizeTxt}。`
+      : `已把 <b>${done.length.toLocaleString()}</b> 项移入废纸篓${sizeTxt}，可在 Finder 的「废纸篓」中恢复。`;
     closeDrawer();
     showToast(msg);
 
@@ -804,6 +806,10 @@ async function revealPath(key) {
  * 要么把结果搬到抽屉外面。前者正是之前的做法，代价是"转圈停了，侧栏还杵着"：
  * 动作早就完成了，用户却在等一个纯装饰的延时。
  *
+ * 注意它 pointer-events:none（不该挡住底下的东西），所以面积类数字只能靠
+ * title 属性给精确字节数 —— 悬停气泡用不上。凡是要写体积的地方，
+ * 都按 README 那条规矩带上 title="<精确字节> 字节"。
+ *
  * @param {string} html  允许 <b> 与 <code>，调用方自己 esc 过动态内容
  * @param {{error?: boolean, ms?: number}} [opts]
  */
@@ -818,6 +824,9 @@ function showToast(html, opts = {}) {
   // 读得完的最短时间：一行字约 3 秒；出错时留久一点，人可能要看两眼
   toastTimer = setTimeout(() => { el.hidden = true; }, opts.ms ?? (opts.error ? 6000 : 4000));
 }
+
+/** 带精确字节数的体积片段 —— toast 里所有面积数字都走它。 */
+const bytesWithExact = (n) => `<b title="${n.toLocaleString()} 字节">${fmtBytes(n)}</b>`;
 
 /* ── 提示气泡 ───────────────────────────────────────────── */
 
@@ -2111,7 +2120,7 @@ function openTaskDrawer() {
 const closeTaskDrawer = () => {
   tEls.scrim.hidden = true;
   tEls.drawer.hidden = true;
-  closeModal(tEls.drawer);
+  closeModal();
 };
 
 /** 删除后的一致性检查：ZCode 一个库给一个结论，Codex 逐库给一组 —— 都说成人能读的一行。 */
@@ -2184,8 +2193,8 @@ async function finishPurge(data) {
      再干等三秒纯粹是让人对着一个已经没事可做的面板。 */
   closeTaskDrawer();
   showToast(
-    `完成，回收 <b>${fmtBytes(data.freed)}</b>：` +
-    `${fmtBytes(data.before.total)} → ${fmtBytes(data.after.total)}。` +
+    `完成，回收 ${bytesWithExact(data.freed)}：` +
+    `${bytesWithExact(data.before.total)} → ${bytesWithExact(data.after.total)}。` +
     `${esc(checkLine(data))}备份已经写好。`);
   // 两边的重扫都放到后台：库变小了，文件清单也要跟上
   try {

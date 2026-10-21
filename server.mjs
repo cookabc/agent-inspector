@@ -75,7 +75,7 @@ const argOf = (flag, fallback) => {
 
 /* 帮助与版本要排在一切扫描之前：`--help` 的作用是"告诉我怎么用"，
    而不是"起一个服务然后让我按 Ctrl+C"。 */
-const pkg = JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'package.json'), 'utf8'));
+const pkg = JSON.parse(fs.readFileSync(path.join(HERE, 'package.json'), 'utf8'));
 
 if (argv.includes('--help') || argv.includes('-h')) {
   console.log(`
@@ -347,17 +347,24 @@ function send(res, status, body, headers = {}) {
  * 用异步 gzip 而不是 gzipSync：/api/scan 有 3 MB，同步压缩会在事件循环里
  * 卡住几十毫秒，正好落在"刚点完重新扫描"那一刻 —— 别的请求（包括同一页
  * 正在拉 /api/tasks 的那一条）都得排队等它压完。
+ *
+ * 压缩失败就退回未压缩：让一个 gzip 的内部错误把整个响应变成 500 不值得。
+ * 调用方一律 `return await sendJSON(...)` —— 少了 await，一个 rejected
+ * promise 会绕过 handler 的 catch，变成没人接的 unhandledRejection。
  */
 async function sendJSON(req, res, status, obj) {
   const raw = Buffer.from(JSON.stringify(obj));
   const accept = String(req.headers['accept-encoding'] || '');
   if (raw.length > 1024 && accept.includes('gzip')) {
-    const gz = await gzipAsync(raw);
-    return send(res, status, gz, {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Content-Encoding': 'gzip',
-      'Content-Length': gz.length,
-    });
+    let gz = null;
+    try { gz = await gzipAsync(raw); } catch { gz = null; }
+    if (gz) {
+      return send(res, status, gz, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Encoding': 'gzip',
+        'Content-Length': gz.length,
+      });
+    }
   }
   return send(res, status, raw, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -422,7 +429,7 @@ const server = http.createServer(async (req, res) => {
       const index = await getIndex(url.searchParams.get('refresh') === '1');
       // 前端照这两个开关决定要不要摆出"移入废纸篓"和"在 Finder 中显示" ——
       // 不是 macOS 就没有落点，摆了也只是让人白按。
-      return sendJSON(req, res, 200, { ...index, trash: TRASH, canTrash: MACOS, canReveal: MACOS });
+      return await sendJSON(req, res, 200, { ...index, trash: TRASH, canTrash: MACOS, canReveal: MACOS });
     }
 
     if (p === '/api/tasks') {
@@ -430,7 +437,7 @@ const server = http.createServer(async (req, res) => {
       const plan = planFor(appId);
       const data = await getTasks(appId, url.searchParams.get('refresh') === '1');
       const app = await appRunning(plan.app);
-      return sendJSON(req, res, 200, { ...data, app, appId, appLabel: plan.app.label, backupDir: BACKUP_DIR });
+      return await sendJSON(req, res, 200, { ...data, app, appId, appLabel: plan.app.label, backupDir: BACKUP_DIR });
     }
 
     /* Cursor 的两条专用入口：只针对"界面里看不到、.jsonl 还在"的孤儿会话。
@@ -440,7 +447,7 @@ const server = http.createServer(async (req, res) => {
       const plan = planFor('cursor');
       const data = await runDb('cursor-orphans', 'cursor', plan.targets.map(stripTarget));
       const app = await appRunning(plan.app);
-      return sendJSON(req, res, 200, { ...data, app, appId: 'cursor', appLabel: plan.app.label, backupDir: BACKUP_DIR, confirmWord: CURSOR_CONFIRM });
+      return await sendJSON(req, res, 200, { ...data, app, appId: 'cursor', appLabel: plan.app.label, backupDir: BACKUP_DIR, confirmWord: CURSOR_CONFIRM });
     }
 
     if (p === '/api/tasks/cursor/recover' && req.method === 'POST') {
@@ -456,7 +463,7 @@ const server = http.createServer(async (req, res) => {
       const result = await runDb('cursor-recover', 'cursor', plan.targets.map(stripTarget),
         [ids, { backupDir: BACKUP_DIR, dryRun }]);
       if (!dryRun) taskCache.delete('cursor');
-      return sendJSON(req, res, 200, result);
+      return await sendJSON(req, res, 200, result);
     }
 
     if (p === '/api/tasks/purge' && req.method === 'POST') {
@@ -475,7 +482,7 @@ const server = http.createServer(async (req, res) => {
       // 备份 + 删行 + VACUUM 全程在 worker 里跑，主线程始终保持响应
       const result = await runDb('purge', plan.app.id, plan.targets.map(stripTarget), [ids, { backupDir: BACKUP_DIR, dryRun }]);
       taskCache.delete(appId);
-      return sendJSON(req, res, 200, result);
+      return await sendJSON(req, res, 200, result);
     }
 
     if (p === '/api/trash' && req.method === 'POST') {
@@ -489,7 +496,7 @@ const server = http.createServer(async (req, res) => {
         catch (err) { failed.push({ path: rel, error: err.message }); }
       }
       cache = null;
-      return sendJSON(req, res, 200, { moved: done, failed, trash: TRASH });
+      return await sendJSON(req, res, 200, { moved: done, failed, trash: TRASH });
     }
 
     if (p === '/api/purge' && req.method === 'POST') {
@@ -504,24 +511,24 @@ const server = http.createServer(async (req, res) => {
         catch (err) { failed.push({ path: rel, error: err.message }); }
       }
       cache = null;
-      return sendJSON(req, res, 200, { deleted: done, failed });
+      return await sendJSON(req, res, 200, { deleted: done, failed });
     }
 
     if (p === '/api/reveal' && req.method === 'POST') {
       const { app, target, path: rel } = await readBody(req);
       const abs = safeResolve(String(app || ''), target, rel);
       execFile('open', ['-R', abs], () => {});
-      return sendJSON(req, res, 200, { ok: true, path: abs });
+      return await sendJSON(req, res, 200, { ok: true, path: abs });
     }
 
-    if (p.startsWith('/api/')) return sendJSON(req, res, 404, { error: '未知接口' });
+    if (p.startsWith('/api/')) return await sendJSON(req, res, 404, { error: '未知接口' });
 
     if (req.method !== 'GET') return send(res, 405, 'method not allowed');
     return serveStatic(req, res, p);
   } catch (err) {
     const status = err.statusCode || 500;
     if (status >= 500) console.error('[error]', err);
-    return sendJSON(req, res, status, { error: err.message || String(err) });
+    return await sendJSON(req, res, status, { error: err.message || String(err) });
   }
 });
 
