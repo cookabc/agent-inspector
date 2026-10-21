@@ -142,6 +142,11 @@ const taskCache = new Map();      // appId -> { index, at }。扫一遍会话库
 const taskInflight = new Map();   // 同一时刻每个 app 只允许一次扫描，重复请求搭同一趟车
 const TASK_CACHE_MS = 60_000;
 
+/* Cursor 的独占量分析要把整库内容寻址池解一遍（约 15 秒），
+   所以缓存比别处长 —— 它只在"库变了"或者用户手动刷新时才值得重算。 */
+let cursorAnalyzeCache = null;
+const CURSOR_ANALYZE_MS = 10 * 60_000;
+
 function getIndex(force = false) {
   if (!force && cache && Date.now() - cache.at < CACHE_MS) return Promise.resolve(cache.index);
   if (indexInflight) return indexInflight;
@@ -440,6 +445,26 @@ const server = http.createServer(async (req, res) => {
       return await sendJSON(req, res, 200, { ...data, app, appId, appLabel: plan.app.label, backupDir: BACKUP_DIR });
     }
 
+    /* Cursor 的会话清理要先把内容寻址池解一遍才知道"删这条能带走多少"，
+       十几秒起步。它不适合塞进 /api/tasks 的常规路径 —— 那一屏要的是标题和
+       时间，不是这个。所以单独一条，由前端按需拉、服务端缓存十分钟。
+       没有可用库（没装 Cursor）时返回空表，不报错。 */
+    if (p === '/api/tasks/cursor/analyze' && req.method === 'GET') {
+      const plan = planFor('cursor');
+      const fresh = url.searchParams.get('refresh') === '1';
+      const hit = cursorAnalyzeCache;
+      if (!fresh && hit && Date.now() - hit.at < CURSOR_ANALYZE_MS) {
+        return await sendJSON(req, res, 200, { ...hit.data, cached: true });
+      }
+      if (!plan.targets.some((t) => t.exists)) {
+        return await sendJSON(req, res, 200, { sessions: [], blobs: 0, blobBytes: 0, orphanBlobs: 0, scanMs: 0, absent: true });
+      }
+      const result = await runDb('cursor-purge-analyze', 'cursor', plan.targets.map(stripTarget));
+      cursorAnalyzeCache = { data: result, at: Date.now() };
+      return await sendJSON(req, res, 200, result);
+    }
+
+    /* Cursor 的清理：与别的 app 不同，它要先把整库的内容寻址池解一遍，
     /* Cursor 的两条专用入口：只针对"界面里看不到、.jsonl 还在"的孤儿会话。
        列表只读；回灌是受控写入 —— 退出应用、确认串、整库备份、事务、自检，
        全在这一条路径上，不影响其它工具，也不覆盖任何已有会话。 */
@@ -482,6 +507,8 @@ const server = http.createServer(async (req, res) => {
       // 备份 + 删行 + VACUUM 全程在 worker 里跑，主线程始终保持响应
       const result = await runDb('purge', plan.app.id, plan.targets.map(stripTarget), [ids, { backupDir: BACKUP_DIR, dryRun }]);
       taskCache.delete(appId);
+      // Cursor 的独占量算的是"删了会带走多少"，删完必然变了，缓存作废
+      if (appId === 'cursor') cursorAnalyzeCache = null;
       return await sendJSON(req, res, 200, result);
     }
 

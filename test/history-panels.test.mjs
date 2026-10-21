@@ -455,9 +455,12 @@ test('缺库时四个 app 都返回完整信封，不静默', async (t) => {
   }
 });
 
-test('能力位由后端单源给出：只读只有 Cursor、可回灌也只有 Cursor', async (t) => {
+test('能力位由后端单源给出：四家都可写，可回灌只有 Cursor', async (t) => {
   const f = await fixture(t);
-  const readOnly = { zcode: false, codex: false, claude: false, cursor: true };
+  /* Cursor 曾经是 readOnly:true —— 理由是"库由 IDE 独占写入、没有外键可依"。
+     后半句仍然成立，但它只说明"不能靠外键删"，不等于"不能删"。
+     现在 Cursor 走可达性分析那条路径（lib/cursor-purge.mjs），所以四家都可写。 */
+  const readOnly = { zcode: false, codex: false, claude: false, cursor: false };
   for (const [app, expected] of Object.entries(readOnly)) {
     const { status, body } = await f.get('/api/tasks?app=' + app);
     assert.equal(status, 200, app);

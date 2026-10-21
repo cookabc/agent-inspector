@@ -345,11 +345,14 @@ for (const route of ['/api/purge', '/api/trash']) {
 }
 
 /**
- * 按行清理的能力是静态的：不能因为 Cursor 恰好在跑就报 409"先退出应用"，
- * 那会让人以为退出了就能删 —— 实际上这个工具对 Cursor 根本没有写路径。
+ * 按行清理的能力是静态的：不能因为目标恰好在跑就报 409"先退出应用"，
+ * 那会让人以为退出了就能删 —— 真正没有写路径的只有 Claude Code（正文是文件）。
+ *
+ * Cursor 以前也在这张表里（只读）。现在它有写路径了：按会话删 + 连带删掉
+ * 只被这些会话引用的 blob（lib/cursor-purge.mjs）。所以它落在这里的行为
+ * 变成"确认串不对" —— 说明静态闸门已经放行，走到了后面的校验。
  */
 for (const [app, status, why] of [
-  ['cursor', 403, '只读'],
   ['claude', 400, '正文是文件'],
 ]) {
   test(`/api/tasks/purge refuses ${app} before even checking processes`, async t => {
@@ -359,6 +362,15 @@ for (const [app, status, why] of [
     assert.doesNotMatch(result.body.error, /正在运行/, why);
   });
 }
+
+test('Cursor 不再被静态拒绝：缺确认串时报的是确认串，不是"只读"', async t => {
+  const f = await fixture(t);
+  const result = await f.post('/api/tasks/purge', { app: 'cursor', ids: ['whatever'] });
+  // 走到了确认串校验 = 静态能力闸门已放行
+  assert.equal(result.status, 400, JSON.stringify(result));
+  assert.match(result.body.error, /确认串/);
+  assert.doesNotMatch(result.body.error, /只读|没有写路径/);
+});
 
 test('every history panel scans and reports its own shape', async t => {
   const f = await fixture(t);

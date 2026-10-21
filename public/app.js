@@ -1278,7 +1278,14 @@ const tEls = {
   confirmBox: $('tConfirmBox'), word: $('tWord'), msg: $('tdrawerMsg'), go: $('tdrawerGo'),
 };
 
-const taskState = { data: null, sel: new Set(), q: '', states: new Set(), sort: 'size', group: true, foldedWs: new Set(), open: new Set() };
+const taskState = {
+  data: null, sel: new Set(), q: '', states: new Set(), sort: 'size', group: true,
+  foldedWs: new Set(), open: new Set(),
+  /* Cursor 专用：每会话的独占 blob 体积（删它能连带回收多少）。
+     null = 还没算；{} = 算完了但没有数据。这个值要十几秒才出得来，
+     所以是异步补上、并且只在 Cursor 下才有。 */
+  exclusive: null,
+};
 
 /* Cursor 孤儿会话回灌。与上面的"清理"是两条完全不同的线：
    这里只新增行，不删任何东西；选中集合也单独放，避免和清理勾选串台。 */
@@ -1303,10 +1310,14 @@ const REASON_LABEL = {
   untracked:   '界面不可见',
   bodyMissing: '正文已丢失',
   empty:       '空文件',
+  /* Cursor 专属：会话本身正常，可清理是因为它按可达性分析删 —— 删一条活跃
+     会话是自洽的，不留下任何悬空引用。别的工具没有这个档。 */
+  manual:      '可手动清理',
 };
 const REASON_TONE = {
   deleted: 'st-serious', archived: 'st-warning', wsMissing: 'st-serious',
   untracked: 'st-serious', bodyMissing: 'st-serious', empty: 'st-serious',
+  manual: 'st-warning',
 };
 
 const stateLabel = (t) => t.reason ? REASON_LABEL[t.reason] : STATE_META_CN[t.state];
@@ -1400,6 +1411,9 @@ async function loadTasks(refresh = false) {
     renderTasks();
     // 有回灌写路径的工具另外有一条"界面看不到的会话"线，独立懒加载
     if (data.canRecover) loadRecoverable();
+    // Cursor 的独占量要十几秒（整库内容寻址池解一遍），不挡首屏：
+    // 先把列表画出来，算完再补上"删它能带走多少"。
+    if (data.history === 'cursor-db') loadExclusive(appId);
   } catch (err) {
     if (state.appId !== appId) return;
     tEls.lede.classList.remove('is-loading');
@@ -1430,6 +1444,35 @@ function setPanelBusy(on) {
   }
 }
 
+/* ── Cursor：每条会话能连带回收多少 ─────────────────────── */
+
+/**
+ * 取 Cursor 的"独占 blob"分析。
+ *
+ * 为什么是单独一次请求而不是塞进 /api/tasks：它要把整库的内容寻址池解一遍
+ * （这台机器上约 15 秒）。塞进主请求会把整个面板拖住；单独拉的话，
+ * 列表先出来，"删它能带走多少"稍后补上。
+ *
+ * 失败不影响主面板 —— 那只是让数字少一列，不是让页面坏掉。
+ */
+async function loadExclusive(appIdAtCall) {
+  taskState.exclusive = null;
+  try {
+    const res = await fetch('/api/tasks/cursor/analyze');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (state.appId !== appIdAtCall) return;   // 切走了就丢掉
+    const map = new Map();
+    for (const s of data.sessions || []) map.set(s.id, s);
+    taskState.exclusive = map;
+    taskState.exclusiveMeta = { blobs: data.blobs, blobBytes: data.blobBytes, orphanBlobs: data.orphanBlobs };
+    renderTaskList();
+    renderTaskFoot();
+  } catch {
+    taskState.exclusive = null;
+  }
+}
+
 /* ── Cursor：界面看不到的会话 ───────────────────────────── */
 
 function hideRecoverable() {
@@ -1444,8 +1487,7 @@ function hideRecoverable() {
   recoverState.open = false;
 }
 
-async function loadRecoverable() {
-  // 晚到的旧响应要丢掉：切走之后能力位可能仍为真，只能比身份
+async function loadRecoverable() {  // 晚到的旧响应要丢掉：切走之后能力位可能仍为真，只能比身份
   const appIdAtCall = state.appId;
   if (!state.index?.canRecover || !rEls.panel) { hideRecoverable(); return; }
   rEls.panel.hidden = false;
@@ -1871,6 +1913,13 @@ function renderTaskList() {
     const body = t.bodyRel
       ? `<button class="btn btn-ghost btn-sm" type="button" data-locate="${esc(t.bodyRel)}">在文件清单中定位</button>`
       : '';
+    /* Cursor 的行上多一个"连带"标记：这条会话除了自己的正文，还会带走
+       多少只被它引用的工具结果 blob。没有这个数，人就不知道删这一条
+       到底回收多少 —— 而这正是"光列出不能清理"的另一半。 */
+    const ex = taskState.exclusive?.get(t.id);
+    const exTag = ex && ex.exclusiveBytes > 0
+      ? `<span class="row-tag" title="删除它会连带删掉 ${ex.exclusiveBlobs.toLocaleString()} 个只被它引用的工具结果 blob，共 ${ex.exclusiveBytes.toLocaleString()} 字节">连带 ${fmtBytes(ex.exclusiveBytes)}</span>`
+      : '';
     return `<div class="tsession ${open ? 'is-open' : ''}">
       <div class="trow ${sel ? 'is-on' : ''}" data-task="${esc(t.id)}">
         <button class="trow-caret" type="button" data-task-toggle="${esc(t.id)}"
@@ -1882,7 +1931,7 @@ function renderTaskList() {
           ${isPurgeable(t) ? '' : 'disabled'} aria-label="选择会话 ${esc(t.title)}">
         <div class="trow-main">
           <span class="trow-title" title="${esc(t.title)}">${esc(t.title)}</span>
-          <span class="trow-meta" title="${esc(t.workspace)}"><b class="trow-state-m">${esc(stateLabel(t))}</b>${esc(meta)}</span>
+          <span class="trow-meta" title="${esc(t.workspace)}"><b class="trow-state-m">${esc(stateLabel(t))}</b>${esc(meta)}${exTag}</span>
         </div>
         <span class="trow-pill ${stateTone(t)}">${esc(stateLabel(t))}</span>
         <span class="trow-size">${fmtBytes(t.bytes)}</span>
@@ -2112,16 +2161,41 @@ function openTaskDrawer() {
   const dbFiles = d.db.dbs.map((x) => shortPath(x.path));
   const dbsTxt = dbFiles.map((p) => `<code>${esc(p)}</code>`).join(' 和 ');
   const backupTxt = `动手前会把库完整备份到 <code>${esc(shortPath(d.backupDir))}</code>。`;
+
+  /* Cursor 的说明与别家不同，两点：
+     ① 它只写 state.vscdb —— conversation-search.db 是搜索索引，这里不碰。
+        把两个库都写成"会从里面移除"，是在暗示一件不会发生的事。
+     ② 回收量有一大半来自"连带删掉的工具结果 blob"，那不是这条会话名下的行，
+        不说清楚数字会显得虚高。 */
+  const cursorDbs = d.db.dbs.filter((x) => x.role !== 'index');
+  const cursorDbsTxt = cursorDbs.map((x) => `<code>${esc(shortPath(x.path))}</code>`).join(' 和 ');
+  const cursorTxt = (() => {
+    let exB = 0, exN = 0;
+    if (taskState.exclusive) {
+      for (const t of picked) {
+        const e = taskState.exclusive.get(t.id);
+        if (e) { exB += e.exclusiveBytes; exN += e.exclusiveBlobs; }
+      }
+    }
+    return exB > 0
+      ? `另外，这些会话还独占着 <b>${exN.toLocaleString()}</b> 个工具结果 blob（共 <b>${fmtBytes(exB)}</b>）—— ` +
+        `只被它们引用的会一起删掉；仍被其它会话引用的会保留。`
+      : `另：只被这些会话引用的工具结果 blob 会一起删掉，共享的保留。`;
+  })();
+
   tEls.note.innerHTML = d.app.running
     ? `<b>${esc(who)} 仍在运行</b>，现在不能删除。请完全退出 ${esc(who)} 后重新打开本页。`
-    : `删除会把这些会话的行从 ${dbsTxt} 里彻底移除，` +
-      `随后 <code>VACUUM</code> 重建数据库把空间真正交还给磁盘。${backupTxt}` +
-      // Codex 的正文是磁盘上的 rollout 文件，行级删除碰不到它 —— 不说清楚，
-      // 用户会以为回收的数字偏小是工具没干活。
-      (d.db.bodies
-        ? `但 <b>Codex 的正文不在这些库里</b>：它存在 <code>sessions/</code> 的 rollout 文件里，` +
-          `这里只抹索引行。文件要等索引里再也没有它们，才会变成孤儿、归「文件清单」那条线清理。`
-        : `<b>正文合计只是下限</b> —— 实际回收通常更多，因为索引也会一起收缩。`);
+    : d.history === 'cursor-db'
+      ? `删除会把这些会话的行从 ${cursorDbsTxt} 里彻底移除，` +
+        `随后 <code>VACUUM</code> 重建数据库把空间真正交还给磁盘。${backupTxt}${cursorTxt}`
+      : `删除会把这些会话的行从 ${dbsTxt} 里彻底移除，` +
+        `随后 <code>VACUUM</code> 重建数据库把空间真正交还给磁盘。${backupTxt}` +
+        // Codex 的正文是磁盘上的 rollout 文件，行级删除碰不到它 —— 不说清楚，
+        // 用户会以为回收的数字偏小是工具没干活。
+        (d.db.bodies
+          ? `但 <b>Codex 的正文不在这些库里</b>：它存在 <code>sessions/</code> 的 rollout 文件里，` +
+            `这里只抹索引行。文件要等索引里再也没有它们，才会变成孤儿、归「文件清单」那条线清理。`
+          : `<b>正文合计只是下限</b> —— 实际回收通常更多，因为索引也会一起收缩。`);
 
   const sorted = picked.slice().sort((a, b) => b.bytes - a.bytes);
   tEls.listD.innerHTML = sorted.slice(0, 200).map((t) =>
@@ -2151,6 +2225,11 @@ const closeTaskDrawer = () => {
 
 /** 删除后的一致性检查：ZCode 一个库给一个结论，Codex 逐库给一组 —— 都说成人能读的一行。 */
 function checkLine(data) {
+  /* Cursor 报的是悬空引用，不是外键违规 —— 它没有外键，那套概念在这里不成立。
+     写"外键违规 undefined"是在用别人的术语描述这个库。 */
+  if (data.dangling !== undefined) {
+    return `完整性 ${data.integrity}，悬空引用 ${data.dangling} 处。`;
+  }
   if (!Array.isArray(data.integrity)) {
     return `完整性 ${data.integrity}，外键违规 ${data.fkViolations}。`;
   }
@@ -2198,11 +2277,23 @@ async function callPurge(dryRun) {
 
 /** 空跑：逐库逐表摊开会删掉的行，数据库没有任何改动。 */
 function renderDryRun(data) {
-  const rows = data.perDb.map((x) => [`${x.table}（${x.name}）`, x.count ?? 0]);
-  const totalRows = rows.reduce((s, [, c]) => s + c, 0);
+  /* 两种形状：ZCode/Codex 报的是"逐库逐表会删多少行"（perDb）；
+     Cursor 没有外键表，它报的是"会话行 + 连带 blob"。分开渲染，
+     不要硬把 Cursor 塞成 perDb —— 那会造出一个不存在的表名。 */
+  const rows = Array.isArray(data.perDb)
+    ? data.perDb.map((x) => [`${x.table}（${x.name}）`, x.count ?? 0])
+    : [
+        ['会话条目（cursorDiskKV）', data.sessionRows ?? 0],
+        ['会话头（composerHeaders）', data.sessions ?? 0],
+        ['连带删除的工具结果 blob', data.blobs ?? 0],
+      ];
+  const totalRows = Array.isArray(data.perDb) ? rows.reduce((s, [, c]) => s + c, 0) : (data.sessionRows ?? 0);
   const bodies = data.bodyBytes
     ? `<br>另有 <b>${fmtBytes(data.bodyBytes)}</b> 正文在 rollout 文件里 —— 这里只删索引行，正文要等它们变成孤儿后走文件清理。`
-    : '';
+    : data.blobBytes
+      ? `<br>可回收 <b>${fmtBytes((data.sessionBytes || 0) + (data.blobBytes || 0))}</b>：` +
+        `会话正文 <b>${fmtBytes(data.sessionBytes || 0)}</b> + 只被它们引用的 blob <b>${fmtBytes(data.blobBytes)}</b>。`
+      : '';
   tEls.dryList.innerHTML = rows
     .map(([k, c]) => `<li><span>${esc(k)}</span><span>${c.toLocaleString()}</span></li>`).join('');
   tEls.dryWrap.hidden = false;

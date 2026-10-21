@@ -8,7 +8,7 @@
 | ZCode | `~/.zcode` | 文件 + 会话库里的**按任务删除**（事务 + VACUUM，先备份） |
 | Codex | `~/.codex` | 文件 + 会话库里的**按线程删除**；正文是磁盘上的 rollout 文件，那部分归文件清单 |
 | Claude Code | `~/.claude`、`~/.claude.json` | 文件 —— 它的会话正文本身就是 `.jsonl`，没有库行可删 |
-| Cursor | `~/.cursor`、`~/Library/Application Support/Cursor` | **只读分析** + **孤儿会话回灌** —— 不按行删；界面看不到、transcript 还在的会话可以补回去（只新增，不覆盖） |
+| Cursor | `~/.cursor`、`~/Library/Application Support/Cursor` | **按会话删除**（连同只被它引用的工具结果 blob，事务 + VACUUM，先备份）+ **孤儿会话回灌**（只新增，不覆盖） |
 
 还额外做一件这些工具自己都没做的事：把界面上**早已删掉、正文却还留在磁盘上**的历史会话清干净。
 ZCode 的"删除任务"只是把 `tasks.deleted` 置 1，一行正文都没少。
@@ -139,7 +139,7 @@ Electron 自建的状态文件（`Cookies`、`shared_proto_db/`、`VideoDecodeSt
 
 | | 推荐清理 | 历史任务 |
 |---|---|---|
-| 在哪 | 文件树里 | 会话库里（ZCode / Codex），或就是磁盘上的正文文件（Claude Code）；Cursor 只读摊开 |
+| 在哪 | 文件树里 | 会话库里（ZCode / Codex / Cursor），或就是磁盘上的正文文件（Claude Code） |
 | 一键操作 | 推荐清理 | 一键清理 |
 | 怎么删 | 移入废纸篓 / 彻底删除 | 事务删除 + VACUUM（先自动备份） |
 
@@ -156,8 +156,8 @@ Electron 自建的状态文件（`Cookies`、`shared_proto_db/`、`VideoDecodeSt
 「推荐清理」旁边逐项列出它包含哪些分类，每一项可以单独开关，按钮上的数字当场跟着变。
 勾选范围按工具分别记住，切回去还是你上次调成的样子。
 「一键清理」默认跳过近期还在用的任务（默认 30 天）—— 那是"已删除"但你可能还想回头翻的旧对话。
-Cursor 没有这一条：它对会话库只读，页面直接把库的构成摊开，而不是给一个按不动的按钮。
-不过它有一个独立的**回灌**入口（见下），方向相反 —— 不是删，而是把丢失的会话补回来。
+Cursor 的清理方式与三家都不同，见下面「Cursor：为什么可以按会话删」。它还有一个方向相反的
+**回灌**入口 —— 不是删，而是把界面里丢掉、transcript 还在的会话补回来。
 
 ### 文件清单
 
@@ -222,6 +222,38 @@ Cursor 没有这一条：它对会话库只读，页面直接把库的构成摊�
 - **空跑核对**：不放心就先跑一次只读预览，它会把**实际会删掉的行数**逐库逐表列出来。
   这一步不开事务、不加任何写锁，**应用开着跑也绝对安全**。
 
+### Cursor：为什么可以按会话删
+
+Cursor 的库没有外键：会话正文是 `bubbleId:<会话>:<气泡>`，而**工具调用的原始结果
+存在另一个池子里** —— `agentKv:blob:<sha256>`，内容寻址、key 里没有会话 id。
+这个池子占了库里一半以上（这台机器上 400.9 MB 里有 249 MB 是它）。
+
+只看 key，你永远不知道某个 blob 还能不能删。所以这里做的是**可达性分析**：
+从"还活着的会话"出发，把所有能走到的 blob 标记为活着；删掉一批会话时，
+只有**再也走不到**的 blob 才会跟着删。四条引用通道全都要走：
+
+| 通道 | 形态 | 为什么容易漏 |
+|---|---|---|
+| 文本 key 名 | `agentKv:blob:<64 hex>` | 最直观的一条 |
+| 裸 hex | 会话里直接写 64 位 hash，不带前缀 | 只匹配完整 key 名会漏 |
+| **二进制 hash** | blob 内容里嵌着其它 blob 的 **32 字节原始 hash** | 文本正则完全看不见 |
+| **toolCallId** | blob 里写着 `0_tool_<uuid>`，会话气泡里也有同一个 id | 形态可能是 `call-<uuid>-0`，要取 UUID 主体再比 |
+
+还有一层编码陷阱：Cursor 把二进制内容存成**十进制字节串**（`123,34,114,...`）。
+不解码的话第三条永远匹配不到 —— 边数会算成 0，于是每个 blob 都像孤儿。
+
+**这个坑踩过。** 早先只做了文本扫描，删掉"看起来无人引用"的 blob 之后 Cursor 报
+`Conversation data missing`，最后靠备份恢复。同一件事在这份代码里也踩过两回：
+一次漏了二进制通道，一次把 toolCallId 的正则写成 `0_tool_[0-9a-f-]{36}`（实际串
+更长，末段被截断），导致"独占 blob"被算成零头。
+
+所以判据是"**只有没人能走到它，才算可以删**"，不是"看起来没人引用就删"。
+`test/cursor-purge.test.mjs` 专门锁这条：一个共享 blob 在删掉引用它的其中一条会话后
+必须留下，而只被那条会话引用的必须删掉。
+
+代价是这个分析要把整库解一遍 —— 这台机器上约 15 秒。所以它单独一条请求、
+结果缓存十分钟，任务列表先出来、"删它能带走多少"稍后补上。
+
 ### Cursor：把界面看不到的会话找回来
 
 Cursor 有两份存储，彼此不同步：
@@ -271,10 +303,15 @@ Cursor 有两份存储，彼此不同步：
   按任务粒度走，并且有备份。）
 - 批量请求先检查全部目标，检查通过才开始删除；执行时逐项再次检查。文件系统执行错误仍可能产生部分成功，结果中的 `failed` 会列出失败项。
 - 「这个工具到底能不能按行清会话」是**静态能力判断**，在服务端 `rowPurgeBlocked()` 一处说了算，
-  并且排在进程探测之前 —— Cursor 的拒绝理由是"它没有行可删"，跟 Cursor 当时开没开无关。
-- **Cursor 的回灌是唯一会写会话库的路径**，因此它的闸门也写在服务端：必须退出应用、
-  确认串（`回灌`）正确、先整库备份、事务写入、写完自检；只 `INSERT`，不 `DELETE`、不覆盖。
-  它不经过按行删除的权限模型，也不会因为 `writable: false` 而被放宽 —— 两条路径互不影响。
+  并且排在进程探测之前。现在被静态拒绝的只剩 Claude Code（正文是文件，没有行可删）——
+  Cursor 的拒绝理由已经从"它没有行可删"改成"它走可达性分析那条路径"，见上文。
+- **Cursor 有两条受控写路径**，闸门都写在服务端：
+  - **回灌**（只新增）：必须退出应用、确认串（`回灌`）正确、先整库备份、事务写入、写完自检；
+    只 `INSERT`，不 `DELETE`、不覆盖。
+  - **按会话清理**（会删）：必须退出应用、确认串（`清理`）正确、先整库备份、事务删除、
+    写后自检 `quick_check` 且**悬空引用必须为 0**。只删用户勾中的会话行，
+    以及"不再有任何会话能走到"的 blob。
+  两条路径互不影响，也都不因为 `writable` 的取值而被放宽。
 - 前端也把受保护类锁住勾选框、并排除出「全选」，但那只是顺手，真正的闸在服务端。
 
 清文件有两种执行方式，在确认抽屉里选：
@@ -347,8 +384,9 @@ lib/tasks-shape.mjs    四个工具共用的会话行契约：状态枚举、中
 lib/tasks-zcode.mjs    ZCode：db.sqlite + tasks-index，按任务删
 lib/tasks-codex.mjs    Codex：三库按线程删，正文文件交给文件线
 lib/tasks-claude.mjs   Claude Code：按文件的历史视图
-lib/tasks-cursor.mjs   Cursor：只读，按键族统计
-lib/cursor-recover.mjs Cursor：孤儿会话扫描与回灌（唯一写 state.vscdb 的路径）
+lib/tasks-cursor.mjs   Cursor：库构成与按键族统计
+lib/cursor-recover.mjs Cursor：孤儿会话扫描与回灌（只新增，不删）
+lib/cursor-purge.mjs   Cursor：按会话删 + 可达性分析决定连带哪些 blob
 lib/sqlite-open.mjs    只读打开：必要时连侧文件一起复制到副本上再开
 lib/db-worker.mjs      数据库操作在 worker 线程里跑
 public/index.html      页面骨架
@@ -359,6 +397,7 @@ test/server.test.mjs   临时 HOME 中的 HTTP 删除边界回归测试
 test/codex-tasks.test.mjs  Codex 三库夹具：空跑、跨库删除、备份、残骸交接
 test/history-panels.test.mjs  四个工具的会话面板：行与 byState 的同一份契约、能力位、Cursor 反查、并发一致性
 test/cursor-recover.test.mjs 孤儿会话：扫描、空跑、回灌、幂等、服务端确认闸门
+test/cursor-purge.test.mjs  Cursor 按会话删：独占 blob 判定、三条引用通道、共享不误删、幂等
 test/classification.test.mjs  跨 app 分类一致性：共享规则同答、backups/ 不被当成缓存、分类表覆盖规则输出
 test/logic.test.mjs    fmtBytes 的进位边界：任何体积都不印出 1024
 test/frontend-static.test.mjs  前端静态检查：tablist 的键盘模型、抽屉焦点陷阱、切工具时状态归零
@@ -379,7 +418,8 @@ test/frontend-static.test.mjs  前端静态检查：tablist 的键盘模型、�
   所以一条会话可以是 `state: 'active'` + `reason: 'wsMissing'`。
 - **`byState` 条目恒为 `{state, count, bytes}`**：键取自 `state`（不是 `reason`，否则筛选钮点了
   永远筛不出东西），`bytes` 只累加行自身的 `bytes`，且各段之和等于 `totals.bytes`。
-- **能力位由后端单源给出**：`readOnly`（不能按行删：Cursor）、`readOnlyNote`（只读理由）、
+- **能力位由后端单源给出**：`readOnly`（不能按行删 —— 现在四家都是 false，但保留这个位，
+  将来加工具时仍然需要表达"只能看"）、`readOnlyNote`（只读理由）、
   `fileBased`（正文就是文件：Claude Code）、`canRecover`（有受控回灌路径：只有 Cursor）。
   `/api/scan` 的 app 视图也带 `canRecover`，界面在会话数据到达之前就能决定面板显隐。
 - **排序统一**：体积降序 → 最后使用降序 → id 升序。
