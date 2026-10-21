@@ -345,3 +345,24 @@ test('0 个会话的工具不给筛选钮（点了必然空）', () => {
   assert.match(app, /if \(!t\.count\) \{/, '没有会话的工具要给不可点的标签');
   assert.match(app, /这次汇总里没有它的会话/);
 });
+
+test('工具标识色不能借用状态色', () => {
+  /* 状态色是固定语义：绿=安全、黄=谨慎、橙=异常、红=禁止。
+     拿它来区分工具，"黄色"就会同时意味着"这是 Cursor"和"这要小心"，
+     两个含义打架。第一版就是这么写的，看起来能分，语义是错的。
+
+     判据：工具标识只能用 --tool-* 这组变量，不许出现 --st-*。 */
+  // 只取这四个变量的声明行：它们的右侧不许出现状态色
+  const decls = css.split('\n').filter((l) => /--tool-(zcode|codex|cursor|claude):/.test(l));
+  assert.ok(decls.length >= 8, `四色 × 浅/深两套，应有 8 条声明，实际 ${decls.length}`);
+  for (const l of decls) assert.doesNotMatch(l, /--st-/, `工具色用了状态色：${l.trim()}`);
+  assert.match(decls[0], /--tool-zcode:/);
+
+  // 行内色签与筛选钮都必须走 --tool-*，且两边是同一套
+  assert.match(css, /\.all-app\[data-app-tone="zcode"\]\s*\{ --tc: var\(--tool-zcode\)/);
+  assert.match(css, /\.chip\[data-all-tool="zcode"\]\s*\{ --c: var\(--tool-zcode\)/);
+
+  // 深色下要单独提亮，否则浅色那组在深底上掉到 3:1 左右
+  const darkTool = css.split('--tool-zcode:  #6ba5ff').length - 1;
+  assert.ok(darkTool >= 2, '深色两套（media + data-theme）都要覆盖');
+});

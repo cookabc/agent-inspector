@@ -995,9 +995,11 @@ function renderAllSessions() {
       return `<span class="all-tool is-err" title="${esc(t.error)}">${esc(t.label)} 读不到</span>`;
     }
     /* 0 个会话的工具不给筛选钮：点了只会得到一个空列表，那是在让人
-       点一个必然没有结果的东西。（Claude Code 在这台机器上就没有会话。） */
+       点一个必然没有结果的东西。（Claude Code 在这台机器上就没有会话。）
+       但仍然给它自己的颜色 —— 灰掉一个跟别处不一致的色点，比完全不出现更好认。 */
     if (!t.count) {
-      return `<span class="all-tool" title="${esc(t.label)}：这次汇总里没有它的会话">${esc(t.label)} 0</span>`;
+      return `<span class="all-tool" data-app-tone="${esc(t.app)}"
+        title="${esc(t.label)}：这次汇总里没有它的会话">${esc(t.label)} 0</span>`;
     }
     const on = !allState.tools.size || allState.tools.has(t.app);
     return `<button type="button" class="chip ${on ? 'is-on' : ''}" data-all-tool="${esc(t.app)}"

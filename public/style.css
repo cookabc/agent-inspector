@@ -42,6 +42,34 @@
 
   /* 分组卡片里正文的缩进：让说明对齐到标题，而不是对齐到折叠箭头 */
   --group-indent: 42px;
+
+  /* ── 工具标识色 ──────────────────────────────────────────
+     四个工具各一个色相。这**不是状态色**：状态色（下面那四个 st-*）
+     是固定语义 —— 绿=安全、黄=谨慎、橙=异常、红=禁止 —— 借它来区分
+     工具会让"黄色"同时意味着"这是 Cursor"和"这要小心"，两个含义打架。
+
+     色相刻意与状态色分开：状态色集中在 0–120（红橙黄绿），
+     工具色放在 175–326（青/蓝/紫/品红），不会互相干扰。 */
+  --tool-zcode:  #1f5fd1;   /* 蓝：与主交互色同族，ZCode 是默认工具 */
+  --tool-codex:  #6b4eff;   /* 紫 */
+  --tool-cursor: #0b8074;   /* 青 */
+  --tool-claude: #b03a7d;   /* 品红 */
+}
+
+/* 深色底上这四个色要提亮，否则对比度掉到 3:1 上下（浅色那组是给白底调的）。 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --tool-zcode:  #6ba5ff;
+    --tool-codex:  #a58cff;
+    --tool-cursor: #4dd0c4;
+    --tool-claude: #f07ab5;
+  }
+}
+:root[data-theme="dark"] {
+  --tool-zcode:  #6ba5ff;
+  --tool-codex:  #a58cff;
+  --tool-cursor: #4dd0c4;
+  --tool-claude: #f07ab5;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -2028,12 +2056,18 @@ body.is-busy .topbar::after {
 
 /* 每个工具一个筛选钮，顺带交代它在这次汇总里贡献了多少 */
 .all-tools { display: flex; flex-wrap: wrap; gap: 8px; }
+/* 0 个会话的工具：形状与筛选钮一致（同一排里混两种形状会显得像两个东西），
+   但压暗、不可点、没有整块底色 —— 它只是"这个工具在这儿，但没内容"。 */
 .all-tool {
+  font: inherit;
   font-size: 12px;
-  padding: 4px 9px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  background: var(--surface-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 8px;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  background: transparent;
   color: var(--muted);
 }
 .all-tool.is-err { color: var(--st-critical); border-color: color-mix(in oklab, var(--st-critical) 30%, var(--line)); }
@@ -2078,7 +2112,8 @@ body.is-busy .topbar::after {
 .all-row:last-child { border-bottom: 0; }
 .all-row:hover { background: var(--surface-2); }
 
-/* 工具名做成一个小色签：这一屏一眼要能分出"哪一行是哪个工具的" */
+/* 工具名做成一个小色签：这一屏一眼要能分出"哪一行是哪个工具的"。
+   色相来自 --tool-*，与状态色刻意分开 —— 见文件顶部那段说明。 */
 .all-app {
   font-size: 11px;
   font-weight: 600;
@@ -2088,10 +2123,58 @@ body.is-busy .topbar::after {
   color: var(--ink-2);
   white-space: nowrap;
 }
-.all-app[data-app-tone="zcode"]  { background: var(--accent-soft); color: var(--ink); }
-.all-app[data-app-tone="codex"]  { background: color-mix(in oklab, var(--st-good) 14%, var(--surface)); color: var(--ink); }
-.all-app[data-app-tone="claude"] { background: color-mix(in oklab, var(--st-serious) 14%, var(--surface)); color: var(--ink); }
-.all-app[data-app-tone="cursor"] { background: color-mix(in oklab, var(--st-warning) 18%, var(--surface)); color: var(--ink); }
+.all-app[data-app-tone="zcode"]  { --tc: var(--tool-zcode);  }
+.all-app[data-app-tone="codex"]  { --tc: var(--tool-codex);  }
+.all-app[data-app-tone="claude"] { --tc: var(--tool-claude); }
+.all-app[data-app-tone="cursor"] { --tc: var(--tool-cursor); }
+
+.all-app[data-app-tone] {
+  background: color-mix(in oklab, var(--tc) 13%, var(--surface));
+  color: var(--tc);
+}
+
+/* 筛选钮跟着各自的工具色走：行里的色签和上面的钮是同一个色，
+   不然"哪一行是 Cursor"和"哪个钮是 Cursor"要靠读字才连得起来。 */
+.chip[data-all-tool] { --c: var(--line-strong); }
+.chip[data-all-tool="zcode"]  { --c: var(--tool-zcode);  --tint: color-mix(in oklab, var(--tool-zcode) 12%, var(--surface)); }
+.chip[data-all-tool="codex"]  { --c: var(--tool-codex);  --tint: color-mix(in oklab, var(--tool-codex) 12%, var(--surface)); }
+.chip[data-all-tool="cursor"] { --c: var(--tool-cursor); --tint: color-mix(in oklab, var(--tool-cursor) 12%, var(--surface)); }
+.chip[data-all-tool="claude"] { --c: var(--tool-claude); --tint: color-mix(in oklab, var(--tool-claude) 12%, var(--surface)); }
+
+/* 选中态只让**色点**满载工具色，整块的边框与底色保持中性。
+   八个筛选钮都亮着的时候，满饱和的边框会互相抢，屏幕上反而看不出谁是谁。
+   （深色底上 `--line-strong` 偏亮，一整块看着像浮起来 —— 用 `--line` 更稳。） */
+.chip[data-all-tool].is-on {
+  border-color: color-mix(in oklab, var(--c) 40%, var(--line));
+  color: var(--ink);
+}
+.chip[data-all-tool].is-on i { background: var(--c); }
+
+/* 未选中：只留一个空心色点。四个都关掉时，屏幕上仍能看出"有哪些工具"。 */
+.chip[data-all-tool]:not(.is-on) { background: var(--surface); border-color: var(--line); color: var(--muted); }
+.chip[data-all-tool]:not(.is-on) i {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--c);
+}
+
+/* 「这次汇总里没有它的会话」那个不可点的标签：用同一个色，但压暗 */
+.all-tool[data-app-tone] {
+  --tc: var(--line-strong);
+}
+.all-tool[data-app-tone="zcode"]  { --tc: var(--tool-zcode);  }
+.all-tool[data-app-tone="codex"]  { --tc: var(--tool-codex);  }
+.all-tool[data-app-tone="cursor"] { --tc: var(--tool-cursor); }
+.all-tool[data-app-tone="claude"] { --tc: var(--tool-claude); }
+/* 空心点：形状与选中态一致，但"没内容"这件事靠留白与虚线边框说，
+   不靠把工具色洗成灰 —— 颜色是身份，不该因为它这次没数据就消失。 */
+.all-tool[data-app-tone]::before {
+  content: "";
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--tc);
+  flex: none;
+}
 
 .all-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .all-when { font-size: 11.5px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
