@@ -20,6 +20,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const html = await fs.readFile(path.join(root, 'public/index.html'), 'utf8');
 const app = await fs.readFile(path.join(root, 'public/app.js'), 'utf8');
 const css = await fs.readFile(path.join(root, 'public/style.css'), 'utf8');
+const shapeSrc = await fs.readFile(path.join(root, 'lib/tasks-shape.mjs'), 'utf8');
 
 test('工具标签是标准 tablist：roving tabindex + aria-controls + tabpanel', () => {
   assert.match(html, /role="tablist"/);
@@ -178,4 +179,26 @@ test('构成条按量出来的像素决定放不放文字，不按百分比也�
   assert.doesNotMatch(dbCode, /fullEl\.scrollWidth > seg\.clientWidth/);
   // 不许退回按百分比（注释里会提到旧写法，所以只看代码）
   assert.doesNotMatch(dbCode, /floors\[i\] > 1[0-9]/);
+});
+
+test('界面上不许把 undefined 印出来：会话行没有 appLabel 字段', () => {
+  /* 实测 bug：抽屉清单里写 `${esc(t.appLabel)} · ${esc(t.title)}`，
+     而任何后端适配器都没有给会话行塞过 appLabel —— 于是每个 app 的清单
+     第一项都是 "undefined · 标题"。这类缺陷不会报错，只是把实现细节
+     漏到屏幕上，而这套工具的全部信任都建立在"屏幕上的字是真的"上。
+
+     判据：模板里凡是用了 t.X 的地方，X 必须是 tasks-shape 契约里的字段
+     （或适配器确实写了）。这里锁具体这一处，并顺带禁止其它的 t.appLabel。 */
+  assert.doesNotMatch(app, /\$\{esc\(t\.appLabel\)\}/, '会话行契约里没有 appLabel');
+  // 抽屉用的是这一屏的 appLabel，那来自 /api/tasks 的响应，是有的
+  assert.match(app, /const who = d\.appLabel/);
+  assert.match(app, /<span>\$\{esc\(who\)\} · \$\{esc\(t\.title\)\}<\/span>/);
+});
+
+test('会话行契约的字段确实在 tasks-shape 里，前端不该凭空取', () => {
+  // NEUTRAL_ROW 是"每行一定有的字段"的清单；前端只该在这一组里取值
+  const shape = shapeSrc;
+  for (const field of ['id', 'title', 'workspace', 'state', 'reason', 'bytes', 'updatedAt']) {
+    assert.match(shape, new RegExp(`\\b${field}\\b`), `tasks-shape 里应当有 ${field}`);
+  }
 });

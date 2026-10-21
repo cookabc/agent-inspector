@@ -2198,8 +2198,11 @@ function openTaskDrawer() {
           : `<b>正文合计只是下限</b> —— 实际回收通常更多，因为索引也会一起收缩。`);
 
   const sorted = picked.slice().sort((a, b) => b.bytes - a.bytes);
+  /* 前缀用这一屏的 who，不用 t.appLabel —— 会话行上根本没有这个字段
+     （它是全局视图时代的遗留），取不到就印出 "undefined · 标题"。
+     抽屉一次只服务一个 app，who 就是准确的来源。 */
   tEls.listD.innerHTML = sorted.slice(0, 200).map((t) =>
-    `<li title="${esc(t.title)}"><span>${esc(t.appLabel)} · ${esc(t.title)}</span><span>${fmtBytes(t.bytes)}</span></li>`).join('')
+    `<li title="${esc(t.title)}"><span>${esc(who)} · ${esc(t.title)}</span><span>${fmtBytes(t.bytes)}</span></li>`).join('')
     + (sorted.length > 200 ? `<li><span>…还有 ${(sorted.length - 200).toLocaleString()} 个</span><span></span></li>` : '');
   tEls.countD.textContent = `${count.toLocaleString()} 个`;
 
