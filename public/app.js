@@ -888,19 +888,30 @@ function renderSplit() {
   const selectable = (xs) => xs.filter((f) => canPick(f));
 
   const anyPicked = state.selection.size > 0;
-  const block = (cls, title, desc, xs, extra, split) => {
-    const can = selectable(xs);
+  /**
+   * 一块分组。
+   *
+   * `xs` 是这一组的全部文件，`hit` 是筛过之后看得见的那些。两者不同的
+   * （搜索 / 状态筛选生效时）要在块上写清"筛出多少 / 一共多少" ——
+   * 只印全量数字的话，上面三块加起来 1,360 个文件，下面分类卡却只剩 2 组，
+   * 数字与内容对不上；只印筛后的数字又会让人以为文件真的只剩这么点。
+   */
+  const block = (cls, title, desc, xs, extra, split, hit) => {
+    const shown = hit || xs;
+    const can = selectable(shown);
     const picked = can.filter((f) => state.selection.has(keyOf(f)));
     const allOn = can.length > 0 && picked.length === can.length;
     const part = picked.length > 0 && !allOn;     // 只勾了这一组的一部分
-    const toggle = can.length < xs.length ? '（受保护的几项不会被勾上）' : '';
+    const toggle = can.length < shown.length ? '（受保护的几项不会被勾上）' : '';
     // 空分组没有可勾的东西：不给 tabindex、不写"点这里选"，也不假装是复选框。
     // 留一个空的 role=checkbox 让人点下去没反应，比不放这块更糟。
     const empty = can.length === 0;
+    // 筛选让这一组少了东西时，体积和条数都按"看得见的"算，并把全量写在后面。
+    const filtered = shown.length !== xs.length;
     // 三种状态说三种话。勾一半时点下去是"补全"，不是"取消" —— 文案写反了就是骗人。
     // 没勾的那两块还要说明：点它不是"加进去"，是"换成它"。
     const flag = empty
-      ? '这一组没有可勾选的条目'
+      ? (filtered && xs.length ? '这一组当前筛选下没有条目' : '这一组没有可勾选的条目')
       : allOn
         ? `已选 <b>${picked.length.toLocaleString()}</b> 项 · <b>${fmtBytes(sum(picked))}</b>　再点一下取消${toggle}`
         : part
@@ -916,15 +927,20 @@ function renderSplit() {
     const attrs = empty
       ? ''
       : ` data-split="${split}" role="checkbox" tabindex="0" aria-checked="${part ? 'mixed' : String(allOn)}"`;
+    const shownBytes = sum(shown);
     return `
     <section class="${cls2}"${attrs}>
       <header class="split-head">
         <h3><span class="box" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span>${esc(title)}</h3>
-        <span class="split-size" title="${sum(xs).toLocaleString()} 字节">${fmtBytes(sum(xs))}</span>
+        <span class="split-size" title="${shownBytes.toLocaleString()} 字节">${fmtBytes(shownBytes)}</span>
       </header>
       <p class="split-desc">${esc(desc)}</p>
-      <p class="split-meta">${xs.length.toLocaleString()} 个文件${extra}</p>
+      <p class="split-meta">${
+        filtered
+          ? `筛出 ${shown.length.toLocaleString()} / ${xs.length.toLocaleString()} 个文件`
+          : `${xs.length.toLocaleString()} 个文件`
+      }${extra}</p>
       <p class="split-flag">${flag}</p>
     </section>`;
   };
@@ -941,12 +957,17 @@ function renderSplit() {
        </span></p>`
     : '';
 
+  /* 三块的数字也要跟着筛选走。搜索或状态筛选生效时，下面分类卡只剩几组，
+     而这三块还写着全量 —— 屏幕上就同时存在两个"这里有多少"的答案。
+     matches() 是清单那侧同一套判据，所以两边一定一致。 */
+  const vis = (xs) => xs.filter(matches);
+
   els.split.innerHTML = sessNote + (bothEmpty ? '' : [
     block('is-orphan', '会话已不存在', '会话库里找不到它，只剩文件残留。可以直接清理。', orphan,
-      sids(orphan) ? ` · ${sids(orphan).toLocaleString()} 个会话` : '', 'orphan'),
+      sids(orphan) ? ` · ${sids(orphan).toLocaleString()} 个会话` : '', 'orphan', vis(orphan)),
     block('is-live', '会话仍在', `这些会话还在 ${esc(state.index.label)} 里，文件有用，请谨慎。`, live,
-      sids(live) ? ` · ${sids(live).toLocaleString()} 个会话` : '', 'live'),
-  ].join('')) + block('is-other', '非会话文件', '日志、缓存、配置等，不属于任何会话。', other, '', 'other');
+      sids(live) ? ` · ${sids(live).toLocaleString()} 个会话` : '', 'live', vis(live)),
+  ].join('')) + block('is-other', '非会话文件', '日志、缓存、配置等，不属于任何会话。', other, '', 'other', vis(other));
 }
 
 /* 按钮上直接写出这批有多大，点之前就知道会发生什么。
@@ -1120,7 +1141,9 @@ document.addEventListener('click', async (e) => {
   if (chip) {
     const s = chip.dataset.status;
     state.statuses.has(s) ? state.statuses.delete(s) : state.statuses.add(s);
-    renderChips(); renderGroups();
+    /* renderSplit 也要重画：三块分组上的体积与条数按"当前筛出多少"算，
+       不跟着重画就会和下面只剩两组的清单对不上。 */
+    renderChips(); renderSplit(); renderGroups();
     return;
   }
 
@@ -1129,8 +1152,10 @@ document.addEventListener('click', async (e) => {
   const sp = t.closest('[data-split]');
   if (sp) {
     const g = sp.dataset.split;
-    // 受保护内容与软链接都不进勾选 —— 判据只有 isSelectable 一处
-    const mine = state.index.files.filter((f) => groupOf(f) === g && canPick(f));
+    /* 受保护内容与软链接都不进勾选 —— 判据只有 isSelectable 一处。
+       而且只勾**当前筛选下看得见的**那些：块上写的是"筛出 N / 一共 M"，
+       点一下却把 M 全勾上，那是在偷偷扩大范围。 */
+    const mine = state.index.files.filter((f) => groupOf(f) === g && canPick(f) && matches(f));
     const allOn = mine.length > 0 && mine.every((f) => state.selection.has(keyOf(f)));
     // 三块互斥：它们是把全部文件劈成三份，一组就是一组。
     // 所以换一组是"换成它"，不是"再加上它" —— 先清干净再勾。
@@ -1221,7 +1246,8 @@ document.addEventListener('click', async (e) => {
 
 els.search.addEventListener('input', () => {
   state.q = els.search.value.trim().toLowerCase();
-  renderGroups();
+  // 三块的数字跟着搜索走，见上面 renderSplit 里的 vis()
+  renderSplit(); renderGroups();
 });
 
 els.sortSel.addEventListener('change', () => {
@@ -1263,7 +1289,7 @@ document.addEventListener('keydown', (e) => {
     if (!els.drawer.hidden) closeDrawer();
     else if (!tEls.drawer.hidden) closeTaskDrawer();
     else if (document.activeElement === els.search) {
-      els.search.value = ''; state.q = ''; els.search.blur(); renderGroups();
+      els.search.value = ''; state.q = ''; els.search.blur(); renderSplit(); renderGroups();
     }
   }
 
@@ -1963,13 +1989,14 @@ function renderTaskList() {
     const body = t.bodyRel
       ? `<button class="btn btn-ghost btn-sm" type="button" data-locate="${esc(t.bodyRel)}">在文件清单中定位</button>`
       : '';
-    /* Cursor 的行上多一个"连带"标记：这条会话除了自己的正文，还会带走
-       多少只被它引用的工具结果 blob。没有这个数，人就不知道删这一条
-       到底回收多少 —— 而这正是"光列出不能清理"的另一半。 */
+    /* Cursor 的"连带回收"不进清单行 —— 行里那一行 meta 已经装了状态、
+       最后使用、子会话、类型，右侧体积列也要留给主数字。实测把它塞进
+       meta 或体积列都会把标题压回 278px、13 行 meta 被截断。
+
+       它进**展开后的详情**：勾选和删除都是在看过详情之后做的决定，
+       那个位置才是"删这条能省多少"该出现的地方。摘要放在抽屉里
+       （选中若干条之后一次性算总账），这里给单条的。 */
     const ex = taskState.exclusive?.get(t.id);
-    const exTag = ex && ex.exclusiveBytes > 0
-      ? `<span class="row-tag" title="删除它会连带删掉 ${ex.exclusiveBlobs.toLocaleString()} 个只被它引用的工具结果 blob，共 ${ex.exclusiveBytes.toLocaleString()} 字节">连带 ${fmtBytes(ex.exclusiveBytes)}</span>`
-      : '';
     return `<div class="tsession ${open ? 'is-open' : ''}">
       <div class="trow ${sel ? 'is-on' : ''}" data-task="${esc(t.id)}">
         <button class="trow-caret" type="button" data-task-toggle="${esc(t.id)}"
@@ -1981,9 +2008,8 @@ function renderTaskList() {
           ${isPurgeable(t) ? '' : 'disabled'} aria-label="选择会话 ${esc(t.title)}">
         <div class="trow-main">
           <span class="trow-title" title="${esc(t.title)}">${esc(t.title)}</span>
-          <span class="trow-meta" title="${esc(t.workspace)}"><b class="trow-state-m">${esc(stateLabel(t))}</b>${esc(meta)}${exTag}</span>
+          <span class="trow-meta" title="${esc(t.workspace)}"><b class="trow-state-m ${stateTone(t)}">${esc(stateLabel(t))}</b>${esc(meta)}</span>
         </div>
-        <span class="trow-pill ${stateTone(t)}">${esc(stateLabel(t))}</span>
         <span class="trow-size">${fmtBytes(t.bytes)}</span>
       </div>
       ${open ? `<div class="tdetail" data-detail="${esc(t.id)}">
@@ -1994,6 +2020,11 @@ function renderTaskList() {
           <div><dt>模型</dt><dd>${esc(t.model || '—')}</dd></div>
           <div class="tspan"><dt>会话 ID</dt><dd><code>${esc(t.id)}</code></dd></div>
           <div class="tspan"><dt>正文</dt><dd title="${esc(t.bodyRel || '')}"><code>${esc(t.bodyRel || '库内存储')}</code></dd></div>
+          ${ex && ex.exclusiveBytes > 0 ? `<div class="tspan"><dt>删除会连带回收</dt>
+            <dd title="${ex.exclusiveBytes.toLocaleString()} 字节">
+              <b>${fmtBytes(ex.exclusiveBytes)}</b>
+              <span class="tdetail-note">（${ex.exclusiveBlobs.toLocaleString()} 个只被这条会话引用的工具结果）</span>
+            </dd></div>` : ''}
         </dl>
         <div class="tdetail-acts">
           <button class="btn btn-ghost btn-sm" type="button" data-copy-id="${esc(t.id)}">复制会话 ID</button>
@@ -2200,12 +2231,35 @@ function openTaskDrawer() {
   const d = taskState.data;
   const who = d.appLabel;
 
+  /* Cursor 的抽屉要把"连带回收"算进总数：勾两条会话，正文只有 32.6 MB，
+     但连带删掉的工具结果还有 62.7 MB —— 只显示正文的话，人会以为删这一批
+     只省那么点。数字必须能对上下一次真的删完之后的 toast。
+
+     分析要十几秒。没算完时不要装作"没有连带" —— 那会让人以为数字很小，
+     显式说一句"还在算"，等它到了再补。 */
+  const exTotal = (() => {
+    if (!taskState.exclusive) return null;
+    let b = 0, n = 0;
+    for (const t of picked) {
+      const e = taskState.exclusive.get(t.id);
+      if (e) { b += e.exclusiveBytes; n += e.exclusiveBlobs; }
+    }
+    return { bytes: b, blobs: n };
+  })();
+  const exPending = taskState.exclusive === null && d.history === 'cursor-db';
+
   tEls.stats.innerHTML = d.db?.bodies
     ? `<div class="dstat"><span>会话</span><b>${count.toLocaleString()}</b></div>
        <div class="dstat"><span>库里的条目</span><b>${rows.toLocaleString()}</b></div>
        <div class="dstat"><span>正文文件合计</span><b>${fmtBytes(bytes)}</b></div>`
     : `<div class="dstat"><span>会话</span><b>${count.toLocaleString()}</b></div>
-       <div class="dstat"><span>正文合计</span><b>${fmtBytes(bytes)}</b></div>`;
+       <div class="dstat"><span>正文合计</span><b>${fmtBytes(bytes)}</b></div>` +
+      (exTotal && exTotal.bytes > 0
+        ? `<div class="dstat"><span>连带回收</span><b>${fmtBytes(exTotal.bytes)}</b></div>
+           <div class="dstat"><span>预计共回收</span><b>${fmtBytes(bytes + exTotal.bytes)}</b></div>`
+        : exPending
+          ? `<div class="dstat"><span>连带回收</span><b class="dstat-pending">正在算…</b></div>`
+          : '');
 
   // 会写到哪几个库，由后端报的路径决定 —— 各工具不一样，前端不硬编码文件名
   const dbFiles = d.db.dbs.map((x) => shortPath(x.path));

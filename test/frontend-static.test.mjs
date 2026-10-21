@@ -235,3 +235,38 @@ test('一条会话都没有时，搜索/排序/分组/全选这些摆设一起�
   const reset = app.slice(app.indexOf('function resetTaskPanel'), app.indexOf('async function loadTasks'));
   assert.match(reset, /tEls\.toolbar\.hidden = true/);
 });
+
+test('三块分组的数字跟着筛选走，且勾选只覆盖筛出来的那些', () => {
+  /* 实测 bug：状态筛选后下面分类卡从 16 组降到 2 组，而上面三块还写着
+     "1,360 个文件 / 434.3 MB" —— 屏幕上同时存在两个"这里有多少"的答案。
+     根因是筛选只调 renderGroups()，没调 renderSplit()。 */
+  const split = app.slice(app.indexOf('function renderSplit'), app.indexOf('function renderRecommend'));
+  assert.match(split, /const vis = \(xs\) => xs\.filter\(matches\)/, '三块要按同一套 matches() 过滤');
+  assert.match(split, /筛选下没有条目/, '筛空的组要说清是"筛空了"还是"本来就没有"');
+  assert.match(split, /筛出 \$\{shown\.length/, 'meta 要写"筛出 N / 一共 M"');
+
+  // 三处触发筛选的地方都要重画 split
+  assert.match(app, /renderChips\(\); renderSplit\(\); renderGroups\(\);/);
+  assert.match(app, /els\.search\.addEventListener\('input'[\s\S]{0,200}renderSplit\(\); renderGroups\(\)/);
+  assert.match(app, /els\.search\.blur\(\); renderSplit\(\); renderGroups\(\)/);
+
+  // 点整块只勾筛出来的那些，不偷偷扩大范围
+  assert.match(app, /groupOf\(f\) === g && canPick\(f\) && matches\(f\)/);
+});
+
+test('会话行不再重复印状态：pill 那一列已删除', () => {
+  /* 状态文字原来在 meta 行和右侧药丸各印一遍，药丸吃掉 69px + 12px gap，
+     把标题挤到 267px（84 行里 60 行被截断）。 */
+  assert.doesNotMatch(app, /class="trow-pill/);
+  assert.match(app, /class="trow-state-m \$\{stateTone\(t\)\}"/);
+  // 网格从 5 列降到 4 列
+  assert.match(css, /\.trow \{[\s\S]{0,200}grid-template-columns: auto auto minmax\(0, 1fr\) auto;/);
+});
+
+test('Cursor 的连带回收进详情与抽屉，不进清单行', () => {
+  /* 塞进 meta 会撑爆（348px 需要 398px，13 行被截断）；
+     塞进体积列会把标题压回 278px。所以它只出现在展开后的详情里。 */
+  assert.match(app, /删除会连带回收/);
+  assert.match(app, /const exPending = taskState\.exclusive === null && d\.history === 'cursor-db'/);
+  assert.match(app, /dstat-pending/, '还没算完时要说"正在算"，不能装作没有连带');
+});

@@ -1195,7 +1195,9 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
 
 .trow {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  /* caret | 勾选框 | 内容 | 体积。状态原本还占一列（.trow-pill），
+     但它跟 meta 行里的状态文字是同一个词，重复印两遍只挤标题。 */
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
   padding: 9px 13px;
@@ -1239,6 +1241,9 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
 }
 .trow-meta b { font-weight: 500; color: var(--ink-2); font-family: var(--font-ui); }
 .trow-size { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; letter-spacing: -.01em; }
+
+/* 详情里"删除会连带回收"那一段的补充说明 */
+.tdetail-note { color: var(--muted); font-size: 11.5px; }
 
 .task-foot {
   display: flex;
@@ -1338,17 +1343,20 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
 .recover-confirm-btns { display: flex; justify-content: flex-end; gap: 8px; }
 
 
-.trow-pill {
-  font-size: 11px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: var(--tint);
-  color: var(--ink);
-  font-weight: 550;
-  white-space: nowrap;
-}
-/* 窄屏上状态标签挤占标题宽度，改成跟在元信息后面 */
-.trow-state-m { display: none; }
+/* 状态文字只在 meta 那一行出现一次。
+   它原本还有一份是右侧的 .trow-pill 药丸 —— 同一个词在一行里印两遍，
+   而这一列总共只有 505px（会话管理列在 1400 宽的屏上就这么点），
+   药丸吃掉 69px + 一个 12px 的 gap，直接把标题挤到 267px：
+   实测 84 行里有 60 行标题被 ellipsis 截掉。
+
+   状态不上色。试过用 `--c`（st-warning 的 #fab219 之类）上色，两个问题：
+   一是黄底黄字在白背景上对比度只有 1.6:1，读不清；二是加粗上色后
+   这行又变宽，meta 截断从 0 行涨回 14 行 —— 省下来的空间当场还回去了。
+
+   状态的分量由**文字本身**承担：「可手动清理」比一个色块更明确。
+   `.trow-meta b` 那条 color 也不用覆盖，它给的就是正文的次要色。 */
+.trow-state-m { display: inline; margin-inline-end: 6px; font-weight: 600; }
+.trow-state-m::after { content: "·"; margin-inline-start: 6px; color: var(--muted); font-weight: 400; }
 
 /* 按工作区分组：组头像一行可折叠的小标题，组内是原来的任务行 */
 .tgroup { border-bottom: 1px solid var(--line); }
@@ -1578,6 +1586,8 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
 .dstat { background: var(--surface); padding: 10px 12px; display: flex; flex-direction: column-reverse; gap: 2px; }
 .dstat span { font-size: 11px; color: var(--muted); }
 .dstat b { font-size: 16px; font-weight: 650; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+/* "正在算…"不是数字，用正文体与次要色，别让它看起来像一个量出来的值 */
+.dstat b.dstat-pending { font-size: 13px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
 
 .drawer-mix {
   display: flex;
@@ -1946,14 +1956,10 @@ body.is-busy .topbar::after {
   .row { grid-template-columns: auto minmax(0, 1fr) auto auto; }
   .row-time { display: none; }
   .trow { grid-template-columns: auto auto minmax(0, 1fr) auto; }
-  .trow-pill { display: none; }
   .tdetail-grid { grid-template-columns: minmax(0, 1fr); }
   .tdetail-grid > div { grid-column: 1 / -1; }
   /* 窄屏上 42px 缩进太奢侈，说明直接占满一行 */
   .group-outcome, .group-more, .group-explain { padding-inline-start: 14px; }
-  /* 元信息行是 nowrap + ellipsis，状态放末尾会被裁掉，所以放最前面 */
-  .trow-state-m { display: inline; margin-inline-end: 6px; }
-  .trow-state-m::after { content: "·"; margin-inline-start: 6px; color: var(--muted); }
   .actionbar { justify-content: center; }
   .ab-actions { width: 100%; }
   .ab-actions .btn { flex: 1; justify-content: center; }

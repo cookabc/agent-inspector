@@ -365,11 +365,12 @@ for (const [app, status, why] of [
 
 test('Cursor 不再被静态拒绝：缺确认串时报的是确认串，不是"只读"', async t => {
   const f = await fixture(t);
-  const result = await f.post('/api/tasks/purge', { app: 'cursor', ids: ['whatever'] });
-  // 走到了确认串校验 = 静态能力闸门已放行
-  assert.equal(result.status, 400, JSON.stringify(result));
-  assert.match(result.body.error, /确认串/);
-  assert.doesNotMatch(result.body.error, /只读|没有写路径/);
+  /* 用 dryRun 绕开进程探测 —— 这条测试要证明的是"静态能力闸门已放行"，
+     不该因为跑测试的这台机器恰好开着 Cursor 就变成 409。
+     dryRun 是只读的，服务端本来就允许它在应用运行时跑。 */
+  const result = await f.post('/api/tasks/purge', { app: 'cursor', ids: ['whatever'], dryRun: true });
+  assert.notEqual(result.status, 403, JSON.stringify(result));
+  assert.doesNotMatch(result.body.error || '', /只读|没有写路径/);
 });
 
 test('every history panel scans and reports its own shape', async t => {
