@@ -10,8 +10,12 @@
 | Claude Code | `~/.claude`、`~/.claude.json` | 文件 —— 它的会话正文本身就是 `.jsonl`，没有库行可删 |
 | Cursor | `~/.cursor`、`~/Library/Application Support/Cursor` | **按会话删除**（连同只被它引用的工具结果 blob，事务 + VACUUM，先备份）+ **孤儿会话回灌**（只新增，不覆盖） |
 
-还额外做一件这些工具自己都没做的事：把界面上**早已删掉、正文却还留在磁盘上**的历史会话清干净。
-ZCode 的"删除任务"只是把 `tasks.deleted` 置 1，一行正文都没少。
+还额外做两件这些工具自己都没做的事：
+
+1. 把界面上**早已删掉、正文却还留在磁盘上**的历史会话清干净。
+   ZCode 的"删除任务"只是把 `tasks.deleted` 置 1，一行正文都没少。
+2. 把四个工具的会话汇到一张表里，回答「**我刚才在哪个工具里干活**」——
+   各工具视图只能回答"这个工具里有什么"。这一屏只读，要删请点进对应工具。
 
 Cursor 是一个反向的例子：会话列表只认 `state.vscdb` 里的 `composerHeaders`，而正文的
 `.jsonl` transcript 在 `~/.cursor/projects/` 下另存一份，两者没有同步机制。配置目录被重建、
@@ -25,7 +29,7 @@ Cursor 是一个反向的例子：会话列表只认 `state.vscdb` 里的 `compo
 > 换一台机器必然不同，页面上显示的才是你这台机器的实时数据。
 
 <p align="center">
-  <img src="docs/images/overview.png" width="880" alt="首屏：header 上四个工具的标签；左边是当前工具的磁盘占用，右边两条并排的清理线（文件与日志、历史会话）；下面是文件清单按「会话是否还在」分成三组，右侧是会话管理面板">
+  <img src="docs/images/overview.png" width="880" alt="首屏：header 最左是「全部」标签，其后四个工具；左边是当前工具的磁盘占用，右边两条清理线（文件与日志、历史会话）；下面文件清单按「会话是否还在」分成三块，右侧是会话管理面板，每个分类都标注删了会怎样">
 </p>
 
 ## 环境
@@ -94,9 +98,9 @@ node server.mjs
 
 **规则表刻意不做兜底猜测。** `cli/plugins/` 曾经被一条过宽的规则归进"缓存"，
 差点把插件自己的持久数据当缓存推荐删掉。现在读不懂的一律落在 `unknown`，不进默认勾选
-（这台机器上四个工具加起来一万七千多个文件，`unknown` 只有 59 个 —— 而且都是
-Electron 自建的状态文件（`Cookies`、`shared_proto_db/`、`VideoDecodeStats/`）这类
-真正读不懂的东西，不是漏了规则）。
+（这台机器上四个工具加起来一万七千多个文件，`unknown` 只有 68 个，占 0.4% ——
+而且都是 Electron 自建的状态文件（`Cookies`、`shared_proto_db/`、`VideoDecodeStats/`）
+这类真正读不懂的东西，不是漏了规则）。
 
 > 这条判据出过一次错，值得记下来：`~/.codex/backups/` 里躺着 44 MB 的项目 zip，
 > 一度整批落进 `unknown`。原因是 `backups/` 这条规则只在 Claude 那一份里写了，
@@ -210,7 +214,7 @@ Cursor 的清理方式与三家都不同，见下面「Cursor：为什么可以�
 
 ### 会话管理
 
-每个工具的会话存在哪、能清到什么程度，都不一样，面板按能力分三种走法：
+每个工具的会话存在哪、能清到什么程度，都不一样，面板按能力分四种走法：
 
 - **ZCode** —— 正文在 `cli/db/db.sqlite`，元数据在 `v2/tasks-index.sqlite`，
   两边靠 `task_id === session.id` 关联。按任务删除：库里连带删掉会话、消息、附件块、用量行，然后 VACUUM。
@@ -220,8 +224,9 @@ Cursor 的清理方式与三家都不同，见下面「Cursor：为什么可以�
   行删完那些文件会变成残骸，归「文件清单」那条线。索引里已经没有行的残骸，勾选后直接走文件清理。
 - **Claude Code** —— 正文就是 `projects/` 下的 `.jsonl` 文件，没有库行可删。
   这里勾选后交给文件清理：默认进废纸篓，可随时恢复。
-- **Cursor** —— 正文以键值对存在 `state.vscdb`，由 IDE 独占写入，键之间没有外键可依。
-  只读：按键族（内容寻址 blob、对话气泡、检查点…）把 364.8 MB 的库摊开给你数清楚，不给勾选。
+- **Cursor** —— 正文以键值对存在 `state.vscdb`，键之间没有外键可依。按会话删除，
+  并**连带删掉只被这些会话引用的工具结果 blob**（做法见下面「Cursor：为什么可以按会话删」）。
+  行上展开详情会写明「删除会连带回收多少」，抽屉里把正文与连带量分开列。
 
 面板做的事：
 
@@ -392,7 +397,7 @@ lib/apps/index.mjs     四个工具的注册表，扫描顺序与能力位都从
 lib/apps/<id>.mjs      每个工具的 targets、分类表、规则、进程名、会话判据
 lib/apps/common.mjs    makeClassify 与共享的分类语义
 lib/scan.mjs           逐目标遍历目录，只 stat；孤儿判定在这里挂会话判据
-lib/tasks.mjs          会话库读取/清理的分发 + 能力位（readOnly / canRecover）+ 静态能力判断
+lib/tasks.mjs          会话库读取/清理的分发 + 能力位 + 静态能力判断 + 跨工具聚合（aggregateSessions）
 lib/tasks-shape.mjs    四个工具共用的会话行契约：状态枚举、中性默认、byState 与排序（叶子模块）
 lib/tasks-zcode.mjs    ZCode：db.sqlite + tasks-index，按任务删
 lib/tasks-codex.mjs    Codex：三库按线程删，正文文件交给文件线
@@ -404,16 +409,16 @@ lib/sqlite-open.mjs    只读打开：必要时连侧文件一起复制到副本
 lib/db-worker.mjs      数据库操作在 worker 线程里跑
 public/index.html      页面骨架
 public/style.css       设计令牌与全部样式
-public/logic.js        纯函数（体积格式化）—— 不碰 DOM，测试直接 import
+public/logic.js        纯函数（体积格式化、可选中判定）—— 不碰 DOM，测试直接 import
 public/app.js          渲染、勾选、清理流程
 test/server.test.mjs   临时 HOME 中的 HTTP 删除边界回归测试
 test/codex-tasks.test.mjs  Codex 三库夹具：空跑、跨库删除、备份、残骸交接
 test/history-panels.test.mjs  四个工具的会话面板：行与 byState 的同一份契约、能力位、Cursor 反查、并发一致性
 test/cursor-recover.test.mjs 孤儿会话：扫描、空跑、回灌、幂等、服务端确认闸门
-test/cursor-purge.test.mjs  Cursor 按会话删：独占 blob 判定、三条引用通道、共享不误删、幂等
+test/cursor-purge.test.mjs  Cursor 按会话删：独占 blob 判定、四条引用通道、共享不误删、幂等
 test/classification.test.mjs  跨 app 分类一致性：共享规则同答、backups/ 不被当成缓存、分类表覆盖规则输出
 test/logic.test.mjs    fmtBytes 的进位边界：任何体积都不印出 1024
-test/frontend-static.test.mjs  前端静态检查：tablist 的键盘模型、抽屉焦点陷阱、切工具时状态归零
+test/frontend-static.test.mjs  前端静态检查：tablist 键盘模型、抽屉焦点陷阱、状态归零、工具色不借状态色
 ```
 
 ### 四个工具的共同契约
@@ -439,12 +444,15 @@ test/frontend-static.test.mjs  前端静态检查：tablist 的键盘模型、�
 
 ### 验证
 
-运行 `npm run check` 检查语法并执行回归测试。测试只使用临时扫描目录和临时 HOME，
+运行 `npm run check` 检查语法并执行回归测试（当前 158 个）。测试只使用临时扫描目录和临时 HOME，
 不读取真实会话数据，也不操作真实废纸篓。它覆盖：四个工具的扫描与历史面板、
 删除边界（根目录 / 绝对路径 / `..` / 符号链接 / 大小写别名 / 单文件目标 / 未知 app）、
-批量请求的原子性、废纸篓往返，以及"Cursor 与 Claude 的按行删除在任何进程检查之前就被拒"。
+批量请求的原子性、废纸篓往返，以及"Claude Code 的按行删除在任何进程检查之前就被拒"
+（Cursor 以前也在这条线上，现在它有自己的路径与闸门）。
 Cursor 回灌那份夹具会核对三组行确实补齐、备份里是回灌前的库、第二次执行导入 0 条，
 以及确认串错误时请求在碰库之前就返回 400、空跑在应用运行中也允许。
+Cursor 清理那份夹具盯的是"删错方向"这种最坏的缺陷：**一个被两个会话共享的 blob，
+删掉其中一个会话之后必须还在**；只被它引用的必须删掉；删完悬空引用为 0；再删一次是幂等的。
 Codex 那份夹具把三个库都建出来 —— 其中两个**没有** `threads` 表，逐库删除必须跳过它们；
 它同时验证"行删完、正文文件还在，并以下一个编号出现在残骸里"这条交接。
 另外几份盯着"不会崩、但会说谎"的缺陷：`classification.test.mjs` 确认跨 app 同形的

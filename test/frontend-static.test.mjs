@@ -366,3 +366,38 @@ test('工具标识色不能借用状态色', () => {
   const darkTool = css.split('--tool-zcode:  #6ba5ff').length - 1;
   assert.ok(darkTool >= 2, '深色两套（media + data-theme）都要覆盖');
 });
+
+test('次要文字在三种浅色底上都过 AA', () => {
+  /* --muted 原来 #868d80：白底 3.42、surface-2 2.85 —— 而它被用在十几处
+     10.5–12px 的小字上（"删了会怎样"、分类计数、排序标签、工具路径）。
+     加深到 #5e655a 之后三档都过 4.5。 */
+  const muted = css.match(/--muted:\s*(#[0-9a-f]{6})/i)[1];
+  const lum = (hex) => {
+    const v = [0,2,4].map(i => parseInt(hex.replace('#','').slice(i,i+2),16)/255)
+      .map(x => x <= 0.03928 ? x/12.92 : Math.pow((x+0.055)/1.055, 2.4));
+    return 0.2126*v[0] + 0.7152*v[1] + 0.0722*v[2];
+  };
+  const ratio = (a, b) => { const [x,y] = [lum(a), lum(b)].sort((p,q)=>q-p); return (x+0.05)/(y+0.05); };
+  for (const bg of ['#ffffff', '#e9ebe4', '#dfe2d8']) {
+    assert.ok(ratio(muted, bg) >= 4.5, `${muted} 在 ${bg} 上只有 ${ratio(muted,bg).toFixed(2)}:1`);
+  }
+});
+
+test('切主题时主动取消已启动的过渡', () => {
+  /* 实测 bug：`.app-tab` 这类带 `transition: color .14s` 的元素，在主题变量
+     换掉的同一帧里会用**旧值**起一个过渡，之后一直停在旧颜色上 —— 切到深色后
+     工具标签的文字停在浅色主题的深灰上，在深底里几乎看不见。
+     只靠 CSS 改 transition 不会中断已经在跑的动画，必须 cancel。 */
+  assert.match(app, /getAnimations\(\)/);
+  assert.match(app, /anim instanceof CSSTransition\) anim\.cancel\(\)/);
+  assert.match(app, /is-theme-switching/);
+  // 摘类的时机不能依赖 rAF：后台标签页里 rAF 不触发，类会永远留着
+  assert.doesNotMatch(app, /requestAnimationFrame\(\(\) => requestAnimationFrame/);
+});
+
+test('三块分组不借状态色说反话', () => {
+  /* 「会话仍在」那块写的是"请谨慎"，原来却用 --st-good（绿）——
+     绿色在全站表示"可安全清理"，用在这里等于说反话。改成中性 --ink-2。 */
+  assert.match(css, /\.split-block\.is-live\s*\{\s*--c:\s*var\(--ink-2\)/);
+  assert.doesNotMatch(css, /\.split-block\.is-live\s*\{\s*--c:\s*var\(--st-good\)/);
+});

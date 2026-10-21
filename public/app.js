@@ -318,6 +318,9 @@ function flashSwitch() {
 
 const APP_KEY = 'zci-app';
 
+/** 切主题时"全局停过渡"那个类，靠这个定时器摘掉（见 themeBtn 的处理）。 */
+let themeSwitchTimer = 0;
+
 /** 「全部」不是一个 app，是一个跨工具的只读视图。 */
 const ALL_ID = 'all';
 const isAll = () => state.appId === ALL_ID;
@@ -1478,8 +1481,31 @@ document.addEventListener('click', async (e) => {
   if (t.closest('#themeBtn')) {
     const cur = document.documentElement.getAttribute('data-theme');
     const next = cur === 'dark' ? 'light' : cur === 'light' ? '' : 'dark';
+
+    /* 切主题时把正在跑的过渡全部取消掉。
+       实测：`.app-tab` 这类带 `transition: color .14s` 的元素，在主题变量
+       换掉的同一帧里会用**旧值**起一个过渡，之后一直停在那个旧颜色上
+       （新建的同款元素颜色是对的，只有已存在的那个错）。切到深色后
+       工具标签的文字停在浅色主题的深灰上，在深底里几乎看不见。
+
+       做法分两步，缺一不可：
+         ① 加 .is-theme-switching 把 transition 全部关掉（CSS 那边 !important）
+         ② 主动 cancel 已经启动的那些 —— 光靠 CSS 改 transition 不会
+            中断已经在跑的动画，它们会继续往旧目标值走完。 */
+    document.documentElement.classList.add('is-theme-switching');
     next ? document.documentElement.setAttribute('data-theme', next)
          : document.documentElement.removeAttribute('data-theme');
+
+    for (const anim of document.getAnimations()) {
+      if (anim instanceof CSSTransition) anim.cancel();
+    }
+
+    /* 用 setTimeout 而不是 rAF 摘这个类：rAF 在后台标签页里根本不触发，
+       类会永远留在 html 上，全站动画就全死了。 */
+    clearTimeout(themeSwitchTimer);
+    themeSwitchTimer = setTimeout(() => {
+      document.documentElement.classList.remove('is-theme-switching');
+    }, 120);
     try { localStorage.setItem('zci-theme', next); } catch {}
     return;
   }

@@ -16,7 +16,11 @@
   --surface-3:     #dfe2d8;
   --ink:           #14170f;
   --ink-2:         #565c50;
-  --muted:         #868d80;
+  /* 次要文字。原来 #868d80 在白底上只有 3.42:1、--surface-2 上 2.85:1，
+     而它被用在十几处 10.5–12px 的小字上（"删了会怎样"、分类计数、排序标签、
+     工具路径）—— 全都低于 AA 的 4.5:1。加深到 #5e655a 之后：
+     白底 6.03、surface-2 5.01、surface-3 4.59，三档都过线。 */
+  --muted:         #5e655a;
   --line:          #dcdfd5;
   --line-strong:   #c5cabc;
   --accent:        #1f5fd1;
@@ -575,7 +579,10 @@ p { margin: 0; }
   font-weight: 550;
 }
 .rec-chip em { font-style: normal; color: var(--muted); font-variant-numeric: tabular-nums; }
-.rec-chip.is-on em { color: var(--ink-2); }
+/* 选中态的底是 --tint（状态色 12–18% 混白），比纯白更暗一点，
+   --ink-2 在那上面只有 3.04:1。体积数字用 --ink 而不是 --ink-2：
+   它本来就是这一条里最该读清的数值。 */
+.rec-chip.is-on em { color: var(--ink); font-weight: 550; }
 
 /* ── 面板 ───────────────────────────────────────────────── */
 
@@ -710,15 +717,19 @@ pre code { background: none; padding: 0; }
   background: var(--surface);
   min-width: 0;
 }
-/* 三块各自的颜色，勾选框和点亮状态都取这个 --c */
+/* 三块的颜色只表达"该不该动"，不借用状态档位。
+   is-orphan 是"可以直接清理"，用 serious（橙）—— 与全站"异常 / 该处理"一致。
+   is-live 原来用 --st-good（绿），但那块写的是"请谨慎"：绿色在全站表示
+   "可安全清理"，用在这里等于说反话。改成中性 —— 它要说的是"这些别乱动"，
+   既不好也不坏。 */
 .split-block.is-orphan {
   --c: var(--st-serious);
   --tint: color-mix(in oklab, var(--st-serious) 6%, var(--surface));
   border-color: var(--c);
   background: var(--tint);
 }
-.split-block.is-live  { --c: var(--st-good);        border-color: var(--c); }
-.split-block.is-other { --c: var(--line-strong);    border-color: var(--c); }
+.split-block.is-live  { --c: var(--ink-2);       border-color: var(--c); }
+.split-block.is-other { --c: var(--line-strong); border-color: var(--c); }
 
 /* 每一块就是一个勾选框：勾上时整块点亮 —— 框打勾、描边加重、底色跟着来 */
 .split-block.is-clickable { cursor: pointer; transition: border-color .14s ease, box-shadow .14s ease; }
@@ -2183,4 +2194,15 @@ body.is-busy .topbar::after {
 @media (max-width: 620px) {
   .all-row { grid-template-columns: auto minmax(0, 1fr) auto; }
   .all-when { display: none; }
+}
+
+/* ── 切主题的瞬间：全局停掉过渡 ────────────────────────────
+   `transition: color .14s` 的元素在主题变量换掉的同一帧里会拿旧值去插值，
+   实测切到深色后工具标签的文字停在浅色主题的深灰上（在深底里几乎看不见），
+   要等下一次强制重排才恢复。切主题是全局跳变，让它干脆地跳过去。 */
+html.is-theme-switching,
+html.is-theme-switching *,
+html.is-theme-switching *::before,
+html.is-theme-switching *::after {
+  transition: none !important;
 }
