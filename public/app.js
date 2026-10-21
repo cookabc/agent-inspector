@@ -29,7 +29,7 @@ const els = {
   drawerList: $('drawerList'), drawerListCount: $('drawerListCount'),
   purgeConfirm: $('purgeConfirm'), purgeWord: $('purgeWord'),
   drawerMsg: $('drawerMsg'), drawerCancel: $('drawerCancel'), drawerGo: $('drawerGo'),
-  tooltip: $('tooltip'),
+  tooltip: $('tooltip'), toast: $('toast'),
 };
 
 const state = {
@@ -761,14 +761,22 @@ async function runClean() {
     if (failed.length) {
       els.drawerMsg.className = 'drawer-msg is-err';
       els.drawerMsg.textContent = `完成 ${done.length} 项，${failed.length} 项失败：${failed.map((f) => f.path).join('、')}`;
-    } else {
-      els.drawerMsg.className = 'drawer-msg is-ok';
-      els.drawerMsg.textContent = purge
-        ? `已彻底删除 ${done.length} 项。`
-        : `已把 ${done.length} 项移入废纸篓，可在 Finder 的「废纸篓」中恢复。`;
+      // 有失败就留着抽屉 —— 这份清单本身就是要看的东西
+      return;
     }
-    await load(true);
-    if (!failed.length) setTimeout(closeDrawer, 1200);
+
+    /* 全部成功：先关抽屉，再把结果搬到屏幕上。
+       之前是反过来 —— await load(true) 重扫一遍（约 1 秒）之后才开始
+       1.2 秒的延时，于是"转圈停了，侧栏还杵着"，人以为没反应。
+       动作在这一刻已经完成了，抽屉就没有继续开着的理由。 */
+    const msg = purge
+      ? `已彻底删除 <b>${done.length.toLocaleString()}</b> 项。`
+      : `已把 <b>${done.length.toLocaleString()}</b> 项移入废纸篓，可在 Finder 的「废纸篓」中恢复。`;
+    closeDrawer();
+    showToast(msg);
+
+    // 重扫只是让屏幕上的数字跟上，不需要人等它
+    load(true).catch((err) => showToast(`重新扫描失败：${esc(err.message)}`, { error: true }));
   } catch (err) {
     els.drawerMsg.className = 'drawer-msg is-err';
     els.drawerMsg.textContent = err.message;
@@ -785,6 +793,30 @@ async function revealPath(key) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ app: appIdOfRow(f), target: f.t, path: f.p }),
   });
+}
+
+/* ── 操作结果提示 ───────────────────────────────────────── */
+
+/**
+ * 在屏幕底部说一句"刚才做了什么"。
+ *
+ * 抽屉里那行结果消息会随抽屉一起消失 —— 所以要么让抽屉多留两秒等人读完，
+ * 要么把结果搬到抽屉外面。前者正是之前的做法，代价是"转圈停了，侧栏还杵着"：
+ * 动作早就完成了，用户却在等一个纯装饰的延时。
+ *
+ * @param {string} html  允许 <b> 与 <code>，调用方自己 esc 过动态内容
+ * @param {{error?: boolean, ms?: number}} [opts]
+ */
+let toastTimer = 0;
+function showToast(html, opts = {}) {
+  const el = els.toast;
+  if (!el) return;
+  el.innerHTML = html;
+  el.classList.toggle('is-err', Boolean(opts.error));
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  // 读得完的最短时间：一行字约 3 秒；出错时留久一点，人可能要看两眼
+  toastTimer = setTimeout(() => { el.hidden = true; }, opts.ms ?? (opts.error ? 6000 : 4000));
 }
 
 /* ── 提示气泡 ───────────────────────────────────────────── */
@@ -895,7 +927,20 @@ function renderSplit() {
 function renderRecommend() {
   // 一个字节都没有的推荐项不立空壳 —— 跟分类卡片同一条规矩
   const all = recommendAll().filter((c) => c.bytes > 0);
-  if (!all.length) { els.rec.hidden = true; return; }
+  if (!all.length) {
+    els.rec.hidden = true;
+    /* 整条 lane 收起来了，里面的数字也得擦掉。留着上一轮的 "28 KB" 在这
+       —— 它确实看不见，但下一次谁把它显示出来（比如某个分类又长回来），
+       第一帧就会先闪一下旧数字。 */
+    els.recName.textContent = '推荐清理';
+    els.recFigure.textContent = '—';
+    els.recSub.innerHTML = '';
+    els.recScope.innerHTML = '';
+    els.recBtn.disabled = true;
+    els.recBtn.textContent = '推荐清理';
+    els.recCap.innerHTML = '';
+    return;
+  }
   els.rec.hidden = false;
 
   const on = all.filter((c) => !state.recOff.has(c.id));
@@ -2134,15 +2179,22 @@ function renderDryRun(data) {
 
 /** 删除完成：报回收量与自检结论，然后刷新会话与文件两边的视图。 */
 async function finishPurge(data) {
-  tEls.msg.className = 'drawer-msg is-ok';
-  tEls.msg.innerHTML =
+  /* 跟文件删除那条线同一条规矩：动作完成就关抽屉，结果交给 toast。
+     这里原本要等 3 秒 —— 而 VACUUM 那一步人已经等过几十秒了，
+     再干等三秒纯粹是让人对着一个已经没事可做的面板。 */
+  closeTaskDrawer();
+  showToast(
     `完成，回收 <b>${fmtBytes(data.freed)}</b>：` +
     `${fmtBytes(data.before.total)} → ${fmtBytes(data.after.total)}。` +
-    `${esc(checkLine(data))}备份已经写好。`;
-  await loadTasks(true);
-  await load(true);          // 库变小了，文件清单也要重算
-  renderTasks();
-  setTimeout(closeTaskDrawer, 3000);
+    `${esc(checkLine(data))}备份已经写好。`);
+  // 两边的重扫都放到后台：库变小了，文件清单也要跟上
+  try {
+    await loadTasks(true);
+    await load(true);
+    renderTasks();
+  } catch (err) {
+    showToast(`刷新视图失败：${esc(err.message)}（删除本身已经完成）`, { error: true });
+  }
 }
 
 /* 会话面板事件 */

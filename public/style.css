@@ -1654,6 +1654,39 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
 }
 .tooltip b { font-variant-numeric: tabular-nums; }
 
+/* ── 操作结果提示 ───────────────────────────────────────── */
+
+/* 抽屉关掉之后，结果还得留在屏幕上。放在底部居中，避开顶栏与滚动条；
+   pointer-events:none —— 它只是通知，不该挡住任何东西。 */
+.toast {
+  position: fixed;
+  z-index: 90;
+  inset-inline: 0;
+  bottom: 28px;
+  margin-inline: auto;
+  width: fit-content;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 11px 16px;
+  border-radius: var(--r-md);
+  background: var(--ink);
+  color: var(--bg);
+  font-size: 12.5px;
+  line-height: 1.5;
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+  animation: toast-in .18s ease;
+}
+.toast b { font-variant-numeric: tabular-nums; }
+.toast.is-err { background: var(--st-critical); color: #fff; }
+.toast[hidden] { display: none; }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast { animation: none; }
+}
+
 /* ════════════════════════════════════════════════════════════
    动效与加载态
    原则：动效只交代"发生了什么"，不表演。所有时长都在 120–220ms，

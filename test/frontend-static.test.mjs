@@ -118,3 +118,42 @@ test('分组复选框的状态按"真正能勾的行"算', () => {
   assert.match(app, /selCount === pickable\.length \? 'checked'/);
   assert.match(app, /selCount < pickable\.length \? 'data-indeterminate/);
 });
+
+test('清理成功后抽屉立刻关，结果交给 toast —— 不再靠延时等人读完', () => {
+  /* 用户报的："移入废纸篓的 loading 结束后，侧边栏没有马上消失"。
+     原来的顺序是：成功 → await load(true) 重扫约 1 秒 → 再 setTimeout 1.2 秒
+     → 才关。于是转圈早停了，抽屉还杵着，看起来像没反应。
+     会话那条线更夸张，写的是 3000。 */
+  assert.doesNotMatch(app, /setTimeout\(closeDrawer, \d+\)/, '不该再用延时关抽屉');
+  assert.doesNotMatch(app, /setTimeout\(closeTaskDrawer, \d+\)/, '不该再用延时关抽屉');
+
+  const clean = app.slice(app.indexOf('async function runClean'), app.indexOf('/** 在 Finder 中显示'));
+  // 只在代码里找位置 —— 注释里正好写着"之前是反过来 —— await load(true)…"
+  const codeOnly = clean.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.match(codeOnly, /closeDrawer\(\);\s*\n\s*showToast\(msg\)/, '成功路径应当先关抽屉再报结果');
+  assert.ok(
+    codeOnly.indexOf('closeDrawer()') < codeOnly.indexOf('load(true)'),
+    '重扫应当在抽屉关掉之后才开始',
+  );
+
+  const purge = app.slice(app.indexOf('async function finishPurge'), app.indexOf('/* 会话面板事件 */'));
+  assert.match(purge, /closeTaskDrawer\(\);\s*\n\s*showToast\(/, '会话清理同样先关再报');
+});
+
+test('失败时保留抽屉，不吐成功 toast', () => {
+  const clean = app.slice(app.indexOf('async function runClean'), app.indexOf('/** 在 Finder 中显示'));
+  // failed 分支必须在 closeDrawer 之前 return
+  const failedIdx = clean.indexOf('${failed.length} 项失败');
+  const closeIdx = clean.indexOf('closeDrawer()');
+  assert.ok(failedIdx > 0 && failedIdx < closeIdx, '有失败项时要先返回，不能继续走到关闭');
+  assert.match(clean, /return;\s*\n\s*\}\s*\n\s*\/\* 全部成功/);
+});
+
+test('toast 是个 aria-live 的独立元素，不靠抽屉承载结果', () => {
+  assert.match(html, /id="toast"[^>]*role="status"[^>]*aria-live="polite"/);
+  assert.match(css, /\.toast\s*\{[\s\S]{0,400}pointer-events:\s*none/);
+  // 首屏推荐 lane 收起时要把里面的数字擦掉，别留上一轮的残留
+  const rec = app.slice(app.indexOf('function renderRecommend'), app.indexOf('function renderChips'));
+  assert.match(rec, /els\.recFigure\.textContent = '—'/);
+  assert.match(rec, /els\.recBtn\.textContent = '推荐清理'/);
+});

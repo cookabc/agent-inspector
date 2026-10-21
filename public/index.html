@@ -393,6 +393,11 @@
 
 <div class="tooltip" id="tooltip" hidden></div>
 
+<!-- 操作结果的短暂提示。它存在的理由：抽屉要在动作完成的那一刻就关掉，
+     不能让"结果"和"关闭"互相等 —— 抽屉里那行消息一旦随抽屉一起消失，
+     用户就看不到到底移走了多少项。 -->
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
 <script type="module" src="app.js"></script>
 </body>
 </html>
