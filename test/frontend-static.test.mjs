@@ -161,3 +161,21 @@ test('toast 是个 aria-live 的独立元素，不靠抽屉承载结果', () => 
   assert.match(rec, /els\.recFigure\.textContent = '—'/);
   assert.match(rec, /els\.recBtn\.textContent = '推荐清理'/);
 });
+
+test('构成条按量出来的像素决定放不放文字，不按百分比也不靠估算', () => {
+  /* 实测 bug 两次：
+     ① 按百分比当阈值（floors[i] > 14）—— 同一个 21% 在宽屏是 200px、
+        在窄栏只有 89px，「索引与其他开销 135.5 MB」被裁掉半截。
+     ② 改成估算像素 —— 100px 的文字放 106px 的段里仍然溢出 2px。
+     最终做法：两个版本都渲进 DOM，量 scrollWidth，放不下的收起来。 */
+  const db = app.slice(app.indexOf('function renderDbBar'), app.indexOf('function renderComposition'));
+  const dbCode = db.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  // 两种写法都在
+  assert.match(dbCode, /data-variant="full"/);
+  assert.match(dbCode, /data-variant="size"/);
+  // 靠量出来的宽度做最终判断 —— 用**段自身**的 scrollWidth，不是 span 的
+  assert.match(dbCode, /seg\.scrollWidth > seg\.clientWidth/);
+  assert.doesNotMatch(dbCode, /fullEl\.scrollWidth > seg\.clientWidth/);
+  // 不许退回按百分比（注释里会提到旧写法，所以只看代码）
+  assert.doesNotMatch(dbCode, /floors\[i\] > 1[0-9]/);
+});

@@ -1768,6 +1768,7 @@ function renderDbBar() {
   ].filter((s) => s.bytes > 0);
 
   const W = 100;
+
   const pct = segs.map((s) => (total ? (s.bytes / total) * W : 0));
   const floors = pct.map(Math.floor);
   let rest = Math.round(W - floors.reduce((a, b) => a + b, 0));
@@ -1780,14 +1781,39 @@ function renderDbBar() {
     `<div class="dbbar-track">` +
     segs.map((s, i) => {
       const cls = s.tone === 'is-neutral' ? 'is-neutral' : (STATUS_CLASS_TONE[s.tone] || '');
-      const wide = floors[i] > 14;
-      const mid = floors[i] > 7;
+      /* 两种写法都渲进去，再按**量出来的**像素决定显示哪一版。
+         之前按百分比当阈值（floors[i] > 14），同一个 21% 在宽屏是 200px、
+         在窄栏只有 89px，于是「索引与其他开销 135.5 MB」被裁掉半截；
+         换成估算像素也不够 —— 实测 100px 的文字放 106px 的段里仍溢出 2px。
+         所以先全部渲染，量 scrollWidth 之后再把放不下的收起来。 */
+      const full = `${s.label} ${fmtBytes(s.bytes)}`;
       return `<div class="dbbar-seg ${cls}" style="width:${floors[i]}%"
         data-tip="${esc(s.tip || `${s.label} · ${fmtBytes(s.bytes)}`)}">
-        ${wide ? `<span>${esc(s.label)} ${fmtBytes(s.bytes)}</span>`
-               : mid ? `<span>${fmtBytes(s.bytes)}</span>` : ''}</div>`;
+        <span data-variant="full">${esc(full)}</span>
+        <span data-variant="size" hidden>${fmtBytes(s.bytes)}</span>
+      </div>`;
     }).join('') +
     `</div>`;
+
+  /* 量完再收：全文放得下就留全文，否则退成只印体积，体积也放不下就留空
+     （tooltip 里始终有完整信息）。屏上不会出现半截字。
+
+     判断用**段自身的 scrollWidth**：span 是 block，它的 scrollWidth 只量到
+     内容本身，而溢出还会来自内联盒的内边距/字距。实测「活跃会话 111.4 MB」
+     的 span.scrollWidth 是 100、段宽 106，看着放得下，段自己的 scrollWidth
+     却是 108 —— 差的那 2px 才是屏幕上被切掉的部分。 */
+  for (const seg of tEls.dbBar.querySelectorAll('.dbbar-seg')) {
+    const fullEl = seg.querySelector('[data-variant="full"]');
+    const sizeEl = seg.querySelector('[data-variant="size"]');
+    if (!fullEl || !sizeEl) continue;
+    fullEl.hidden = false;
+    sizeEl.hidden = true;
+    if (seg.scrollWidth > seg.clientWidth) {
+      fullEl.hidden = true;
+      sizeEl.hidden = false;
+      if (seg.scrollWidth > seg.clientWidth) sizeEl.hidden = true;
+    }
+  }
 }
 
 /** 库里到底装着什么 —— Cursor 只读，所以按键族摊开给你数清楚，而不是给个"不可清理"了事。 */
