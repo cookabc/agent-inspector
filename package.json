@@ -1,7 +1,7 @@
 {
   "name": "agent-inspector",
   "version": "2.0.0",
-  "description": "把 ZCode / Codex / Claude Code / Cursor 的落盘目录摊开看清楚：每一类占多少、删了会怎样，然后决定清掉哪些",
+  "description": "把 ZCode / Codex / Claude Code / Cursor / DeepSeek Harness 的落盘目录摊开看清楚：每一类占多少、删了会怎样，然后决定清掉哪些",
   "type": "module",
   "private": true,
   "license": "MIT",
@@ -14,6 +14,7 @@
     "codex",
     "claude-code",
     "cursor",
+    "deepseek",
     "coding-agent",
     "disk-usage",
     "cleanup",
@@ -26,7 +27,7 @@
   "scripts": {
     "start": "node server.mjs",
     "test": "node --experimental-sqlite --test",
-    "check": "node --check server.mjs && node --check public/app.js && node --check public/logic.js && npm test"
+    "check": "find . -name '*.mjs' -not -path './node_modules/*' -exec node --check {} + && node --check public/app.js && node --check public/logic.js && npm test"
   },
   "author": "cookabc"
 }

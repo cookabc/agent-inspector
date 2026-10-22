@@ -6,30 +6,28 @@
  * 于是把 44 MB 的项目副本归进了 unknown；同一个 pluginData 曾经四个名字。
  *
  * 所以这里不定逐条规则的细节，只锁两件事：
- *   1. 共享规则在四家给出同一个答案
+ *   1. 共享规则在每家给出同一个答案
  *   2. 每个 app 的 CATEGORIES 都覆盖自己 RULES 会输出的 id
+ *
+ * app 列表从注册表读，不在这里手写 —— 手写的话，新加一个工具时这些测试
+ * 会安静地跳过它，"所有 app 一致"就成了一句没人验证的话。
  */
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import claude from '../lib/apps/claude.mjs';
-import codex from '../lib/apps/codex.mjs';
-import cursor from '../lib/apps/cursor.mjs';
-import zcode from '../lib/apps/zcode.mjs';
+import { APPS } from '../lib/apps/index.mjs';
 import { SHARED_RULES } from '../lib/apps/common.mjs';
-
-const APPS = [claude, codex, cursor, zcode];
 
 /** 每个 app 的第一个目标 key —— 规则里 ctx.t 用它区分多根目录。 */
 const mainTarget = (app) => app.targets()[0].key;
 const ctxOf = (app) => ({ app: app.id, t: mainTarget(app) });
 
-test('共享规则在四家给出同一个答案', () => {
-  /* 这里锁的是"同一个路径在四家得到同一个分类"。
+test('共享规则在每家给出同一个答案', () => {
+  /* 这里锁的是"同一个路径在每家得到同一个分类"。
      dataBackupDir 曾经被排除在外（理由是 Claude 的 backups/ 更像配置副本），
-     结果四家对 backups/x.sqlite 给出三种答案：claude=configBackup、
+     结果各家对 backups/x.sqlite 给出三种答案：claude=configBackup、
      codex=database（扩展名规则抢在前面）、zcode/cursor=dataBackup。
-     测试绕开不一致，等于把 bug 写进了契约 —— 现在四家都过同一条规则。 */
+     测试绕开不一致，等于把 bug 写进了契约 —— 现在每家都过同一条规则。 */
   const cases = [
     ['config.toml.bak-1792466836243', 'configBackup'],
     ['.claude.json.backup.1792466836243', 'configBackup'],
@@ -49,7 +47,7 @@ test('共享规则在四家给出同一个答案', () => {
 
 test('Cursor 的两个目标语义不同: cli 侧 backups/ 是数据副本, ide 侧是未保存内容', () => {
   const cursor = APPS.find((a) => a.id === 'cursor');
-  // cli 侧（~/.cursor）跟其余三家一样
+  // cli 侧（~/.cursor）跟其余各家一样
   assert.equal(cursor.classify('backups/run/x.zip', 1, { app: 'cursor', t: 'cli' }), 'dataBackup');
   // ide 侧（App Support）的 Backups/ 是编辑器崩溃备份，有自己的一档
   assert.equal(cursor.classify('Backups/abc', 1, { app: 'cursor', t: 'ide' }), 'backups');

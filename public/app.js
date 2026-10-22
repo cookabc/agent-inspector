@@ -267,8 +267,14 @@ function applyApp() {
        收起而不是"显示空的"：一块说自己 0 B 的卡片，比不出现更让人困惑。 */
     state.byCat = new Map();
     try { localStorage.setItem(APP_KEY, ALL_ID); } catch {}
-    els.rootPath.textContent = '四个工具的会话';
+    els.rootPath.textContent = '各工具的会话';
     els.scanNote.textContent = `扫描用时 ${(state.scan.durationMs / 1000).toFixed(1)}s`;
+    /* 上面那句 selection.clear() 只清了数据，操作条是上一次渲染留下的 DOM ——
+       不清它，从某个工具带着勾选切过来，「全部」这一屏底部会挂着
+       "1 项 · 99 KB / 清理…"。而这一屏根本没有文件清单，那个按钮点下去
+       什么也删不掉。这一屏是只读的，操作条就不该存在。 */
+    renderActionbar();
+    renderTaskFoot();
     renderAppTabs();
     renderAllAll();
     flashSwitch();
@@ -331,7 +337,7 @@ function renderAppTabs() {
   const allTab = `<button type="button" class="app-tab app-tab-all ${isAll() ? 'is-on' : ''}"
       role="tab" id="apptab-${ALL_ID}" aria-selected="${isAll()}" tabindex="${isAll() ? '0' : '-1'}"
       aria-controls="single" data-app="${ALL_ID}"
-      title="四个工具的会话合成一张表，按最近使用排序（只读：要删请点进对应工具）">
+      title="各工具的会话合成一张表，按最近使用排序（只读：要删请点进对应工具）">
       <span class="app-tab-name">全部</span>
     </button>`;
 
@@ -940,7 +946,7 @@ function renderAll() {
   renderActionbar();
 }
 
-/* ── 「全部」：跨四个工具的会话一览 ──────────────────────── */
+/* ── 「全部」：跨工具的会话一览 ──────────────────────────── */
 
 const allState = { data: null, q: '', tools: new Set(), loading: false };
 
@@ -966,7 +972,7 @@ function hideAllView() {
 
 async function loadAllSessions(refresh = false) {
   allState.loading = true;
-  els.allLede.textContent = '正在汇总四个工具的会话…';
+  els.allLede.textContent = '正在汇总各工具的会话…';
   try {
     const res = await fetch('/api/tasks/all' + (refresh ? '?refresh=1' : ''));
     const data = await res.json();
@@ -988,7 +994,7 @@ function renderAllSessions() {
   if (!d) return;
 
   els.allLede.innerHTML =
-    `四个工具一共 <b>${d.total.toLocaleString()}</b> 个会话、<b>${fmtBytes(d.bytes)}</b> 正文，` +
+    `${d.tools.length} 个工具一共 <b>${d.total.toLocaleString()}</b> 个会话、<b>${fmtBytes(d.bytes)}</b> 正文，` +
     `分布在 <b>${d.groups.length}</b> 个文件夹里。按最近使用排序。` +
     `<span class="all-note">这一屏只读 —— 要清理请点进对应的工具。</span>`;
 
@@ -1602,7 +1608,7 @@ document.addEventListener('keydown', (e) => {
   }
 
   /* tablist 的键盘模型：左右箭头在标签之间走，Home/End 到两头。
-     走的同时就切换（这是"自动激活"模式，四个工具切换没有副作用，
+     走的同时就切换（这是"自动激活"模式，各家工具切换没有副作用，
      不需要用户再按一次回车确认）。roving tabindex 让 Tab 只停在
      当前选中的那一个上。 */
   if (e.target.matches?.('#appTabs [role="tab"]')) {
@@ -2039,9 +2045,12 @@ const visibleTasks = () => {
   return list;
 };
 
-const fileBasedNote = (who) =>
-  `${icon('doc')}<div>${esc(who)} 的会话正文就是 <code>projects/</code> 下的 <code>.jsonl</code> 文件本身，` +
-  `没有数据库行可删。这里勾选后走<b>文件清理</b>那条线：默认进废纸篓，可随时恢复。</div>`;
+/* 为什么这家只能按文件删 —— 文案由适配器给（每家正文放在哪不一样），
+   这里只负责摆上去。缺了就退回一句通用的，不按 app 名硬编码。 */
+const fileBasedNote = (d) =>
+  `${icon('doc')}<div>${d?.fileBasedNote ||
+    `${esc(d?.appLabel || '这个工具')} 的会话正文就是文件本身，没有数据库行可删。` +
+    `勾选后走<b>文件清理</b>那条线：默认进废纸篓，可随时恢复。`}</div>`;
 
 function renderTasks() {
   const d = taskState.data;
@@ -2072,7 +2081,7 @@ function renderTasks() {
     // 为什么这里没有可勾的东西 —— 否则人会以为文件清单里那堆 .jsonl 失踪了。
     // 后端报的读取问题也要上屏："库打不开"与"库是空的"必须能分清。
     const notes = [];
-    if (d?.fileBased) notes.push(fileBasedNote(d.appLabel));
+    if (d?.fileBased) notes.push(fileBasedNote(d));
     if (d?.problems?.length) {
       notes.push(`${icon('alert')}<div>${d.problems.map((p) => esc(p)).join('<br>')}</div>`);
     }
@@ -2099,14 +2108,26 @@ function renderTasks() {
   const untitledNote = d.untitled
     ? `其中 <b>${d.untitled}</b> 条 Cursor 没有生成标题（库里没有 name 也没有改动摘要），按 ID 显示。`
     : '';
+  /* 上面那根条按 state 分段，而"能不能清"看的是 reason —— 两个轴。
+     Cursor 与 DeepSeek 的活跃会话也给勾（删它们是自洽的），此时条上只有
+     「活跃会话」四个字，看起来像"一个都不能动"。这里把可清的数量明说出来，
+     免得人去条上找一个不存在的"可清理"段。只在"全部可清"或"部分可清"时补，
+     全都不清时不啰嗦（那种情况条上的分段本身就说清了）。 */
+  const purgeable = d.tasks.filter(isPurgeable).length;
+  const purgeNote = !d.readOnly && purgeable > 0
+    ? (purgeable === d.totals.count
+      ? `这 ${purgeable} 条都可以清 —— 条上按生命周期分段，不是按能不能清。`
+      : `其中 <b>${purgeable}</b> 条可以清（勾选框没灰的就是）。`)
+    : '';
   tEls.lede.innerHTML = d.readOnly
     ? `${esc(who)} 的会话库 <b>${fmtBytes(d.db.total)}</b>，读到 <b>${d.totals.count}</b> 个会话、` +
       `<b>${fmtBytes(text)}</b> 的正文。下面按键族摊开这 ${fmtBytes(d.db.total)} 到底是怎么分的。` +
       (untitledNote ? ` ${untitledNote}` : '')
     : d.fileBased
-      ? `${esc(who)} 的会话正文就是 <b>${d.db.bodies?.count || 0}</b> 个 .jsonl 文件，` +
+      ? `${esc(who)} 的会话正文就是 <b>${d.db.bodies?.count || 0}</b> 个正文文件，` +
         `共 <b>${fmtBytes(d.db.bodies?.bytes || 0)}</b>；本机没有会话数据库 —— 清理走文件那条线。` +
-        `读到 <b>${d.totals.count}</b> 个会话。`
+        `读到 <b>${d.totals.count}</b> 个会话。` +
+        (purgeNote ? ` ${purgeNote}` : '')
       : d.db.bodies
         ? `${esc(who)} 的会话分两处存：索引库 <b>${fmtBytes(d.db.total)}</b>，` +
           `正文文件 <b>${fmtBytes(d.db.bodies.bytes)}</b>（<b>${d.db.bodies.count}</b> 个 rollout 文件）。` +
@@ -2125,7 +2146,7 @@ function renderTasks() {
     tEls.warn.innerHTML = `${icon('key')}<div><b>${esc(who)} 的会话只读</b>：${esc(d.readOnlyNote || '这个工具的会话数据不提供写路径。')}</div>`;
   } else if (d.fileBased) {
     tEls.warn.className = 'app-warn is-ok';
-    tEls.warn.innerHTML = fileBasedNote(who);
+    tEls.warn.innerHTML = fileBasedNote(d);
   } else if (d.app.running) {
     tEls.warn.className = 'app-warn';
     tEls.warn.innerHTML =
@@ -2171,13 +2192,18 @@ function renderDbBar() {
   const segs = [
     ...byState,
     {
-      label: bodies ? '索引库与其余开销' : '索引与其他开销',
+      /* 正文即文件的工具（Claude、DeepSeek）没有索引库，分母就是那堆正文文件 ——
+         叫它"索引与其他开销"是在描述一个不存在的东西。它们的余量另有来源：
+         DB 之外、也没被任何会话认领的文件。 */
+      label: d.fileBased ? '未归入会话的文件' : (bodies ? '索引库与其余开销' : '索引与其他开销'),
       bytes: Math.max(0, total - used), tone: 'is-neutral', key: 'overhead',
       // 这一块是技术性的：库文件不只有正文。名字写在块上，解释挂在 tooltip 里，
       // 不占版面。
-      tip: bodies
-        ? '索引库文件里不属于任何会话正文的部分 —— thread_items 的索引、WAL、已释放的空页与页对齐。删掉会话后它才会跟着缩。'
-        : '数据库文件里不属于任何任务正文的部分 —— 索引、已释放的空页、页对齐等。删掉任务后它才会跟着缩。',
+      tip: d.fileBased
+        ? '这个工具没有会话库 —— 分母是磁盘上的正文文件。这一段是既不属于任何会话、也不在统计里的部分。'
+        : bodies
+          ? '索引库文件里不属于任何会话正文的部分 —— thread_items 的索引、WAL、已释放的空页与页对齐。删掉会话后它才会跟着缩。'
+          : '数据库文件里不属于任何任务正文的部分 —— 索引、已释放的空页、页对齐等。删掉任务后它才会跟着缩。',
     },
   ].filter((s) => s.bytes > 0);
 
@@ -2397,6 +2423,16 @@ function renderTaskFoot() {
   const { count, bytes } = taskSelTotals();
   // 只读的 app 连"清理"这个入口都不摆 —— 摆了也是必然被拒的按钮
   tEls.foot.hidden = !d || d.readOnly || count === 0;
+  /* 这一栏的数字也要擦干净，不能只靠 hidden：从某个工具带着勾选切到「全部」，
+     整块虽然 display:none 了，里面的 "已选 1 个会话 · 99 KB" 还留在 DOM 里。
+     下一次它被放出来（切回同一个工具）之前，读屏与复制文本都能拿到这句旧话。 */
+  if (!d) {
+    tEls.tfCount.textContent = '0';
+    tEls.tfBytes.textContent = fmtBytes(0);
+    tEls.purgeBtn.textContent = '清理…';
+    tEls.purgeBtn.title = '';
+    return;
+  }
   tEls.tfCount.textContent = count.toLocaleString();
   tEls.tfBytes.textContent = fmtBytes(bytes);
   tEls.purgeBtn.textContent = d?.fileBased ? '按文件清理…' : '清理…';

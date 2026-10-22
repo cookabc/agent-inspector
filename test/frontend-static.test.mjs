@@ -325,9 +325,19 @@ test('两个抽屉的确认串都是"输对才亮"，不是"点了才报错"', (
   assert.match(app, /tEls\.go\.disabled = tEls\.word\.value !== TASK_PURGE_WORD/);
 });
 
+test('切到「全部」时要清掉上一个工具留下的操作条', () => {
+  /* 实测 bug：selection.clear() 只清了数据，操作条是上一次渲染留下的 DOM。
+     从 DeepSeek 带着一条勾选切到「全部」，底部会挂着 "1 项 · 99 KB / 清理…" ——
+     而这一屏根本没有文件清单，那个按钮点下去什么也删不掉。 */
+  const applyApp = app.slice(app.indexOf('function applyApp()'), app.indexOf('function renderAllAll()'));
+  assert.match(applyApp, /if \(isAll\(\)\) \{/, '找不到「全部」分支');
+  const branch = applyApp.slice(0, applyApp.indexOf('return;'));
+  assert.match(branch, /renderActionbar\(\)/, '「全部」分支要重画操作条，否则会留着别人的勾选');
+});
+
 test('跨工具的「全部」视图是只读的，且不污染单 app 视图', () => {
   /* 这一屏回答的是"我刚才在哪个工具里干活" —— 各工具视图回答不了。
-     只读是刻意的：四家的删除路径完全不同（事务+VACUUM / 文件 / 可达性分析），
+     只读是刻意的：各家的删除路径完全不同（事务+VACUUM / 文件 / 可达性分析），
      混进一次删除请求里没有统一的闸。 */
   assert.match(app, /const ALL_ID = 'all'/);
   assert.match(app, /const isAll = \(\) => state\.appId === ALL_ID/);
@@ -353,8 +363,8 @@ test('工具标识色不能借用状态色', () => {
 
      判据：工具标识只能用 --tool-* 这组变量，不许出现 --st-*。 */
   // 只取这四个变量的声明行：它们的右侧不许出现状态色
-  const decls = css.split('\n').filter((l) => /--tool-(zcode|codex|cursor|claude):/.test(l));
-  assert.ok(decls.length >= 8, `四色 × 浅/深两套，应有 8 条声明，实际 ${decls.length}`);
+  const decls = css.split('\n').filter((l) => /--tool-(zcode|codex|cursor|claude|dsh):/.test(l));
+  assert.ok(decls.length >= 10, `五色 × 浅/深两套，应有 10 条声明，实际 ${decls.length}`);
   for (const l of decls) assert.doesNotMatch(l, /--st-/, `工具色用了状态色：${l.trim()}`);
   assert.match(decls[0], /--tool-zcode:/);
 
@@ -365,6 +375,37 @@ test('工具标识色不能借用状态色', () => {
   // 深色下要单独提亮，否则浅色那组在深底上掉到 3:1 左右
   const darkTool = css.split('--tool-zcode:  #6ba5ff').length - 1;
   assert.ok(darkTool >= 2, '深色两套（media + data-theme）都要覆盖');
+
+  /* 每加一个工具，新色必须与已有色都拉得开 —— 只靠"看着不一样"不够。
+     实测第一次挑的紫在深色下与 codex 只差 ΔE 22（现有组内最小 28），
+     两个色签并排就分不出来。判据：每个工具色在浅/深两套里，
+     与其余色的 CIELAB 距离都不低于 30。 */
+  const lab = (hex) => {
+    const rgb = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    const [r, g, b] = rgb;
+    const f = (v) => (v > 0.008856 ? Math.cbrt(v) : 7.787 * v + 16 / 116);
+    const X = f((r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047);
+    const Y = f(r * 0.2126 + g * 0.7152 + b * 0.0722);
+    const Z = f((r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883);
+    return [116 * Y - 16, 500 * (X - Y), 200 * (Y - Z)];
+  };
+  const dE = (a, b) => { const [p, q] = [lab(a), lab(b)]; return Math.hypot(p[0]-q[0], p[1]-q[1], p[2]-q[2]); };
+
+  const ids = ['zcode', 'codex', 'cursor', 'claude', 'dsh'];
+  for (const scope of ['light', 'dark']) {
+    const pick = (id) => {
+      // 浅色取第一条声明；深色取 data-theme 块里那条（两套深色值相同，取哪条都行）
+      const all = [...css.matchAll(new RegExp(`--tool-${id}:\\s*(#[0-9a-f]{6})`, 'gi'))].map((m) => m[1]);
+      return scope === 'light' ? all[0] : all[all.length - 1];
+    };
+    for (let i = 0; i < ids.length; i += 1) {
+      for (let j = i + 1; j < ids.length; j += 1) {
+        const d = dE(pick(ids[i]), pick(ids[j]));
+        assert.ok(d >= 30, `${scope} 下 ${ids[i]} 与 ${ids[j]} 只差 ΔE ${d.toFixed(0)}，色签会分不出来`);
+      }
+    }
+  }
 });
 
 test('次要文字在三种浅色底上都过 AA', () => {

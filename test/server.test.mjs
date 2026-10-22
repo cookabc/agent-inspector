@@ -375,7 +375,9 @@ test('Cursor 不再被静态拒绝：缺确认串时报的是确认串，不是"
 
 test('every history panel scans and reports its own shape', async t => {
   const f = await fixture(t);
-  for (const app of ['zcode', 'codex', 'claude', 'cursor']) {
+  // 从注册表读，不手写 —— 手写的列表会让新加的工具悄悄逃过这轮检查
+  const { APPS } = await import('../lib/apps/index.mjs');
+  for (const app of APPS.map((a) => a.id)) {
     const { status, body } = await f.get('/api/tasks?app=' + app);
     assert.equal(status, 200, app);
     assert.ok(Array.isArray(body.tasks), app);

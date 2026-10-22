@@ -1,6 +1,6 @@
 # Agent Inspector
 
-把这台机器上四个 coding agent 的落盘目录摊开看清楚：每一类东西占多少、删了会怎样，然后决定清掉哪些。
+把这台机器上几个 coding agent 的落盘目录摊开看清楚：每一类东西占多少、删了会怎样，然后决定清掉哪些。
 两件事一起做 —— **浏览**（这里到底都放了些什么）和**清理**（哪些能删、删了会怎样）。
 
 | 工具 | 扫哪里 | 能清到什么程度 |
@@ -9,12 +9,13 @@
 | Codex | `~/.codex` | 文件 + 会话库里的**按线程删除**；正文是磁盘上的 rollout 文件，那部分归文件清单 |
 | Claude Code | `~/.claude`、`~/.claude.json` | 文件 —— 它的会话正文本身就是 `.jsonl`，没有库行可删 |
 | Cursor | `~/.cursor`、`~/Library/Application Support/Cursor` | **按会话删除**（连同只被它引用的工具结果 blob，事务 + VACUUM，先备份）+ **孤儿会话回灌**（只新增，不覆盖） |
+| DeepSeek Harness | `~/.dsh` | 文件 —— 一个会话就是一个目录，正文是里面的 `session.v4.jsonl.zstd` |
 
 还额外做两件这些工具自己都没做的事：
 
 1. 把界面上**早已删掉、正文却还留在磁盘上**的历史会话清干净。
    ZCode 的"删除任务"只是把 `tasks.deleted` 置 1，一行正文都没少。
-2. 把四个工具的会话汇到一张表里，回答「**我刚才在哪个工具里干活**」——
+2. 把各工具的会话汇到一张表里，回答「**我刚才在哪个工具里干活**」——
    各工具视图只能回答"这个工具里有什么"。这一屏只读，要删请点进对应工具。
 
 Cursor 是一个反向的例子：会话列表只认 `state.vscdb` 里的 `composerHeaders`，而正文的
@@ -29,7 +30,7 @@ Cursor 是一个反向的例子：会话列表只认 `state.vscdb` 里的 `compo
 > 换一台机器必然不同，页面上显示的才是你这台机器的实时数据。
 
 <p align="center">
-  <img src="docs/images/overview.png" width="880" alt="首屏：header 最左是「全部」标签，其后四个工具；左边是当前工具的磁盘占用，右边两条清理线（文件与日志、历史会话）；下面文件清单按「会话是否还在」分成三块，右侧是会话管理面板，每个分类都标注删了会怎样">
+  <img src="docs/images/overview.png" width="880" alt="首屏：header 最左是「全部」标签，其后各个工具；左边是当前工具的磁盘占用，右边两条清理线（文件与日志、历史会话）；下面文件清单按「会话是否还在」分成三块，右侧是会话管理面板，每个分类都标注删了会怎样">
 </p>
 
 ## 环境
@@ -51,12 +52,12 @@ cd zcode-inspector
 node server.mjs
 ```
 
-浏览器会自动打开 <http://127.0.0.1:4173>，四个工具排成页面顶部的一排标签。
+浏览器会自动打开 <http://127.0.0.1:4173>，各工具排成页面顶部的一排标签。
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
 | `--port` | `4173`（或环境变量 `PORT`） | 换端口。被占时会直接告诉你占它的是谁、怎么换 |
-| `--app` | 全部四个 | 只装某一个工具的分类表，例如 `--app codex` |
+| `--app` | 全部 | 只装某一个工具的分类表，例如 `--app codex` |
 | `--root` | 各工具自己的目录 | 换审计目标，接受 `~/...` 或绝对路径；只作用于第一个目标，并且隐含 `--app zcode` |
 | `--no-open` | — | 不自动打开浏览器 |
 | `-h`, `--help` / `-v`, `--version` | — | 打印用法 / 版本号后退出，不起服务 |
@@ -69,7 +70,7 @@ node server.mjs
 
 ## 它怎么判断
 
-每个工具一张规则表，在 `lib/apps/` 里各占一个文件（`zcode.mjs`、`codex.mjs`、`claude.mjs`、`cursor.mjs`），
+每个工具一张规则表，在 `lib/apps/` 里各占一个文件（`zcode.mjs`、`codex.mjs`、`claude.mjs`、`cursor.mjs`、`dsh.mjs`），
 共用 `common.mjs` 里的匹配器。规则自上而下，第一个命中的说了算。
 每个分类必须回答四个问题：
 
@@ -98,24 +99,24 @@ node server.mjs
 
 **规则表刻意不做兜底猜测。** `cli/plugins/` 曾经被一条过宽的规则归进"缓存"，
 差点把插件自己的持久数据当缓存推荐删掉。现在读不懂的一律落在 `unknown`，不进默认勾选
-（这台机器上四个工具加起来一万七千多个文件，`unknown` 只有 68 个，占 0.4% ——
+（这台机器上五个工具加起来一万七千多个文件，`unknown` 只有 68 个，占 0.4% ——
 而且都是 Electron 自建的状态文件（`Cookies`、`shared_proto_db/`、`VideoDecodeStats/`）
 这类真正读不懂的东西，不是漏了规则）。
 
 > 这条判据出过一次错，值得记下来：`~/.codex/backups/` 里躺着 44 MB 的项目 zip，
 > 一度整批落进 `unknown`。原因是 `backups/` 这条规则只在 Claude 那一份里写了，
-> 另三家只有靠后缀匹配的 `.bak` 规则 —— 同一个形态在四张表里漂成了两种答案。
+> 另几家只有靠后缀匹配的 `.bak` 规则 —— 同一个形态在不同表里漂成了两种答案。
 > 现在跨 app 同形的规则收在 `lib/apps/common.mjs` 的 `SHARED_RULES` 里，
-> 并有 `test/classification.test.mjs` 盯着「四家对同一条共享规则是否给出同一个答案」。
+> 并有 `test/classification.test.mjs` 盯着「各家对同一条共享规则是否给出同一个答案」。
 > 顺带分出了 `dataBackup`（完整数据副本）与 `configBackup`（配置副本）两档：
 > 前者里面可能是别人项目的 zip，说成"配置备份"是替它撒谎。
 >
-> 修这个 bug 时又踩了一次同一坑：规则写对了，但**插入的位置**四家不同。
+> 修这个 bug 时又踩了一次同一坑：规则写对了，但**插入的位置**各家不同。
 > Codex 的 `.sqlite` 规则排在 `dataBackup` 前面，于是
 > `backups/2026/state_5.sqlite` 在 Codex 里被判成"索引与历史库"（请勿删除），
 > 在 ZCode 里判成"数据备份"。同一路径、两个结论。
 > 所以共享规则不只是"同一份代码"，还得**在同一位置**：现在 `configBackupFile`
-> 与 `dataBackupDir` 在四张表里都紧跟在 `junk` 之后，排在所有保护类规则之前。
+> 与 `dataBackupDir` 在每张表里都紧跟在 `junk` 之后，排在所有保护类规则之前。
 > 备份目录里的 `.sqlite` 是副本，锁成"请勿删除"是假锁。
 
 要加一类，在对应工具的规则表里加一条即可 —— 匹配是纯函数，加完刷新页面就能看到。
@@ -123,21 +124,21 @@ node server.mjs
 
 ## 界面
 
-工具选择在页面 header 上：四个 Agent 按名称字母顺序排成一排，每个标签写着它占多少、
+工具选择在页面 header 上：各 Agent 按名称字母顺序排成一排，每个标签写着它占多少、
 装没装（没装的那一个压暗，但仍然可以点进去确认它真的没落盘）。选中谁，整页就只读谁的数据；
 这个选择记在 localStorage 里。
 
-### 「全部」：跨四个工具的会话一览
+### 「全部」：跨工具的会话一览
 
 最左边还有一个「全部」。它不叠分类表 —— **分类与清理仍然是每个工具各管各的**，
 那件事叠在一起只会骗人。它只做一件各工具视图做不了的事：
 
 > 我刚才在哪个工具里干活？
 
-四个工具一共多少会话、多少正文，按文件夹分组、组内按最近使用降序，每行前面
+各工具一共多少会话、多少正文，按文件夹分组、组内按最近使用降序，每行前面
 一个色签标明它来自哪个工具。上方一排筛选钮给你按工具筛，右上角写明各自贡献了多少。
 
-**只读。** 这一屏不给勾选、不给删除：四家的删除路径完全不同（事务 + VACUUM /
+**只读。** 这一屏不给勾选、不给删除：各家的删除路径完全不同（事务 + VACUUM /
 删文件 / 可达性分析），把两家的会话混进一次删除请求里，服务端那四道闸根本没法统一。
 要删就点进对应的工具。
 
@@ -147,7 +148,7 @@ node server.mjs
 
 ### 总览与清理
 
-首屏是一张卡：左边当前工具的总字节数，右边能清掉什么，底下一行四个工具加起来的总量。
+首屏是一张卡：左边当前工具的总字节数，右边能清掉什么，底下一行各工具加起来的总量。
 这两件事本来是一句话的两半（左边是分母，右边是分子），拆成两张卡反而要人自己接起来。
 
 ### 可以清理的
@@ -227,6 +228,11 @@ Cursor 的清理方式与三家都不同，见下面「Cursor：为什么可以�
 - **Cursor** —— 正文以键值对存在 `state.vscdb`，键之间没有外键可依。按会话删除，
   并**连带删掉只被这些会话引用的工具结果 blob**（做法见下面「Cursor：为什么可以按会话删」）。
   行上展开详情会写明「删除会连带回收多少」，抽屉里把正文与连带量分开列。
+- **DeepSeek Harness** —— 一个会话就是一个目录：`sessions/<工作区>/session-<id>/`，
+  正文是里面的 `session.v4.jsonl.zstd`。没有库行可删，勾选后交给文件清理。
+  元数据（标题、cwd、步数、模型）来自 `storages/session_projcache/` 下的投影缓存 ——
+  **列表不需要解压任何东西**；只有投影缺失时才回落到解压正文开头一段
+  （见下面「DeepSeek Harness：为什么列表不用解压」）。
 
 面板做的事：
 
@@ -239,6 +245,45 @@ Cursor 的清理方式与三家都不同，见下面「Cursor：为什么可以�
   提供「复制会话 ID」和「在文件清单中定位」。整行仍然是勾选，三角单独负责展开。
 - **空跑核对**：不放心就先跑一次只读预览，它会把**实际会删掉的行数**逐库逐表列出来。
   这一步不开事务、不加任何写锁，**应用开着跑也绝对安全**。
+
+### DeepSeek Harness：为什么列表不用解压
+
+它的正文是 **zstd 压缩的 JSONL**，一条会话动辄几百 KB 到几 MB。如果每次打开面板都解一遍，
+光是列表就要几秒 —— 而列表只需要标题、时间、模型这几个字段。
+
+好在 Harness 自己也要解决同一个问题：它把每个会话的元数据**投影**成一份未压缩的 JSON，
+放在 `storages/session_projcache/sessions/<会话 id>.json`。这份投影里有
+`title`、`identity.cwd`、`identity.createdAt`、`sessionStats.steps`、`modelSelection.lastUsed` ——
+列表要的东西全在里面，一个字节都不用解压。
+
+所以读取分两条路：
+
+| 情况 | 走哪条 | 代价 |
+|---|---|---|
+| 有投影缓存（正常） | 直接读那份 JSON | 几毫秒 |
+| 没有投影（会话建了但没在界面上渲染过） | `zlib.zstdDecompressSync` 解正文，只取前 400 行 | 一条几十毫秒 |
+| 解不开（文件损坏、老 Node） | 不列标题，用会话 id 占位 | 0 |
+
+第三条路是刻意的：**解不开正文不等于会话不存在**。体积照样从 `stat` 来，
+标题退回 id，界面上不会出现"这个工具没有会话"这种假话。
+
+zstd 用的是 Node 内置的 `zlib.zstdDecompressSync`（22.15 / 23.8 起有），
+所以这条兜底路径没有引入任何依赖。更老的 Node 上它直接不可用 —— 列表仍然完整，
+只是没有标题，`problems` 里会说明原因。
+
+归档与置顶状态不在投影里，在 `storages/workspace.json` 的
+`global.archivedSessionIds` / `global.pinnedSessionIds`。这份文件读不到时，
+所有会话按「活跃、未置顶」处理 —— 判不了就不猜。
+
+**活跃会话也给勾。** 这和 Claude Code 的做法不同，理由是两家的"删"不是一回事：
+Claude 的 `.jsonl` 是唯一的正文，删掉活跃会话会让索引指向不存在的文件；
+Harness 的一个会话是自包含的目录（正文、锁、投影各归各位），删掉不留任何悬空引用。
+用户明确勾了哪一条，就是在明确说"这段对话我不要了" —— 不给勾选反而是替人做主。
+这与 Cursor 的 `manual` 是同一条理由。
+
+删掉正文后，目录里那个 0 字节的 `session.lock` 会留下。它归在「会话锁文件」一类，
+可以在文件清单里一起清 —— 但**默认不在推荐范围里**：它省不出任何空间，
+而 Harness 正在运行时删锁，等于告诉它"这个会话没人用"，两个进程可能同时写同一份正文。
 
 ### Cursor：为什么可以按会话删
 
@@ -393,15 +438,16 @@ grep -RIn --exclude-dir=.git -E '<某个内部指标名>' ~/.zcode/cli/exec
 
 ```
 server.mjs             HTTP + API + 静态文件；启动前检查 node:sqlite 是否可用
-lib/apps/index.mjs     四个工具的注册表，扫描顺序与能力位都从这里出
+lib/apps/index.mjs     各工具的注册表，扫描顺序与能力位都从这里出
 lib/apps/<id>.mjs      每个工具的 targets、分类表、规则、进程名、会话判据
 lib/apps/common.mjs    makeClassify 与共享的分类语义
 lib/scan.mjs           逐目标遍历目录，只 stat；孤儿判定在这里挂会话判据
 lib/tasks.mjs          会话库读取/清理的分发 + 能力位 + 静态能力判断 + 跨工具聚合（aggregateSessions）
-lib/tasks-shape.mjs    四个工具共用的会话行契约：状态枚举、中性默认、byState 与排序（叶子模块）
+lib/tasks-shape.mjs    各家共用的会话行契约：状态枚举、中性默认、byState 与排序（叶子模块）
 lib/tasks-zcode.mjs    ZCode：db.sqlite + tasks-index，按任务删
 lib/tasks-codex.mjs    Codex：三库按线程删，正文文件交给文件线
 lib/tasks-claude.mjs   Claude Code：按文件的历史视图
+lib/tasks-dsh.mjs      DeepSeek Harness：投影缓存优先，zstd 解压只作兜底
 lib/tasks-cursor.mjs   Cursor：库构成与按键族统计
 lib/cursor-recover.mjs Cursor：孤儿会话扫描与回灌（只新增，不删）
 lib/cursor-purge.mjs   Cursor：按会话删 + 可达性分析决定连带哪些 blob
@@ -413,15 +459,16 @@ public/logic.js        纯函数（体积格式化、可选中判定）—— �
 public/app.js          渲染、勾选、清理流程
 test/server.test.mjs   临时 HOME 中的 HTTP 删除边界回归测试
 test/codex-tasks.test.mjs  Codex 三库夹具：空跑、跨库删除、备份、残骸交接
-test/history-panels.test.mjs  四个工具的会话面板：行与 byState 的同一份契约、能力位、Cursor 反查、并发一致性
+test/history-panels.test.mjs  各工具的会话面板：行与 byState 的同一份契约、能力位、Cursor 反查、并发一致性
 test/cursor-recover.test.mjs 孤儿会话：扫描、空跑、回灌、幂等、服务端确认闸门
 test/cursor-purge.test.mjs  Cursor 按会话删：独占 blob 判定、四条引用通道、共享不误删、幂等
+test/dsh-tasks.test.mjs  DeepSeek：投影优先不解压、兜底只认用户消息、bodyRel 对得上文件清单
 test/classification.test.mjs  跨 app 分类一致性：共享规则同答、backups/ 不被当成缓存、分类表覆盖规则输出
 test/logic.test.mjs    fmtBytes 的进位边界：任何体积都不印出 1024
 test/frontend-static.test.mjs  前端静态检查：tablist 键盘模型、抽屉焦点陷阱、状态归零、工具色不借状态色
 ```
 
-### 四个工具的共同契约
+### 各工具的共同契约
 
 各家的会话数据形态完全不同（SQLite 表、`.jsonl` 文件、键值库），取数方式该差就让它差；
 但**会话行长什么样、统计怎么算**是同一套，都在 `lib/tasks-shape.mjs` 里：
@@ -436,16 +483,18 @@ test/frontend-static.test.mjs  前端静态检查：tablist 键盘模型、抽�
   所以一条会话可以是 `state: 'active'` + `reason: 'wsMissing'`。
 - **`byState` 条目恒为 `{state, count, bytes}`**：键取自 `state`（不是 `reason`，否则筛选钮点了
   永远筛不出东西），`bytes` 只累加行自身的 `bytes`，且各段之和等于 `totals.bytes`。
-- **能力位由后端单源给出**：`readOnly`（不能按行删 —— 现在四家都是 false，但保留这个位，
+- **能力位由后端单源给出**：`readOnly`（不能按行删 —— 现在各家都是 false，但保留这个位，
   将来加工具时仍然需要表达"只能看"）、`readOnlyNote`（只读理由）、
-  `fileBased`（正文就是文件：Claude Code）、`canRecover`（有受控回灌路径：只有 Cursor）。
+  `fileBased`（正文就是文件：Claude Code、DeepSeek Harness）、
+  `fileBasedNote`（每家正文放在哪、为什么只能按文件删 —— 由适配器写，前端不按 app 名硬编码）、
+  `canRecover`（有受控回灌路径：只有 Cursor）。
   `/api/scan` 的 app 视图也带 `canRecover`，界面在会话数据到达之前就能决定面板显隐。
 - **排序统一**：体积降序 → 最后使用降序 → id 升序。
 
 ### 验证
 
-运行 `npm run check` 检查语法并执行回归测试（当前 158 个）。测试只使用临时扫描目录和临时 HOME，
-不读取真实会话数据，也不操作真实废纸篓。它覆盖：四个工具的扫描与历史面板、
+运行 `npm run check` 检查语法并执行回归测试（当前 178 个）。测试只使用临时扫描目录和临时 HOME，
+不读取真实会话数据，也不操作真实废纸篓。它覆盖：各工具的扫描与历史面板、
 删除边界（根目录 / 绝对路径 / `..` / 符号链接 / 大小写别名 / 单文件目标 / 未知 app）、
 批量请求的原子性、废纸篓往返，以及"Claude Code 的按行删除在任何进程检查之前就被拒"
 （Cursor 以前也在这条线上，现在它有自己的路径与闸门）。
@@ -456,11 +505,19 @@ Cursor 清理那份夹具盯的是"删错方向"这种最坏的缺陷：**一个
 Codex 那份夹具把三个库都建出来 —— 其中两个**没有** `threads` 表，逐库删除必须跳过它们；
 它同时验证"行删完、正文文件还在，并以下一个编号出现在残骸里"这条交接。
 另外几份盯着"不会崩、但会说谎"的缺陷：`classification.test.mjs` 确认跨 app 同形的
-规则（`.bak` 副本、顶层 `backups/`）在四家里给出同一个答案，且每个 app 的分类表覆盖
+规则（`.bak` 副本、顶层 `backups/`）在各家给出同一个答案，且每个 app 的分类表覆盖
 自己规则可能产出的每个 id；`logic.test.mjs` 确认体积格式化在任何进位边界上都印不出
 `1024.0 MB` 这种不存在的写法；`frontend-static.test.mjs` 不跑浏览器（零依赖是硬规矩），
 只从源码里确认 tablist 的键盘模型、抽屉的焦点陷阱、以及切工具时那几处状态归零
 没有被后续改动悄悄删掉 —— 这类缺陷不会报错，只会让键盘和读屏用户走进死路。
+它同时用 CIELAB 距离约束工具标识色：任意两色在浅/深两套下 ΔE 都 ≥ 30，
+免得新加一个工具时挑了个"看着不一样、并排却分不出"的色（第一次挑的紫与 codex
+在深色下只差 ΔE 22）。
+`dsh-tasks.test.mjs` 盯的是"投影优先"这条约定本身：正文故意写成不合法的 zstd，
+只要它被解压测试就会红；反过来，投影缺失时必须能靠解压拿到标题，且只认
+`source.kind === 'user'` 的那条消息（系统注入的审批通知不算提问）。
+还有一条锁路径：`bodyRel` 必须能在该 app 自己扫出来的文件清单里找到 ——
+差一层目录就会变成"勾上的会话在文件清单里找不到对应正文"。
 CI 在 Linux、macOS 及 Node 22.5 / 24 / 26 上执行；Linux 跳过 macOS 废纸篓测试。
 
 ### 为什么要有 worker

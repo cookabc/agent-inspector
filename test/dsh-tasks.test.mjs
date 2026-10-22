@@ -1,0 +1,343 @@
+/**
+ * DeepSeek Harness 的会话读取。
+ *
+ * 它和别家最不一样的两点，正好也是最容易坏的两点：
+ *
+ *   ① 元数据在未压缩的投影缓存里，不在正文里 —— 所以正常情况下**不需要解压**。
+ *      但投影可能缺（会话建了、没在界面上渲染过），那时必须回落到解压正文，
+ *      而且只读开头一段。
+ *   ② 一个会话是一个目录。删了正文，那个空的 session.lock 会留下 ——
+ *      这件事必须在界面上说清楚，否则人会以为"删了还在"。
+ *
+ * 这些测试都在临时 HOME 下跑，绝不碰真实的 ~/.dsh。
+ */
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import zlib from 'node:zlib';
+import { scanTasks } from '../lib/tasks-dsh.mjs';
+import dshApp, { sessionIdOf } from '../lib/apps/dsh.mjs';
+
+const classify = dshApp.classify;
+
+const WS = '/tmp/agent-inspector-ws-test';
+const SLUG = '--tmp-agent-inspector-ws-test--';
+
+/** 造一个 ~/.dsh。spec.sessions 里的每一项要么给 projection，要么给 events。 */
+async function makeRoot(t, spec = {}) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-inspector-dsh-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+
+  await fs.mkdir(path.join(root, 'sessions', SLUG), { recursive: true });
+  await fs.mkdir(path.join(root, 'storages', 'session_projcache', 'sessions'), { recursive: true });
+
+  for (const s of spec.sessions || []) {
+    const dir = path.join(root, 'sessions', SLUG, s.id);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, 'session.lock'), '');
+    const body = s.events
+      ? zlib.zstdCompressSync(Buffer.from(
+        s.events.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf8'))
+      : Buffer.alloc(s.bodyBytes ?? 256, 0x7a);
+    await fs.writeFile(path.join(dir, 'session.v4.jsonl.zstd'), body);
+
+    if (s.projection !== false) {
+      await fs.writeFile(
+        path.join(root, 'storages', 'session_projcache', 'sessions', `${s.id}.json`),
+        JSON.stringify({ version: 7, record: { identity: s.identity || {}, rows: s.projection || {} } }),
+      );
+    }
+  }
+
+  if (spec.workspace !== null) {
+    await fs.writeFile(path.join(root, 'storages', 'workspace.json'), JSON.stringify(spec.workspace || {
+      global: { workspaceIds: ['w1'], archivedSessionIds: [], pinnedSessionIds: [] },
+      tables: { workspaces: { w1: { path: WS, title: 'ws', sessionIds: (spec.sessions || []).map((s) => s.id) } } },
+    }));
+  }
+  return root;
+}
+
+const proj = (title, extra = {}) => ({
+  title: { ver: 1, seq: 1, val: title },
+  sessionStats: { ver: 1, seq: 1, val: { steps: 3 } },
+  modelSelection: { ver: 1, seq: 1, val: { lastUsed: { provider: 'magpie', model: 'deepseek-v4.1-flash' } } },
+  ...extra,
+});
+
+/* ── 主路径：投影缓存 ─────────────────────────────────────── */
+
+test('标题、cwd、步数、模型全部来自投影缓存，不解压正文', async (t) => {
+  const id = 'session-aaaa0000-0000-0000-0000-000000000001';
+  const root = await makeRoot(t, {
+    sessions: [{
+      id,
+      // 正文故意写成**不是**合法 zstd：只要它被解压，测试就会失败
+      events: null,
+      bodyBytes: 4096,
+      identity: { createdAt: 1790000000000, cwd: WS },
+      projection: proj('投影里的标题'),
+    }],
+  });
+  // 覆盖掉那个占位正文，放一段垃圾进去
+  await fs.writeFile(path.join(root, 'sessions', SLUG, id, 'session.v4.jsonl.zstd'), Buffer.alloc(4096, 0xff));
+
+  const d = await scanTasks(root);
+  const row = d.tasks.find((x) => x.id === id);
+
+  assert.ok(row, '有正文文件的会话必须列出来');
+  assert.equal(row.title, '投影里的标题');
+  assert.equal(row.workspace, WS);
+  assert.equal(row.rows, 3, '步数取自 sessionStats.steps');
+  assert.equal(row.model, 'magpie / deepseek-v4.1-flash');
+  assert.equal(row.bytes, 4096);
+  // 投影路径不该产生"解压失败"这类问题
+  assert.equal(d.problems.length, 0, `不该有问题：${d.problems.join('；')}`);
+});
+
+test('模型名把 provider 与 model 拼起来，缺一个就不硬拼分隔符', async (t) => {
+  const a = 'session-aaaa0000-0000-0000-0000-00000000000a';
+  const b = 'session-bbbb0000-0000-0000-0000-00000000000b';
+  const root = await makeRoot(t, {
+    sessions: [
+      { id: a, projection: proj('只有 model', { modelSelection: { ver: 1, seq: 1, val: { lastUsed: { model: 'm1' } } } }) },
+      { id: b, projection: proj('没有 model', { modelSelection: { ver: 1, seq: 1, val: {} } }) },
+    ],
+  });
+  const d = await scanTasks(root);
+  assert.equal(d.tasks.find((x) => x.id === a).model, 'm1');
+  assert.equal(d.tasks.find((x) => x.id === b).model, '');
+});
+
+/* ── 兜底：投影缺失时解压 ─────────────────────────────────── */
+
+test('投影缺失时解压正文取标题，且只认用户自己发的那条', async (t) => {
+  const id = 'session-cccc0000-0000-0000-0000-00000000000c';
+  const root = await makeRoot(t, {
+    sessions: [{
+      id,
+      projection: false,
+      events: [
+        { type: 'session', version: 4, id, createdAt: 1790000000000, cwd: WS, agentPreset: 'standard' },
+        // 这条是系统注入的通知，不是用户提问 —— 不能拿它当标题
+        { type: 'user/message', data: { content: [{ type: 'text', text: '权限策略已变更' }], source: { kind: 'user-approval' } } },
+        { type: 'user/message', data: { content: [{ type: 'text', text: '帮我看下这个表' }], source: { kind: 'user' } } },
+      ],
+    }],
+  });
+
+  const d = await scanTasks(root);
+  const row = d.tasks.find((x) => x.id === id);
+  assert.ok(row);
+  assert.equal(row.title, '帮我看下这个表');
+  assert.equal(row.workspace, WS, 'cwd 来自第一行 session 事件');
+  assert.equal(row.createdAt, 1790000000000);
+});
+
+test('session/title 覆盖先前的兜底标题（改名后要以最后一条为准）', async (t) => {
+  const id = 'session-dddd0000-0000-0000-0000-00000000000d';
+  const root = await makeRoot(t, {
+    sessions: [{
+      id,
+      projection: false,
+      events: [
+        { type: 'session', version: 4, id, createdAt: 1, cwd: WS },
+        { type: 'user/message', data: { content: [{ type: 'text', text: '原始提问' }], source: { kind: 'user' } } },
+        { type: 'session/title', data: { title: '旧标题', source: { kind: 'fallback' } } },
+        { type: 'session/title', data: { title: '改过的标题', source: { kind: 'provider' } } },
+      ],
+    }],
+  });
+  const d = await scanTasks(root);
+  assert.equal(d.tasks.find((x) => x.id === id).title, '改过的标题');
+});
+
+test('正文不是合法 zstd 时不清空会话，只是没有标题', async (t) => {
+  const id = 'session-eeee0000-0000-0000-0000-00000000000e';
+  const root = await makeRoot(t, { sessions: [{ id, projection: false, bodyBytes: 300 }] });
+  await fs.writeFile(path.join(root, 'sessions', SLUG, id, 'session.v4.jsonl.zstd'), Buffer.alloc(300, 0x11));
+
+  const d = await scanTasks(root);
+  const row = d.tasks.find((x) => x.id === id);
+  assert.ok(row, '解不开正文不等于会话不存在');
+  assert.equal(row.bytes, 300, '体积照旧从 stat 来');
+  assert.match(row.title, new RegExp(id), '没有标题时退回 id，不编造');
+});
+
+/* ── 状态与原因 ───────────────────────────────────────────── */
+
+test('归档与置顶来自 workspace.json，不来自投影', async (t) => {
+  const arch = 'session-11110000-0000-0000-0000-000000000011';
+  const pin = 'session-22220000-0000-0000-0000-000000000022';
+  // 工作区路径必须真实存在：不存在的话两条都会先被标成 wsMissing，
+  // 那就测不到"置顶的活跃会话不该可清"这件事了。
+  const root = await makeRoot(t, {
+    sessions: [
+      { id: arch, projection: proj('归档的') },
+      { id: pin, projection: proj('置顶的') },
+    ],
+    workspace: {
+      global: { archivedSessionIds: [arch], pinnedSessionIds: [pin] },
+      tables: { workspaces: { w1: { path: os.tmpdir(), sessionIds: [arch, pin] } } },
+    },
+  });
+
+  const d = await scanTasks(root);
+  const a = d.tasks.find((x) => x.id === arch);
+  const p = d.tasks.find((x) => x.id === pin);
+
+  assert.equal(a.state, 'archived');
+  assert.equal(a.reason, 'archived', '归档的可以清');
+  assert.equal(p.pinned, true);
+  assert.equal(p.state, 'active');
+  /* 活跃会话也是可清的（reason='manual'），与 Cursor 同一条理由：
+     Harness 的一个会话就是一个自包含目录，删掉不留悬空引用。
+     置顶只影响"一键清理"的默认范围，不影响能不能手动勾。 */
+  assert.equal(p.reason, 'manual');
+});
+
+test('活跃会话也允许手动清理 —— 一个会话就是一个自包含目录', async (t) => {
+  /* 与 Claude Code 的关键差别。Claude 那边 reason 为 null 就选不中：
+     它的 .jsonl 是唯一的正文，删活跃会话会让索引指向不存在的文件。
+     Harness 删一个会话目录不留任何悬空引用，所以"用户勾了它"本身就是依据。 */
+  const id = 'session-88880000-0000-0000-0000-000000000088';
+  const root = await makeRoot(t, {
+    sessions: [{ id, projection: proj('活跃但可清') }],
+    workspace: { global: {}, tables: { workspaces: { w1: { path: os.tmpdir(), sessionIds: [id] } } } },
+  });
+  const d = await scanTasks(root);
+  const row = d.tasks.find((x) => x.id === id);
+  assert.equal(row.state, 'active');
+  assert.equal(row.reason, 'manual');
+});
+
+test('工作区路径不存在时标 wsMissing', async (t) => {
+  const id = 'session-33330000-0000-0000-0000-000000000033';
+  const root = await makeRoot(t, {
+    sessions: [{ id, projection: proj('工作区没了') }],
+    workspace: {
+      global: {},
+      tables: { workspaces: { w1: { path: '/definitely/not/here/agent-inspector', sessionIds: [id] } } },
+    },
+  });
+  const d = await scanTasks(root);
+  const row = d.tasks.find((x) => x.id === id);
+  assert.equal(row.reason, 'wsMissing');
+  assert.equal(row.state, 'active', 'state 与 reason 是两个轴：它仍然是活跃会话');
+});
+
+test('workspace.json 读不到时所有会话按活跃处理，不猜', async (t) => {
+  const id = 'session-44440000-0000-0000-0000-000000000044';
+  const root = await makeRoot(t, {
+    sessions: [{ id, projection: proj('索引坏了') }],
+    workspace: null,   // 完全不写这个文件
+  });
+  const d = await scanTasks(root);
+  const row = d.tasks.find((x) => x.id === id);
+  assert.equal(row.state, 'active');
+  assert.equal(row.pinned, false);
+  assert.equal(row.reason, 'manual', '判不了归档就别乱标，但仍允许手动清理');
+  // 文件不存在不算问题（Harness 还没初始化过）；但列表必须照常出来
+  assert.equal(row.title, '索引坏了');
+});
+
+/* ── 目录形状 ─────────────────────────────────────────────── */
+
+test('只剩 session.lock 的目录不列成会话，但要在 problems 里交代', async (t) => {
+  const live = 'session-55550000-0000-0000-0000-000000000055';
+  const dead = 'session-66660000-0000-0000-0000-000000000066';
+  const root = await makeRoot(t, { sessions: [{ id: live, projection: proj('还在的') }] });
+
+  // 手动造一个"正文已删、锁还在"的目录
+  const dir = path.join(root, 'sessions', SLUG, dead);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, 'session.lock'), '');
+
+  const d = await scanTasks(root);
+  assert.equal(d.tasks.length, 1, '只剩锁的目录不该画成一条会话');
+  assert.ok(d.tasks.every((x) => x.id !== dead));
+  assert.ok(
+    d.problems.some((p) => p.includes('session.lock')),
+    `必须在 problems 里说明那堆空锁去哪了：${JSON.stringify(d.problems)}`,
+  );
+});
+
+test('没有 sessions/ 时给空表 + 一句人话', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-inspector-dsh-empty-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+
+  const d = await scanTasks(root);
+  assert.deepEqual(d.tasks, []);
+  assert.equal(d.totals.count, 0);
+  assert.equal(d.db.total, 0);
+  assert.deepEqual(d.db.dbs, [], '没有会话库，dbs 是空数组而不是 undefined');
+  assert.ok(d.problems.some((p) => p.includes('sessions/')), '缺目录要说出来');
+});
+
+test('bodyRel 是相对扫描根的路径 —— 前端拿它去文件清单里找那一行', async (t) => {
+  /* 实测 bug：bodyRel 曾经相对 sessions/ 拼，而文件清单相对 ~/.dsh，
+     差一层 `sessions/`。界面上点「按文件清理…」会弹
+     "勾上的会话在文件清单里找不到对应正文 —— 目录大概在这期间变了"，
+     看着像磁盘被改过，其实只是路径拼错。
+     判据：每条会话的 bodyRel 必须能在这家 app 自己扫出来的文件清单里找到。 */
+  const id = 'session-99990000-0000-0000-0000-000000000099';
+  const root = await makeRoot(t, { sessions: [{ id, projection: proj('路径要对上') }] });
+
+  const d = await scanTasks(root);
+  const row = d.tasks.find((x) => x.id === id);
+  assert.equal(
+    row.bodyRel,
+    `sessions/${SLUG}/${id}/session.v4.jsonl.zstd`,
+    'bodyRel 必须从 ~/.dsh 起算',
+  );
+
+  // 用真实的文件扫描交叉验证，而不是只比字符串
+  const dshApp = (await import('../lib/apps/dsh.mjs')).default;
+  const { scanTarget } = await import('../lib/scan.mjs');
+  const scan = await scanTarget(dshApp, { key: 'root', kind: 'dir', path: root });
+  assert.ok(
+    scan.files.some((f) => f.p === row.bodyRel),
+    `bodyRel 在文件清单里找不到：${row.bodyRel}`,
+  );
+});
+
+test('db.bodies 的分母只算正文文件，不含锁', async (t) => {
+  const id = 'session-77770000-0000-0000-0000-000000000077';
+  const root = await makeRoot(t, { sessions: [{ id, projection: proj('x'), bodyBytes: 1000 }] });
+  const d = await scanTasks(root);
+  assert.equal(d.db.bodies.count, 1);
+  assert.equal(d.db.bodies.bytes, 1000);
+  assert.equal(d.db.total, 0, '没有会话库，库体积为 0 而不是 undefined');
+});
+
+/* ── 分类与 id 提取 ───────────────────────────────────────── */
+
+test('分类规则：正文、锁、投影、索引、凭据各归各位', () => {
+  const rel = `sessions/${SLUG}/session-abc/session.v4.jsonl.zstd`;
+  assert.equal(classify(rel, 10, {}), 'transcript');
+  assert.equal(classify(`sessions/${SLUG}/session-abc/session.lock`, 0, {}), 'sessionLock');
+  assert.equal(classify('storages/session_projcache/sessions/x.json', 10, {}), 'projectionCache');
+  assert.equal(classify('storages/workspace.json', 10, {}), 'workspaceIndex');
+  assert.equal(classify('profiles/web/cordis.yml', 10, {}), 'profileConfig');
+  assert.equal(classify('.credentials.yaml', 10, {}), 'credentials');
+  assert.equal(classify('.env', 10, {}), 'credentials');
+  assert.equal(classify('config.yaml', 10, {}), 'appConfig');
+  assert.equal(classify('whatever.bin', 10, {}), 'unknown');
+});
+
+test('备份目录先于所有规则：backups/ 里的库是副本，不是真库', () => {
+  // 与其余各家同一条共享规则、同一个位置 —— 顺序错了这里就会红
+  assert.equal(classify('backups/state.sqlite', 10, {}), 'dataBackup');
+  assert.equal(classify('backups/2026/10/x.json', 10, {}), 'dataBackup');
+  assert.equal(classify('config.yaml.bak', 10, {}), 'configBackup');
+});
+
+test('sessionIdOf 从目录形状里取，取不到返回 null', () => {
+  assert.equal(sessionIdOf(`sessions/${SLUG}/session-abc/session.v4.jsonl.zstd`), 'session-abc');
+  assert.equal(sessionIdOf(`sessions/${SLUG}/session-abc/session.lock`), 'session-abc');
+  assert.equal(sessionIdOf('storages/workspace.json'), null);
+  assert.equal(sessionIdOf(''), null);
+});

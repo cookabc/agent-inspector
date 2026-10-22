@@ -48,32 +48,43 @@
   --group-indent: 42px;
 
   /* ── 工具标识色 ──────────────────────────────────────────
-     四个工具各一个色相。这**不是状态色**：状态色（下面那四个 st-*）
+     每个工具一个色相。这**不是状态色**：状态色（下面那四个 st-*）
      是固定语义 —— 绿=安全、黄=谨慎、橙=异常、红=禁止 —— 借它来区分
      工具会让"黄色"同时意味着"这是 Cursor"和"这要小心"，两个含义打架。
 
      色相刻意与状态色分开：状态色集中在 0–120（红橙黄绿），
-     工具色放在 175–326（青/蓝/紫/品红），不会互相干扰。 */
-  --tool-zcode:  #1f5fd1;   /* 蓝：与主交互色同族，ZCode 是默认工具 */
-  --tool-codex:  #6b4eff;   /* 紫 */
-  --tool-cursor: #0b8074;   /* 青 */
-  --tool-claude: #b03a7d;   /* 品红 */
+     工具色放在 174–326（青/蓝/紫/品红），不会互相干扰。
+
+     加第五个工具时不能随手挑一个"看着还行"的紫：第一次挑的紫与 codex
+     在深色下只差 ΔE 22，比现有组内最小距离（28）还近，两个色签并排
+     就分不出来。现在的 dsh 用 hue 296，与四色都拉得开。
+
+     顺带补了老账：深色下 zcode 与 codex 原来只差 ΔE 28，也偏近 ——
+     codex 深色提到 #ca91f3（hue 274）后全组最小 33。判据写在测试里：
+     任意两色在浅/深两套下 ΔE 都 ≥ 30。 */
+  --tool-zcode:  #1f5fd1;   /* 蓝 218：与主交互色同族，ZCode 是默认工具 */
+  --tool-codex:  #6b4eff;   /* 紫 250 */
+  --tool-cursor: #0b8074;   /* 青 174 */
+  --tool-claude: #b03a7d;   /* 品红 326 */
+  --tool-dsh:    #9717a1;   /* 洋红紫 296：刻意避开 codex 的紫 */
 }
 
-/* 深色底上这四个色要提亮，否则对比度掉到 3:1 上下（浅色那组是给白底调的）。 */
+/* 深色底上这些色要提亮，否则对比度掉到 3:1 上下（浅色那组是给白底调的）。 */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --tool-zcode:  #6ba5ff;
-    --tool-codex:  #a58cff;
+    --tool-codex:  #ca91f3;
     --tool-cursor: #4dd0c4;
     --tool-claude: #f07ab5;
+    --tool-dsh:    #e35aed;
   }
 }
 :root[data-theme="dark"] {
   --tool-zcode:  #6ba5ff;
-  --tool-codex:  #a58cff;
+  --tool-codex:  #ca91f3;
   --tool-cursor: #4dd0c4;
   --tool-claude: #f07ab5;
+  --tool-dsh:    #e35aed;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -269,7 +280,7 @@ p { margin: 0; }
 
 /* ── 工具切换 ───────────────────────────────────────────── */
 
-/* 四个工具并排，装了没、各占多少一眼看完。
+/* 各工具并排，装了没、各占多少一眼看完。
    没装的那一个压暗但仍然可点 —— 有时人就是想进去确认它真的没落盘。
    标签住在 header 里：切工具是换这一页在读谁，不是页面内的一个段落。 */
 .app-tabs {
@@ -2054,7 +2065,7 @@ body.is-busy .topbar::after {
   }
 }
 
-/* ── 「全部」：跨四个工具的会话一览 ───────────────────────── */
+/* ── 「全部」：跨工具的会话一览 ───────────────────────────── */
 
 /* 这一屏只回答"我刚才在哪个工具里干活"。它不摆文件清单、不摆清理线 ——
    那些是"这个工具里有什么"的问题，混进来这一屏就会同时说两件事。 */
@@ -2138,6 +2149,7 @@ body.is-busy .topbar::after {
 .all-app[data-app-tone="codex"]  { --tc: var(--tool-codex);  }
 .all-app[data-app-tone="claude"] { --tc: var(--tool-claude); }
 .all-app[data-app-tone="cursor"] { --tc: var(--tool-cursor); }
+.all-app[data-app-tone="dsh"]    { --tc: var(--tool-dsh);    }
 
 .all-app[data-app-tone] {
   background: color-mix(in oklab, var(--tc) 13%, var(--surface));
@@ -2151,6 +2163,7 @@ body.is-busy .topbar::after {
 .chip[data-all-tool="codex"]  { --c: var(--tool-codex);  --tint: color-mix(in oklab, var(--tool-codex) 12%, var(--surface)); }
 .chip[data-all-tool="cursor"] { --c: var(--tool-cursor); --tint: color-mix(in oklab, var(--tool-cursor) 12%, var(--surface)); }
 .chip[data-all-tool="claude"] { --c: var(--tool-claude); --tint: color-mix(in oklab, var(--tool-claude) 12%, var(--surface)); }
+.chip[data-all-tool="dsh"]    { --c: var(--tool-dsh);    --tint: color-mix(in oklab, var(--tool-dsh) 12%, var(--surface)); }
 
 /* 选中态只让**色点**满载工具色，整块的边框与底色保持中性。
    八个筛选钮都亮着的时候，满饱和的边框会互相抢，屏幕上反而看不出谁是谁。
@@ -2176,6 +2189,7 @@ body.is-busy .topbar::after {
 .all-tool[data-app-tone="codex"]  { --tc: var(--tool-codex);  }
 .all-tool[data-app-tone="cursor"] { --tc: var(--tool-cursor); }
 .all-tool[data-app-tone="claude"] { --tc: var(--tool-claude); }
+.all-tool[data-app-tone="dsh"]    { --tc: var(--tool-dsh);    }
 /* 空心点：形状与选中态一致，但"没内容"这件事靠留白与虚线边框说，
    不靠把工具色洗成灰 —— 颜色是身份，不该因为它这次没数据就消失。 */
 .all-tool[data-app-tone]::before {

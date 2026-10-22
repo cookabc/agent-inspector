@@ -40,6 +40,7 @@ async function fixture(t) {
   await fs.mkdir(path.join(home, '.codex'), { recursive: true });
   await fs.mkdir(path.join(home, '.claude'), { recursive: true });
   await fs.mkdir(path.join(home, '.cursor'), { recursive: true });
+  await fs.mkdir(path.join(home, '.dsh'), { recursive: true });
   const cursorIde = path.join(home, 'Library', 'Application Support', 'Cursor');
   await fs.mkdir(path.join(cursorIde, 'User', 'globalStorage'), { recursive: true });
   await fs.writeFile(path.join(home, '.claude.json'), '{}');
@@ -121,7 +122,7 @@ function seedZcode(home) {
   ti.close();
 }
 
-/* ── 四家各来一条：契约测试要有行可断言 ─────────────────── */
+/* ── 每家各来一条：契约测试要有行可断言 ─────────────────── */
 
 /** 在同一个临时 HOME 下把四个 app 的最小会话都造出来。 */
 async function seedAll(home) {
@@ -159,6 +160,69 @@ async function seedAll(home) {
   cursorDb.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)').run(`bubbleId:${cursorId}:b1`, '正文');
   cursorDb.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)').run(`bubbleId:${orphanId}:b1`, '没人认领的正文');
   cursorDb.close();
+
+  await seedDsh(home);
+}
+
+/**
+ * DeepSeek Harness：一个会话 = 一个目录（正文 + 空锁），
+ * 元数据在 storages/ 下那两份未压缩 JSON 里 —— 不写投影的那条用来验兜底路径。
+ */
+async function seedDsh(home) {
+  const root = path.join(home, '.dsh');
+  const slug = '--tmp-agent-inspector-ws-test--';
+  const withProj = 'session-1111aaaa-0000-0000-0000-000000000001';
+  const noProj = 'session-2222bbbb-0000-0000-0000-000000000002';
+
+  for (const id of [withProj, noProj]) {
+    const dir = path.join(root, 'sessions', slug, id);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, 'session.v4.jsonl.zstd'), 'z'.repeat(512));
+    await fs.writeFile(path.join(dir, 'session.lock'), '');
+  }
+
+  // 正文开头（兜底路径要解压它）
+  const zlib = await import('node:zlib');
+  const lines = [
+    { type: 'session', version: 4, id: noProj, createdAt: 1790000000000, cwd: WS, agentPreset: 'standard' },
+    { type: 'user/message', data: { content: [{ type: 'text', text: '没有投影的会话' }], source: { kind: 'user' } } },
+  ].map((o) => JSON.stringify(o)).join('\n') + '\n';
+  await fs.writeFile(path.join(root, 'sessions', slug, noProj, 'session.v4.jsonl.zstd'),
+    zlib.zstdCompressSync(Buffer.from(lines, 'utf8')));
+
+  // 工作区索引：一条归档、一条置顶
+  await fs.mkdir(path.join(root, 'storages'), { recursive: true });
+  await fs.writeFile(path.join(root, 'storages', 'workspace.json'), JSON.stringify({
+    unit: { name: 'workspace', version: 2 },
+    global: {
+      initialized: true,
+      workspaceIds: ['w1'],
+      archivedSessionIds: [withProj],
+      pinnedSessionIds: [noProj],
+      defaultWorkspaceId: 'w1',
+    },
+    tables: {
+      workspaces: {
+        w1: { path: WS, title: 'ws', sessionIds: [withProj, noProj], createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z' },
+      },
+    },
+  }));
+
+  // 只给第一条写投影：第二条必须走解压兜底
+  await fs.mkdir(path.join(root, 'storages', 'session_projcache', 'sessions'), { recursive: true });
+  await fs.writeFile(path.join(root, 'storages', 'session_projcache', 'sessions', `${withProj}.json`),
+    JSON.stringify({
+      version: 7,
+      record: {
+        identity: { formatVersion: 4, createdAt: 1790000000000, cwd: WS, isSeeded: false, inheritedEventCount: 0 },
+        rows: {
+          title: { ver: 1, seq: 9, val: '有投影的会话' },
+          agentPreset: { ver: 1, seq: 9, val: 'standard' },
+          sessionStats: { ver: 1, seq: 9, val: { turns: 1, steps: 7 } },
+          modelSelection: { ver: 1, seq: 9, val: { lastUsed: { provider: 'magpie', model: 'deepseek-v4.1-flash' } } },
+        },
+      },
+    }));
 }
 
 /* ── Cursor 工作区反查 ────────────────────────────────────── */
@@ -392,7 +456,7 @@ test('Cursor 会话标题取自 composerHeaders.value 的 name，不是拼出来
   assert.equal(body.untitled, 1);
 });
 
-/* ── 契约组：四家的行与统计必须是同一套 ─────────────────── */
+/* ── 契约组：各家的行与统计必须是同一套 ─────────────────── */
 
 /** 每行的核心 13 个字段与类型。只断言"存在 + 值域"，不断言字段集合完全相等 ——
  *  各家可以有附加字段，但缺一个键就会一路以 undefined 画到界面上。 */
@@ -402,11 +466,11 @@ const ROW_FIELDS = {
   createdAt: 'number', updatedAt: 'number', bytes: 'number', rows: 'number', children: 'number',
 };
 
-test('四个 app 的会话行与 byState 遵循同一份契约', async (t) => {
+test('每个 app 的会话行与 byState 遵循同一份契约', async (t) => {
   const f = await fixture(t);
   await seedAll(f.home);
 
-  for (const app of ['zcode', 'codex', 'claude', 'cursor']) {
+  for (const app of ['zcode', 'codex', 'claude', 'cursor', 'dsh']) {
     const { status, body } = await f.get('/api/tasks?app=' + app);
     assert.equal(status, 200, `${app}: ${JSON.stringify(body)}`);
     assert.ok(body.tasks.length > 0, `${app} 造了会话就要读得出来`);
@@ -441,9 +505,9 @@ test('四个 app 的会话行与 byState 遵循同一份契约', async (t) => {
   }
 });
 
-test('缺库时四个 app 都返回完整信封，不静默', async (t) => {
+test('缺库时每个 app 都返回完整信封，不静默', async (t) => {
   const f = await fixture(t);   // 只建了目录，一个会话库都没有
-  for (const app of ['zcode', 'codex', 'claude', 'cursor']) {
+  for (const app of ['zcode', 'codex', 'claude', 'cursor', 'dsh']) {
     const { status, body } = await f.get('/api/tasks?app=' + app);
     assert.equal(status, 200, `${app}: ${JSON.stringify(body)}`);
     assert.deepEqual(body.tasks, [], `${app} 缺库时没有会话`);
@@ -455,12 +519,12 @@ test('缺库时四个 app 都返回完整信封，不静默', async (t) => {
   }
 });
 
-test('能力位由后端单源给出：四家都可写，可回灌只有 Cursor', async (t) => {
+test('能力位由后端单源给出：各家都可写，可回灌只有 Cursor', async (t) => {
   const f = await fixture(t);
   /* Cursor 曾经是 readOnly:true —— 理由是"库由 IDE 独占写入、没有外键可依"。
      后半句仍然成立，但它只说明"不能靠外键删"，不等于"不能删"。
-     现在 Cursor 走可达性分析那条路径（lib/cursor-purge.mjs），所以四家都可写。 */
-  const readOnly = { zcode: false, codex: false, claude: false, cursor: false };
+     现在 Cursor 走可达性分析那条路径（lib/cursor-purge.mjs），所以各家都可写。 */
+  const readOnly = { zcode: false, codex: false, claude: false, cursor: false, dsh: false };
   for (const [app, expected] of Object.entries(readOnly)) {
     const { status, body } = await f.get('/api/tasks?app=' + app);
     assert.equal(status, 200, app);
