@@ -61,7 +61,7 @@ async function fixture(t) {
   const port = listener.address().port;
   await new Promise(resolve => listener.close(resolve));
 
-  const child = spawn(process.execPath, ['--experimental-sqlite', 'server.mjs', '--port', String(port), '--no-open'],
+  const child = spawn(process.execPath, ['--experimental-sqlite', 'server.mjs', '--port', String(port), '--backup-dir', path.join(temp, 'backups'), '--no-open'],
     { cwd: project, env: { ...process.env, HOME: home }, stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
   child.stdout.on('data', chunk => { output += chunk; });
@@ -444,4 +444,77 @@ test('分页续段：单删与被目录连带删都必须被拒', async (t) => {
   assert.ok(ok.body.deleted[0].backup, '彻底删除必须留下备份路径');
   const bpath = ok.body.deleted[0].backup;
   assert.ok(await fs.readFile(bpath, 'utf8'), '备份文件要有内容');
+});
+
+test('empty files can be purged and retain a verified empty backup', async t => {
+  const f = await fixture(t);
+  const abs = await f.write('codex', 'root', 'cache/empty', '');
+  const r = await f.post('/api/purge', { app: 'codex', target: 'root', paths: ['cache/empty'], confirm: '彻底删除' });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.failed.length, 0);
+  assert.equal((await fs.stat(r.body.deleted[0].backup)).size, 0);
+  await assert.rejects(fs.stat(abs), { code: 'ENOENT' });
+});
+
+test('repeated file purges preserve both versions of a path', async t => {
+  const f = await fixture(t);
+  const body = { app: 'codex', target: 'root', paths: ['cache/reused'], confirm: '彻底删除' };
+  await f.write('codex', 'root', 'cache/reused', 'first');
+  const first = await f.post('/api/purge', body);
+  await f.write('codex', 'root', 'cache/reused', 'second');
+  const second = await f.post('/api/purge', body);
+  const a = first.body.deleted[0].backup, b = second.body.deleted[0].backup;
+  assert.notEqual(a, b);
+  assert.equal(await fs.readFile(a, 'utf8'), 'first');
+  assert.equal(await fs.readFile(b, 'utf8'), 'second');
+});
+
+test('session endpoints reject malformed IDs and non-boolean dryRun', async t => {
+  const f = await fixture(t);
+  for (const route of ['/api/tasks/purge', '/api/tasks/cursor/recover']) {
+    for (const ids of [null, {}, 'id', [1], [''], []]) {
+      const r = await f.post(route, { app: 'codex', ids, dryRun: true });
+      assert.equal(r.status, 400, `${route}: ${JSON.stringify(ids)}`);
+    }
+    const r = await f.post(route, { app: 'codex', ids: ['id'], dryRun: 'false' });
+    assert.equal(r.status, 400);
+  }
+});
+
+test('file writes invalidate session caches', async t => {
+  const f = await fixture(t);
+  await f.write('claude', 'home', 'projects/ws/one.jsonl', '{"type":"user","message":{"content":"fixture"}}\n');
+  const before = await (await fetch(f.base + '/api/tasks?app=claude')).json();
+  assert.equal(before.tasks.length, 1);
+  const r = await f.post('/api/purge', { app: 'claude', target: 'home', paths: ['projects/ws/one.jsonl'], confirm: '彻底删除' });
+  assert.equal(r.body.failed.length, 0);
+  const after = await (await fetch(f.base + '/api/tasks?app=claude')).json();
+  assert.equal(after.tasks.length, 0);
+});
+
+test('overlapping deletion paths are rejected before touching files', async t => {
+  const f = await fixture(t);
+  const file = await f.write('codex', 'root', 'cache/item', 'keep');
+  const r = await f.post('/api/purge', { app: 'codex', paths: ['cache', 'cache/item'], confirm: '彻底删除' });
+  assert.equal(r.status, 400);
+  assert.equal(await fs.readFile(file, 'utf8'), 'keep');
+});
+
+test('oversized requests return a readable 413 response', async t => {
+  const f = await fixture(t);
+  const r = await f.post('/api/purge', { padding: 'x'.repeat(9 * 1024 * 1024) });
+  assert.equal(r.status, 413);
+  assert.match(r.body.error, /请求体过大/);
+});
+
+test('overlapping HTTP write requests cannot both mutate files', async t => {
+  const f = await fixture(t);
+  const paths = ['cache/first.bin', 'cache/second.bin'];
+  for (const rel of paths) await f.write('codex', 'root', rel, Buffer.alloc(4 * 1024 * 1024, 7));
+  const results = await Promise.all(paths.map(rel => f.post('/api/purge', {
+    app: 'codex', paths: [rel], confirm: '彻底删除',
+  })));
+  assert.deepEqual(results.map(r => r.status).sort(), [200, 409]);
+  const refused = results.findIndex(r => r.status === 409);
+  assert.equal((await fs.stat(f.absOf('codex', 'root', paths[refused]))).size, 4 * 1024 * 1024);
 });

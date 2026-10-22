@@ -35,6 +35,12 @@ const els = {
   allChips: $('allChips'), allList: $('allList'), allEmpty: $('allEmpty'), allSearch: $('allSearch'),
 };
 
+let viewEpoch = 0;
+let scanRequest = 0;
+let taskRequest = 0;
+let allRequest = 0;
+let operationBusy = false;
+
 const state = {
   scan: null,            // /api/scan 的原始返回：{ apps: [每个 app 一份视图], grand, ... }
   apps: [],              // 本次扫描到的 app 视图，按注册表顺序
@@ -198,21 +204,24 @@ function isReducedMotion() {
 }
 
 async function load(refresh = false) {
+  const request = ++scanRequest;
   setBusy(true);
   els.scanNote.textContent = refresh ? '重新扫描中…' : '扫描中…';
   try {
     const res = await fetch('/api/scan' + (refresh ? '?refresh=1' : ''));
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
-    state.scan = await res.json();
+    const data = await res.json();
+    if (request !== scanRequest) return;
+    state.scan = data;
+    if (refresh) allState.data = null;
     state.apps = state.scan.apps;
     // 每行在数据入手的这一刻就带上归属与稳定 key。之前靠 files.includes()
     // 反查 —— 抽屉里 3352 行 × 1.8 万文件是千万级比较，而这里一次写入零成本。
     indexRows();
-    if (!state.apps.some((a) => a.app === state.appId)) state.appId = pickApp();
+    if (state.appId !== ALL_ID && !state.apps.some((a) => a.app === state.appId)) state.appId = pickApp();
     applyApp();
   } finally {
-    dropSkeleton();
-    setBusy(false);
+    if (request === scanRequest) { dropSkeleton(); setBusy(false); }
   }
 }
 
@@ -241,6 +250,7 @@ function pickApp() {
   const sorted = sortedApps();
   try {
     const last = localStorage.getItem(APP_KEY);
+    if (last === ALL_ID) return ALL_ID;
     if (last) {
       const hit = sorted.find((a) => a.app === last && a.totals.files > 0);
       if (hit) return hit.app;
@@ -251,6 +261,9 @@ function pickApp() {
 
 /** 把渲染层切到当前 app 的那一份视图。 */
 function applyApp() {
+  viewEpoch++;
+  allState.loading = false;
+  setPanelBusy(false);
   state.index = isAll() ? null : (state.apps.find((a) => a.app === state.appId) || null);
   state.selection.clear();
   // 换 app，筛选也从头开始。搜索词与状态筛选同样是"这一屏的读法"，
@@ -747,6 +760,7 @@ function openDrawer() {
 }
 
 function closeDrawer() {
+  if (operationBusy) return;
   els.scrim.hidden = true;
   els.drawer.hidden = true;
   closeModal();
@@ -807,6 +821,7 @@ function trapTab(e, root) {
 const mode = () => document.querySelector('input[name="mode"]:checked').value;
 
 function syncDrawerMode() {
+  if (operationBusy) return;
   const purge = mode() === 'purge';
   els.purgeConfirm.hidden = !purge;
   els.drawerGo.textContent = purge ? '彻底删除' : '移入废纸篓';
@@ -818,21 +833,23 @@ function syncDrawerMode() {
 }
 
 async function runClean() {
+  if (operationBusy) return;
   const batches = selectedByTarget();   // [[target, paths], …] —— 跨目标时分几次发
   const purge = mode() === 'purge';
   if (!batches.length) return;
-  if (purge && els.purgeWord.value !== '彻底删除') {
+  if (purge && els.purgeWord.value !== PURGE_WORD()) {
     els.drawerMsg.textContent = '确认串不正确，请输入「彻底删除」四个字。';
     els.drawerMsg.className = 'drawer-msg is-err';
     return;
   }
 
+  operationBusy = true;
+  const done = [];
   setBtnBusy(els.drawerGo, true);
   els.drawerMsg.textContent = purge ? '正在彻底删除…' : '正在移入废纸篓…';
   els.drawerMsg.className = 'drawer-msg';
 
   try {
-    const done = [];
     const failed = [];
     for (const [appId, target, paths] of batches) {
       const res = await fetch(purge ? '/api/purge' : '/api/trash', {
@@ -845,13 +862,15 @@ async function runClean() {
       const data = await res.json();
       // 任一批被拒绝就停下：后面的目标还没动，人能看到的是完整结果，不是删了一半的现场
       if (!res.ok) throw new Error(data.error || res.statusText);
-      done.push(...(data.moved || data.deleted || []));
+      const completed = data.moved || data.deleted || [];
+      done.push(...completed);
+      for (const item of completed) state.selection.delete(`${appId}/${target}:${item.path}`);
       failed.push(...(data.failed || []));
     }
 
     if (failed.length) {
       els.drawerMsg.className = 'drawer-msg is-err';
-      els.drawerMsg.textContent = `完成 ${done.length} 项，${failed.length} 项失败：${failed.map((f) => f.path).join('、')}`;
+      els.drawerMsg.textContent = `完成 ${done.length} 项，${failed.length} 项失败：${failed.map((f) => `${f.path}：${f.error}`).join('；')}`;
       // 有失败就留着抽屉 —— 这份清单本身就是要看的东西
       return;
     }
@@ -866,16 +885,19 @@ async function runClean() {
     const msg = purge
       ? `已彻底删除 <b>${done.length.toLocaleString()}</b> 项${sizeTxt}。`
       : `已把 <b>${done.length.toLocaleString()}</b> 项移入废纸篓${sizeTxt}，可在 Finder 的「废纸篓」中恢复。`;
+    operationBusy = false;
     closeDrawer();
     showToast(msg);
 
     // 重扫只是让屏幕上的数字跟上，不需要人等它
-    load(true).catch((err) => showToast(`重新扫描失败：${esc(err.message)}`, { error: true }));
+    load(true).then(() => loadTasks(true)).catch((err) => showToast(`重新扫描失败：${esc(err.message)}`, { error: true }));
   } catch (err) {
     els.drawerMsg.className = 'drawer-msg is-err';
-    els.drawerMsg.textContent = err.message;
+    els.drawerMsg.textContent = `已完成 ${done.length} 项。${err.message}`;
   } finally {
+    operationBusy = false;
     setBtnBusy(els.drawerGo, false);
+    renderActionbar();
   }
 }
 
@@ -973,21 +995,25 @@ function hideAllView() {
 }
 
 async function loadAllSessions(refresh = false) {
+  const request = ++allRequest;
+  const epoch = viewEpoch;
   allState.loading = true;
   els.allLede.textContent = '正在汇总各工具的会话…';
   try {
     const res = await fetch('/api/tasks/all' + (refresh ? '?refresh=1' : ''));
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.statusText);
-    if (!isAll()) return;   // 切走了就丢掉
+    if (!isAll() || request !== allRequest || epoch !== viewEpoch) return;   // 切走了就丢掉
     allState.data = data;
   } catch (err) {
-    if (!isAll()) return;
+    if (!isAll() || request !== allRequest || epoch !== viewEpoch) return;
     allState.data = null;
     els.allLede.innerHTML = `<b>汇总失败：</b>${esc(err.message)}`;
   } finally {
-    allState.loading = false;
-    if (isAll()) renderAllSessions();
+    if (request === allRequest && epoch === viewEpoch) {
+      allState.loading = false;
+      if (isAll()) renderAllSessions();
+    }
   }
 }
 
@@ -1310,6 +1336,7 @@ document.addEventListener('click', async (e) => {
   // 换 app：分类表、清单、历史会话整条线跟着换
   const tab = t.closest('[data-app]');
   if (tab) {
+    if (operationBusy) return;
     if (tab.dataset.app === state.appId) return;
     state.appId = tab.dataset.app;
     applyApp();
@@ -1480,10 +1507,14 @@ document.addEventListener('click', async (e) => {
     renderSplit(); renderGroups(); renderActionbar(); return;
   }
   if (t.closest('#rescanBtn')) {
+    if (operationBusy) return;
     setBtnBusy(els.rescanBtn, true);
     try {
       await load(true);
-      await loadTasks(true);
+      if (isAll()) await loadAllSessions(true);
+      else await loadTasks(true);
+    } catch (err) {
+      showToast(`重新扫描失败：${esc(err.message)}`, { error: true });
     } finally {
       setBtnBusy(els.rescanBtn, false);
     }
@@ -1555,6 +1586,7 @@ const RECOVER_WORD = () => confirmWords().RECOVER || '回灌';
    以前是"按钮一直可点，点了才报错" —— 那等于故意让人先撞一次墙。
    现在按钮状态直接反映"这句话你确认了没有"，顺带把还差几个字告诉人。 */
 function syncPurgeWord() {
+  if (operationBusy) return;
   if (mode() !== 'purge') return;
   const ok = els.purgeWord.value === PURGE_WORD();
   els.drawerGo.disabled = !ok;
@@ -1764,6 +1796,8 @@ function resetTaskPanel() {
 }
 
 async function loadTasks(refresh = false) {
+  const request = ++taskRequest;
+  const epoch = viewEpoch;
   const appId = state.appId;
   const view = state.index;
   taskState.data = null;
@@ -1798,7 +1832,7 @@ async function loadTasks(refresh = false) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.statusText);
     // 换 app 换得快了，晚到的旧响应要丢掉
-    if (state.appId !== appId || data.appId !== appId) return;
+    if (request !== taskRequest || epoch !== viewEpoch || state.appId !== appId || data.appId !== appId) return;
     taskState.data = data;
     renderTasks();
     // 有回灌写路径的工具另外有一条"界面看不到的会话"线，独立懒加载
@@ -1807,11 +1841,11 @@ async function loadTasks(refresh = false) {
     // 先把列表画出来，算完再补上"删它能带走多少"。
     if (data.history === 'cursor-db') loadExclusive(appId);
   } catch (err) {
-    if (state.appId !== appId) return;
+    if (request !== taskRequest || epoch !== viewEpoch || state.appId !== appId) return;
     tEls.lede.classList.remove('is-loading');
     tEls.lede.innerHTML = `<b>读取失败：</b>${esc(err.message)}`;
   } finally {
-    setPanelBusy(false);
+    if (request === taskRequest && epoch === viewEpoch) setPanelBusy(false);
   }
 }
 
@@ -1848,12 +1882,14 @@ function setPanelBusy(on) {
  * 失败不影响主面板 —— 那只是让数字少一列，不是让页面坏掉。
  */
 async function loadExclusive(appIdAtCall) {
+  const epoch = viewEpoch;
+  const request = taskRequest;
   taskState.exclusive = null;
   try {
     const res = await fetch('/api/tasks/cursor/analyze');
     if (!res.ok) return;
     const data = await res.json();
-    if (state.appId !== appIdAtCall) return;   // 切走了就丢掉
+    if (epoch !== viewEpoch || request !== taskRequest || state.appId !== appIdAtCall) return;   // 切走了就丢掉
     const map = new Map();
     for (const s of data.sessions || []) map.set(s.id, s);
     taskState.exclusive = map;
@@ -1861,6 +1897,7 @@ async function loadExclusive(appIdAtCall) {
     renderTaskList();
     renderTaskFoot();
   } catch {
+    if (epoch !== viewEpoch || request !== taskRequest) return;
     taskState.exclusive = null;
   }
 }
@@ -1882,6 +1919,8 @@ function hideRecoverable() {
 
 async function loadRecoverable() {  // 晚到的旧响应要丢掉：切走之后能力位可能仍为真，只能比身份
   const appIdAtCall = state.appId;
+  const epoch = viewEpoch;
+  const request = taskRequest;
   if (!state.index?.canRecover || !rEls.panel) { hideRecoverable(); return; }
   rEls.panel.hidden = false;
   rEls.lede.textContent = '正在找界面里看不到的会话…';
@@ -1895,14 +1934,14 @@ async function loadRecoverable() {  // 晚到的旧响应要丢掉：切走之�
     const res = await fetch('/api/tasks/cursor/orphans');
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.statusText);
-    if (state.appId !== appIdAtCall) return;
+    if (epoch !== viewEpoch || request !== taskRequest || state.appId !== appIdAtCall) return;
     recoverState.data = data;
     // 上次勾了、这次已经回灌掉的会话不能继续留在选择集里
     const ids = new Set((data.sessions || []).map((s) => s.id));
     for (const id of [...recoverState.sel]) if (!ids.has(id)) recoverState.sel.delete(id);
     renderRecoverable();
   } catch (err) {
-    if (state.appId !== appIdAtCall) return;
+    if (epoch !== viewEpoch || request !== taskRequest || state.appId !== appIdAtCall) return;
     recoverState.data = null;
     rEls.panel.hidden = false;
     rEls.lede.innerHTML = `<b>读取失败：</b>${esc(err.message)}`;
@@ -1919,11 +1958,14 @@ function renderRecoverable() {
     ? `在 transcript 文件里找到 <b>${total}</b> 个会话，Cursor 的 <code>composerHeaders</code> 里没有对应记录 —— ` +
       `界面看不到它们，但 <b>${fmtBytes(d.orphanBytes)}</b> 的正文还在磁盘上。回灌会把正文补回客户端；` +
       `只新增、不覆盖，已存在的会话一律跳过。`
-    : `没有发现孤儿会话：所有 transcript 都能在 Cursor 的会话头里找到。`;
+    : d.problems?.length ? '无法完整确认孤儿会话，请先处理下方读取问题。'
+      : `没有发现可回灌的孤儿会话。`;
 
   // 运行状态 / 读取问题
   const warns = [];
-  if (d.app?.running) {
+  if (d.app?.unknown) {
+    warns.push(`无法确认 Cursor 是否退出，暂不能回灌。${esc(d.app.error || '')}`);
+  } else if (d.app?.running) {
     warns.push(`<b>Cursor 正在运行</b>（${(d.app.hits || []).map((h) => `${esc(h.name)} ×${h.pids}`).join('、')}）。` +
       `回灌会写 <code>state.vscdb</code>，必须先<b>完全退出 Cursor</b>；现在可以浏览和空跑，写入会被拒绝。`);
   } else {
@@ -1933,8 +1975,8 @@ function renderRecoverable() {
   for (const p of d.problems || []) warns.push(esc(p));
   if (warns.length) {
     rEls.warn.hidden = false;
-    rEls.warn.className = d.app?.running ? 'app-warn' : 'app-warn is-ok';
-    rEls.warn.innerHTML = `${icon(d.app?.running ? 'alert' : 'box')}<div>${warns.join('<br>')}</div>`;
+    rEls.warn.className = (d.app?.running || d.app?.unknown || d.problems?.length) ? 'app-warn' : 'app-warn is-ok';
+    rEls.warn.innerHTML = `${icon((d.app?.running || d.app?.unknown || d.problems?.length) ? 'alert' : 'box')}<div>${warns.join('<br>')}</div>`;
   } else {
     rEls.warn.hidden = true;
   }
@@ -1974,10 +2016,11 @@ function renderRecoverable() {
    这里原来完全没有这道闸：按钮只看"有没有勾选"和"Cursor 在不在跑"，
    一直亮着，点下去才由服务端返回"确认串不正确"。 */
 function syncRecoverWord() {
+  if (operationBusy) return;
   const d = recoverState.data;
   const word = d?.confirmWord || RECOVER_WORD();
   const picked = (d?.sessions || []).filter((s) => recoverState.sel.has(s.id)).length;
-  const running = Boolean(d?.app?.running);
+  const running = Boolean(d?.app?.running || d?.app?.unknown);
   const ok = rEls.word.value === word;
   rEls.go.disabled = running || picked === 0 || !ok;
   /* 两个条件都要说：
@@ -2079,6 +2122,7 @@ function renderRecoverDrawer() {
 }
 
 const closeRecoverDrawer = () => {
+  if (operationBusy) return;
   recoverState.open = false;
   rEls.scrim.hidden = true;
   rEls.drawer.hidden = true;
@@ -2087,9 +2131,11 @@ const closeRecoverDrawer = () => {
 };
 
 async function callRecover(dryRun) {
+  if (operationBusy) return;
   const d = recoverState.data;
   const ids = [...recoverState.sel];
   if (!d || !ids.length) return;
+  operationBusy = true;
   rEls.go.disabled = true;
   rEls.dryBtn.disabled = true;
   rEls.msg.className = 'drawer-msg';
@@ -2123,6 +2169,7 @@ async function callRecover(dryRun) {
       /* 与另外两条清理线同一条收尾规矩：动作已经完成了，抽屉就没有继续
          开着的理由 —— 先关抽屉，再把结果搬到屏幕上。 */
       const backupTxt = data.backup ? `备份在 ${shortPath(data.backup)}。` : '';
+      operationBusy = false;
       closeRecoverDrawer();
       showToast(`已回灌 <b>${data.imported ?? 0}</b> 个会话、<b>${data.bubbles ?? 0}</b> 条气泡。` +
         `${esc(backupTxt)}重启 Cursor 后，它们会出现在会话列表里。`);
@@ -2133,6 +2180,7 @@ async function callRecover(dryRun) {
     rEls.msg.textContent = err.message;
   } finally {
     // 收尾时按确认串的真实状态恢复 —— 无条件打开会绕过刚加的门控
+    operationBusy = false;
     rEls.dryBtn.disabled = false;
     syncRecoverWord();
   }
@@ -2279,6 +2327,9 @@ function renderTasks() {
   } else if (d.fileBased) {
     tEls.warn.className = 'app-warn is-ok';
     tEls.warn.innerHTML = fileBasedNote(d);
+  } else if (d.app.unknown) {
+    tEls.warn.className = 'app-warn';
+    tEls.warn.innerHTML = `${icon('alert')}<div>无法确认 ${esc(who)} 是否退出，暂不能写入数据库。${esc(d.app.error || '')}</div>`;
   } else if (d.app.running) {
     tEls.warn.className = 'app-warn';
     tEls.warn.innerHTML =
@@ -2802,6 +2853,7 @@ function openTaskDrawer() {
 }
 
 const closeTaskDrawer = () => {
+  if (operationBusy) return;
   tEls.scrim.hidden = true;
   tEls.drawer.hidden = true;
   closeModal();
@@ -2830,10 +2882,12 @@ function checkLine(data) {
    词由服务端给（见上面 confirmWords）。 */
 
 async function callPurge(dryRun) {
+  if (operationBusy) return;
   const d = taskState.data;
   const ids = [...taskState.sel];
   if (!d || !ids.length) return;
 
+  operationBusy = true;
   tEls.go.disabled = true;
   tEls.dryBtn.disabled = true;
   tEls.msg.className = 'drawer-msg';
@@ -2850,6 +2904,7 @@ async function callPurge(dryRun) {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.statusText);
+    operationBusy = false;
     if (dryRun) renderDryRun(data);
     else await finishPurge(data);
   } catch (err) {
@@ -2857,6 +2912,7 @@ async function callPurge(dryRun) {
     tEls.msg.textContent = err.message;
   } finally {
     // 收尾时按确认串的真实状态恢复，不要无条件打开 —— 那会绕过刚加的门控
+    operationBusy = false;
     tEls.go.disabled = tEls.word.value !== TASK_PURGE_WORD();
     tEls.dryBtn.disabled = false;
     tEls.go.textContent = '删除';
@@ -3014,6 +3070,7 @@ tEls.age.addEventListener('change', () => {
 tEls.search.addEventListener('input', () => { taskState.q = tEls.search.value.trim().toLowerCase(); renderTaskList(); });
 tEls.sort.addEventListener('change', () => { taskState.sort = tEls.sort.value; renderTaskList(); });
 function syncTaskWord() {
+  if (operationBusy) return;
   const ok = tEls.word.value === TASK_PURGE_WORD();
   tEls.go.disabled = !ok;
   if (ok) {

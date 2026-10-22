@@ -23,6 +23,9 @@ import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { Worker } from 'node:worker_threads';
+import { createBackupDirectory, copyVerified } from './lib/backup.mjs';
+import { createWriteGuard } from './lib/write-guard.mjs';
+import { validateIds, validateDryRun } from './lib/validation.mjs';
 
 /* 自己的模块用动态 import：本地这几个都依赖内置的 node:sqlite，
    而它是 Node 22.5 才有的。更早的版本上静态 import 会在任何提示之前直接崩掉，
@@ -61,6 +64,7 @@ function runDb(op, appId, targets, args = []) {
       reject(err);
     });
     worker.once('error', reject);
+    worker.once('exit', (code) => reject(new Error(`数据库 worker 提前退出（${code}），操作结果未确认`)));
   });
 }
 
@@ -90,6 +94,7 @@ if (argv.includes('--help') || argv.includes('-h')) {
     --root <dir>  换审计目标，接受 ~/... 或绝对路径。
                   只作用于第一个目标，并且隐含 --app zcode
     --no-open     不自动打开浏览器
+    --backup-dir <dir>  备份目录，默认项目下的 backups/
     -h, --help    显示这段说明
     -v, --version 只打印版本号
 
@@ -107,7 +112,22 @@ if (argv.includes('--version') || argv.includes('-v')) {
   process.exit(0);
 }
 
+for (let i = 0; i < argv.length; i++) {
+  const flag = argv[i];
+  if (flag === '--no-open') continue;
+  if (!['--port', '--app', '--root', '--backup-dir'].includes(flag) ||
+      !argv[i + 1] || argv[i + 1].startsWith('--')) {
+    console.error(`参数无效或缺少值：${flag}。使用 --help 查看用法。`);
+    process.exit(1);
+  }
+  i++;
+}
+
 const PORT = Number(argOf('--port', process.env.PORT || 4173));
+if (!Number.isInteger(PORT) || PORT < 0 || PORT > 65535) {
+  console.error('端口必须是 0–65535 的整数');
+  process.exit(1);
+}
 const NO_OPEN = argv.includes('--no-open');
 const ROOT = argOf('--root', null);
 /* --root 只换个目录给你看，分类表还是那个 app 的 —— 单独指定 --root 时，
@@ -122,7 +142,7 @@ if (ONLY_APP && !getApp(ONLY_APP)) {
    但那两个动作没意义 —— 与其让人点了报一句 ENOENT，不如启动时就说清楚。 */
 const MACOS = process.platform === 'darwin';
 const TRASH = path.join(os.homedir(), '.Trash');
-const BACKUP_DIR = path.join(HERE, 'backups');
+const BACKUP_DIR = path.resolve(argOf('--backup-dir', path.join(HERE, 'backups')).replace(/^~(?=\/|$)/, os.homedir()));
 
 const MAX_BODY = 8 * 1024 * 1024;
 
@@ -145,16 +165,43 @@ const TASK_CACHE_MS = 60_000;
 /* Cursor 的独占量分析要把整库内容寻址池解一遍（约 15 秒），
    所以缓存比别处长 —— 它只在"库变了"或者用户手动刷新时才值得重算。 */
 let cursorAnalyzeCache = null;
+let cursorAnalyzeInflight = null;
 const CURSOR_ANALYZE_MS = 10 * 60_000;
+let cacheEpoch = 0;
+const withWriteGuard = createWriteGuard();
+const pendingMutations = new Set();
+let shuttingDown = false;
+
+function invalidateCaches() {
+  cacheEpoch++;
+  cache = null;
+  taskCache.clear();
+  cursorAnalyzeCache = null;
+  indexInflight = null;
+  taskInflight.clear();
+  cursorAnalyzeInflight = null;
+}
+
+async function mutate(work) {
+  const run = withWriteGuard(async () => {
+    invalidateCaches();
+    try { return await work(); }
+    finally { invalidateCaches(); }
+  });
+  pendingMutations.add(run);
+  try { return await run; } finally { pendingMutations.delete(run); }
+}
 
 function getIndex(force = false) {
   if (!force && cache && Date.now() - cache.at < CACHE_MS) return Promise.resolve(cache.index);
   if (indexInflight) return indexInflight;
 
-  indexInflight = scanApps(plans)
-    .then((index) => { cache = { index, at: Date.now() }; return index; })
-    .finally(() => { indexInflight = null; });
-  return indexInflight;
+  const epoch = cacheEpoch;
+  const run = scanApps(plans)
+    .then((index) => { if (epoch === cacheEpoch) cache = { index, at: Date.now() }; return index; })
+    .finally(() => { if (indexInflight === run) indexInflight = null; });
+  indexInflight = run;
+  return run;
 }
 
 function getTasks(appId, force = false) {
@@ -165,9 +212,10 @@ function getTasks(appId, force = false) {
   const plan = plans.find((p) => p.app.id === appId);
   if (!plan) return Promise.reject(httpError(404, `未知 app：${appId}`));
 
+  const epoch = cacheEpoch;
   const run = runDb('scan', appId, plan.targets.map(stripTarget))
-    .then((index) => { taskCache.set(appId, { index, at: Date.now() }); return index; })
-    .finally(() => { taskInflight.delete(appId); });
+    .then((index) => { if (epoch === cacheEpoch) taskCache.set(appId, { index, at: Date.now() }); return index; })
+    .finally(() => { if (taskInflight.get(appId) === run) taskInflight.delete(appId); });
   taskInflight.set(appId, run);
   return run;
 }
@@ -251,7 +299,15 @@ function safeResolve(appId, targetKey, rel) {
 async function validateDeletionPaths({ app, target, paths }) {
   if (typeof app !== 'string') throw httpError(400, '缺少 app');
   if (!Array.isArray(paths) || !paths.length) throw httpError(400, '没有选中任何路径');
-  for (const rel of paths) await deletablePath(app, target, rel);
+  const resolved = [];
+  for (const rel of paths) resolved.push(await deletablePath(app, target, rel));
+  const unique = new Set(resolved);
+  if (unique.size !== resolved.length) throw httpError(400, '选择中包含重复路径，请只保留一份');
+  for (const file of resolved) {
+    for (let parent = path.dirname(file); parent !== path.dirname(parent); parent = path.dirname(parent)) {
+      if (unique.has(parent)) throw httpError(400, '选择中包含互相包含的目录，请只保留一份');
+    }
+  }
 }
 
 async function deletablePath(appId, targetKey, rel) {
@@ -268,7 +324,7 @@ async function deletablePath(appId, targetKey, rel) {
        删除路径这里却没走同一套 —— 于是"显示请勿删除"和"实际能删"对不上。
        实测后果：删整个 sessions/ 目录时，里面锁住的续段被一起 rm 掉了。
        判定必须只有一条路径。 */
-    if (isProtected(plan, target, relative, st.isDirectory(), file)) {
+    if (isProtected(plan, target, relative, st.isDirectory(), st.isFile() ? file : null)) {
       throw httpError(403, `受保护内容不能删除：${target.short}/${relative}`);
     }
     // rm/rename 不跟随目录内的链接；检查也不进入其目标。
@@ -292,8 +348,11 @@ function uniqueTrashTarget(abs) {
   const base = path.basename(abs);
   let target = path.join(TRASH, base);
   let i = 1;
-  while (fs.existsSync(target)) target = path.join(TRASH, `${base} ${i++}`);
-  return target;
+  while (true) {
+    try { fs.lstatSync(target); }
+    catch (err) { if (err.code === 'ENOENT') return target; throw err; }
+    target = path.join(TRASH, `${base} ${i++}`);
+  }
 }
 
 async function moveToTrash(rel, appId, targetKey) {
@@ -326,7 +385,8 @@ async function purge(rel, appId, targetKey) {
      结果是"备份成功、备份不存在"。实测场景：--root 指向仓库自身、
      勾选删除 backups/ 时，落点就在 backups/ 底下。
      这不是理论问题：它把唯一的退路变成了幻觉。 */
-  const bdir = path.resolve(BACKUP_DIR);
+  await fsp.mkdir(BACKUP_DIR, { recursive: true, mode: 0o700 });
+  const bdir = await fsp.realpath(BACKUP_DIR);
   const target = path.resolve(abs);
   if (target === bdir || target.startsWith(bdir + path.sep) ||
       bdir === target || bdir.startsWith(target + path.sep)) {
@@ -335,36 +395,25 @@ async function purge(rel, appId, targetKey) {
       `请换一个审计根目录（--root），或先手动移走备份。`);
   }
 
-  const backup = await backupBeforeDelete(abs, appId, rel);
+  const backup = await backupBeforeDelete(abs, appId, targetKey, rel);
+  await deletablePath(appId, targetKey, rel);
   await fsp.rm(abs, { recursive: true, force: true });
   return { path: rel, app: appId, target: targetKey, bytes, backup };
 }
 
 /**
- * 把 abs 拷到 backups/<时间戳>-file-purge/<app>/<原相对路径>。
+ * 把 abs 拷到 backups/<时间戳>-file-purge-<随机后缀>/<app>/<target>/<原相对路径>。
  * 返回备份所在目录；失败时抛错，让调用方中止删除。
  */
-async function backupBeforeDelete(abs, appId, rel) {
-  const stamp = (() => {
-    const d = new Date();
-    const p2 = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
-  })();
-  const dir = path.join(BACKUP_DIR, `${stamp}-file-purge`, String(appId || 'unknown'));
-  const dest = path.join(dir, ...rel.split('/'));
+async function backupBeforeDelete(abs, appId, targetKey, rel) {
+  const dir = await createBackupDirectory(BACKUP_DIR, 'file-purge');
+  const dest = path.join(dir, appId, targetKey || planFor(appId).targets[0].key, rel);
   try {
-    await fsp.mkdir(path.dirname(dest), { recursive: true });
-    await fsp.cp(abs, dest, { recursive: true, force: true, errorOnExist: false });
+    await fsp.mkdir(path.dirname(dest), { recursive: true, mode: 0o700 });
+    await copyVerified(abs, dest);
   } catch (err) {
     throw httpError(500, `备份失败，已放弃删除 ${rel}：${err.message}`);
   }
-  // 自检：目标真的存在且非空（空目录也算成功，否则删空目录会被永远卡住）
-  let ok = false;
-  try {
-    const bst = await fsp.lstat(dest);
-    ok = bst.isDirectory() || bst.size > 0 || bst.isSymbolicLink();
-  } catch {}
-  if (!ok) throw httpError(500, `备份校验失败，已放弃删除 ${rel}`);
   return dest;
 }
 
@@ -396,7 +445,7 @@ function isProtected(plan, target, rel, directory = false, abs = null) {
       `拒绝删除：${app.id} 的规则产出了未定义的分类「${cat}」（${rel}）。` +
       `先在 lib/apps/${app.id}.mjs 的 CATEGORIES 里补上它，再重试。`);
   }
-  return Boolean(meta.locked);
+  return Boolean(meta.locked) || meta.verdict === 'never';
 }
 
 /* ── HTTP ─────────────────────────────────────────────────── */
@@ -416,7 +465,8 @@ const MIME = {
 };
 
 function send(res, status, body, headers = {}) {
-  res.writeHead(status, { 'Cache-Control': 'no-store', ...headers });
+  res.writeHead(status, { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY', ...headers });
   res.end(body);
 }
 
@@ -434,7 +484,12 @@ function send(res, status, body, headers = {}) {
 async function sendJSON(req, res, status, obj) {
   const raw = Buffer.from(JSON.stringify(obj));
   const accept = String(req.headers['accept-encoding'] || '');
-  if (raw.length > 1024 && accept.includes('gzip')) {
+  const gzipAllowed = accept.split(',').some(part => {
+    const [encoding, ...params] = part.trim().toLowerCase().split(';');
+    const quality = params.find(p => p.trim().startsWith('q='));
+    return encoding === 'gzip' && (!quality || Number(quality.trim().slice(2)) > 0);
+  });
+  if (raw.length > 1024 && gzipAllowed) {
     let gz = null;
     try { gz = await gzipAsync(raw); } catch { gz = null; }
     if (gz) {
@@ -455,16 +510,20 @@ function readBody(req) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
+    let oversized = false;
     req.on('data', (c) => {
+      if (oversized) return;
       size += c.length;
       if (size > MAX_BODY) {
+        oversized = true;
+        chunks.length = 0;
         reject(httpError(413, '请求体过大'));
-        req.destroy();
         return;
       }
       chunks.push(c);
     });
     req.on('end', () => {
+      if (oversized) return;
       if (!chunks.length) return resolve({});
       try {
         const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
@@ -475,6 +534,7 @@ function readBody(req) {
       }
     });
     req.on('error', reject);
+    req.on('aborted', () => reject(httpError(400, '请求已中断')));
   });
 }
 
@@ -492,6 +552,7 @@ async function serveStatic(req, res, urlPath) {
 
 const server = http.createServer(async (req, res) => {
   try {
+    if (shuttingDown) throw httpError(503, '服务正在退出，请稍后重新启动');
     const host = req.headers.host;
     const allowedHosts = [`127.0.0.1:${req.socket.localPort}`, `localhost:${req.socket.localPort}`];
     if (!allowedHosts.includes(host)) throw httpError(403, '拒绝：不是本地服务地址');
@@ -504,7 +565,7 @@ const server = http.createServer(async (req, res) => {
       throw httpError(415, '请求必须使用 application/json');
     }
 
-    if (p === '/api/scan') {
+    if (p === '/api/scan' && req.method === 'GET') {
       const index = await getIndex(url.searchParams.get('refresh') === '1');
       // 前端照这两个开关决定要不要摆出"移入废纸篓"和"在 Finder 中显示" ——
       // 不是 macOS 就没有落点，摆了也只是让人白按。
@@ -516,7 +577,7 @@ const server = http.createServer(async (req, res) => {
       });
     }
 
-    if (p === '/api/tasks') {
+    if (p === '/api/tasks' && req.method === 'GET') {
       const appId = url.searchParams.get('app') || plans[0].app.id;
       const plan = planFor(appId);
       const data = await getTasks(appId, url.searchParams.get('refresh') === '1');
@@ -550,12 +611,17 @@ const server = http.createServer(async (req, res) => {
       if (!plan.targets.some((t) => t.exists)) {
         return await sendJSON(req, res, 200, { sessions: [], blobs: 0, blobBytes: 0, orphanBlobs: 0, scanMs: 0, absent: true });
       }
-      const result = await runDb('cursor-purge-analyze', 'cursor', plan.targets.map(stripTarget));
-      cursorAnalyzeCache = { data: result, at: Date.now() };
+      const epoch = cacheEpoch;
+      if (!cursorAnalyzeInflight) {
+        const run = runDb('cursor-purge-analyze', 'cursor', plan.targets.map(stripTarget))
+          .finally(() => { if (cursorAnalyzeInflight === run) cursorAnalyzeInflight = null; });
+        cursorAnalyzeInflight = run;
+      }
+      const result = await cursorAnalyzeInflight;
+      if (epoch === cacheEpoch) cursorAnalyzeCache = { data: result, at: Date.now() };
       return await sendJSON(req, res, 200, result);
     }
 
-    /* Cursor 的清理：与别的 app 不同，它要先把整库的内容寻址池解一遍，
     /* Cursor 的两条专用入口：只针对"界面里看不到、.jsonl 还在"的孤儿会话。
        列表只读；回灌是受控写入 —— 退出应用、确认串、整库备份、事务、自检，
        全在这一条路径上，不影响其它工具，也不覆盖任何已有会话。 */
@@ -568,17 +634,17 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/tasks/cursor/recover' && req.method === 'POST') {
       const { ids = [], dryRun = false, confirm } = await readBody(req);
-      if (!Array.isArray(ids) || ids.some((x) => typeof x !== 'string')) {
-        throw httpError(400, 'ids 必须是会话 id 的字符串数组');
-      }
+      validateIds(ids);
+      validateDryRun(dryRun);
       const plan = planFor('cursor');
       // 空跑是只读的，应用开着也安全；真正写入前必须退出，避免和 IDE 抢写。
       if (!dryRun && confirm !== CONFIRM.RECOVER) throw httpError(400, `确认串不正确（应为「${CONFIRM.RECOVER}」）`);
-      const running = await appRunning(plan.app);
-      if (running.running && !dryRun) throw appMustQuit(running);
-      const result = await runDb('cursor-recover', 'cursor', plan.targets.map(stripTarget),
-        [ids, { backupDir: BACKUP_DIR, dryRun }]);
-      if (!dryRun) taskCache.delete('cursor');
+      const work = async () => {
+        if (!dryRun) await assertAppStopped(plan.app);
+        return runDb('cursor-recover', 'cursor', plan.targets.map(stripTarget),
+          [ids, { backupDir: BACKUP_DIR, dryRun }]);
+      };
+      const result = await (dryRun ? work() : mutate(work));
       return await sendJSON(req, res, 200, result);
     }
 
@@ -589,50 +655,54 @@ const server = http.createServer(async (req, res) => {
       // 静态能力先判：这个 app 有没有"行"可删，跟它在不在跑无关
       const blocked = rowPurgeBlocked(plan.app);
       if (blocked) throw httpError(blocked.status, blocked.message);
+      validateIds(ids);
+      validateDryRun(dryRun);
 
       // 最要紧的一条：绝不能对正在被写入的数据库动手
-      const running = await appRunning(plan.app);
-      if (running.running && !dryRun) throw appMustQuit(running);
       if (!dryRun && confirm !== CONFIRM.SESSION) throw httpError(400, `确认串不正确（应为「${CONFIRM.SESSION}」）`);
 
       // 备份 + 删行 + VACUUM 全程在 worker 里跑，主线程始终保持响应
-      const result = await runDb('purge', plan.app.id, plan.targets.map(stripTarget), [ids, { backupDir: BACKUP_DIR, dryRun }]);
-      taskCache.delete(appId);
-      // Cursor 的独占量算的是"删了会带走多少"，删完必然变了，缓存作废
-      if (appId === 'cursor') cursorAnalyzeCache = null;
+      const work = async () => {
+        if (!dryRun) await assertAppStopped(plan.app);
+        return runDb('purge', plan.app.id, plan.targets.map(stripTarget), [ids, { backupDir: BACKUP_DIR, dryRun }]);
+      };
+      const result = await (dryRun ? work() : mutate(work));
       return await sendJSON(req, res, 200, result);
     }
 
     if (p === '/api/trash' && req.method === 'POST') {
       const { app, target, paths = [] } = await readBody(req);
-      await validateDeletionPaths({ app, target, paths });
+      return await mutate(async () => {
+        await validateDeletionPaths({ app, target, paths });
 
-      const done = [];
-      const failed = [];
-      for (const rel of paths) {
-        try { done.push(await moveToTrash(rel, app, target)); }
-        catch (err) { failed.push({ path: rel, error: err.message }); }
-      }
-      cache = null;
-      return await sendJSON(req, res, 200, { moved: done, failed, trash: TRASH });
+        const done = [];
+        const failed = [];
+        for (const rel of paths) {
+          try { done.push(await moveToTrash(rel, app, target)); }
+          catch (err) { failed.push({ path: rel, error: err.message }); }
+        }
+        return await sendJSON(req, res, 200, { moved: done, failed, trash: TRASH });
+      });
     }
 
     if (p === '/api/purge' && req.method === 'POST') {
       const { app, target, paths = [], confirm } = await readBody(req);
       if (confirm !== CONFIRM.FILES) throw httpError(400, `确认串不正确（应为「${CONFIRM.FILES}」）`);
-      await validateDeletionPaths({ app, target, paths });
+      return await mutate(async () => {
+        await validateDeletionPaths({ app, target, paths });
 
-      const done = [];
-      const failed = [];
-      for (const rel of paths) {
-        try { done.push(await purge(rel, app, target)); }
-        catch (err) { failed.push({ path: rel, error: err.message }); }
-      }
-      cache = null;
-      return await sendJSON(req, res, 200, { deleted: done, failed });
+        const done = [];
+        const failed = [];
+        for (const rel of paths) {
+          try { done.push(await purge(rel, app, target)); }
+          catch (err) { failed.push({ path: rel, error: err.message }); }
+        }
+        return await sendJSON(req, res, 200, { deleted: done, failed });
+      });
     }
 
     if (p === '/api/reveal' && req.method === 'POST') {
+      if (!MACOS) throw httpError(400, '在 Finder 中显示仅支持 macOS');
       const { app, target, path: rel } = await readBody(req);
       const abs = safeResolve(String(app || ''), target, rel);
       execFile('open', ['-R', abs], () => {});
@@ -649,6 +719,12 @@ const server = http.createServer(async (req, res) => {
     return await sendJSON(req, res, status, { error: err.message || String(err) });
   }
 });
+
+async function assertAppStopped(app) {
+  const running = await appRunning(app);
+  if (running.unknown) throw httpError(503, `无法确认 ${running.label} 是否退出：${running.error}。已放弃写入。`);
+  if (running.running) throw appMustQuit(running);
+}
 
 function appMustQuit(running) {
   const who = running.hits.map((h) => `${h.name}×${h.pids}`).join('、');
@@ -681,7 +757,7 @@ server.on('error', (err) => {
 });
 
 server.listen(PORT, '127.0.0.1', async () => {
-  const url = `http://127.0.0.1:${PORT}`;
+  const url = `http://127.0.0.1:${server.address().port}`;
   console.log(`\n  Agent Inspector\n`);
   for (const { app, targets } of plans) {
     const found = targets.filter((t) => t.exists);
@@ -689,7 +765,7 @@ server.listen(PORT, '127.0.0.1', async () => {
     console.log(`  ${app.label.padEnd(12)} ${line}`);
   }
   console.log(`\n  地址  ${url}\n`);
-  console.log(`  首次打开会扫描一次目录（只读 stat，不读文件内容）。`);
+  console.log(`  首次打开会扫描目录，并读取会话列表所需的元数据。`);
   if (MACOS) {
     console.log(`  清理默认移入废纸篓，可随时恢复。按 Ctrl+C 退出。\n`);
   } else {
@@ -700,7 +776,13 @@ server.listen(PORT, '127.0.0.1', async () => {
   if (!NO_OPEN) execFile(MACOS ? 'open' : 'xdg-open', [url], () => {});
 });
 
-process.on('SIGINT', () => {
-  console.log('\n  已退出。\n');
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log('\n  正在退出，等待已开始的写操作完成…');
+  server.close();
+  await Promise.allSettled([...pendingMutations]);
   process.exit(0);
-});
+}
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
