@@ -25,9 +25,9 @@
     "node": ">=22.5.0"
   },
   "scripts": {
-    "start": "node server.mjs",
+    "start": "node --experimental-sqlite server.mjs",
     "test": "node --experimental-sqlite --test",
-    "check": "find . -name '*.mjs' -not -path './node_modules/*' -exec node --check {} + && node --check public/app.js && node --check public/logic.js && npm test"
+    "check": "node scripts/check.mjs"
   },
   "author": "cookabc"
 }
