@@ -27,14 +27,14 @@ import { Worker } from 'node:worker_threads';
 /* 自己的模块用动态 import：本地这几个都依赖内置的 node:sqlite，
    而它是 Node 22.5 才有的。更早的版本上静态 import 会在任何提示之前直接崩掉，
    用户只看到一句 "Cannot find module 'node:sqlite'"。这里接住它，说人话。 */
-let APPS, getApp, planApps, scanApps, appRunning, rowPurgeBlocked, CURSOR_CONFIRM, aggregateSessions;
+let APPS, getApp, planApps, scanApps, appRunning, rowPurgeBlocked, CONFIRM, aggregateSessions;
 try {
   [{ APPS, getApp, planApps }, { scanApps }, { appRunning, rowPurgeBlocked, aggregateSessions },
-    { CONFIRM_WORD: CURSOR_CONFIRM }] = await Promise.all([
+    { CONFIRM }] = await Promise.all([
     import('./lib/apps/index.mjs'),
     import('./lib/scan.mjs'),
     import('./lib/tasks.mjs'),
-    import('./lib/cursor-recover.mjs'),
+    import('./lib/confirm-words.mjs'),
   ]);
 } catch (err) {
   const msg = err?.message || String(err);
@@ -434,7 +434,12 @@ const server = http.createServer(async (req, res) => {
       const index = await getIndex(url.searchParams.get('refresh') === '1');
       // 前端照这两个开关决定要不要摆出"移入废纸篓"和"在 Finder 中显示" ——
       // 不是 macOS 就没有落点，摆了也只是让人白按。
-      return await sendJSON(req, res, 200, { ...index, trash: TRASH, canTrash: MACOS, canReveal: MACOS });
+      /* confirm 一起下发：三条会改动磁盘的路径各要一个词，前端拿它做
+         "输对才亮"的门控。前端不自己写这几个字 —— 两边各写一份，
+         改一处忘另一处，界面就会放行一个服务端必然拒绝的请求。 */
+      return await sendJSON(req, res, 200, {
+        ...index, trash: TRASH, canTrash: MACOS, canReveal: MACOS, confirm: CONFIRM,
+      });
     }
 
     if (p === '/api/tasks') {
@@ -484,7 +489,7 @@ const server = http.createServer(async (req, res) => {
       const plan = planFor('cursor');
       const data = await runDb('cursor-orphans', 'cursor', plan.targets.map(stripTarget));
       const app = await appRunning(plan.app);
-      return await sendJSON(req, res, 200, { ...data, app, appId: 'cursor', appLabel: plan.app.label, backupDir: BACKUP_DIR, confirmWord: CURSOR_CONFIRM });
+      return await sendJSON(req, res, 200, { ...data, app, appId: 'cursor', appLabel: plan.app.label, backupDir: BACKUP_DIR, confirmWord: CONFIRM.RECOVER });
     }
 
     if (p === '/api/tasks/cursor/recover' && req.method === 'POST') {
@@ -494,7 +499,7 @@ const server = http.createServer(async (req, res) => {
       }
       const plan = planFor('cursor');
       // 空跑是只读的，应用开着也安全；真正写入前必须退出，避免和 IDE 抢写。
-      if (!dryRun && confirm !== CURSOR_CONFIRM) throw httpError(400, `确认串不正确（应为「${CURSOR_CONFIRM}」）`);
+      if (!dryRun && confirm !== CONFIRM.RECOVER) throw httpError(400, `确认串不正确（应为「${CONFIRM.RECOVER}」）`);
       const running = await appRunning(plan.app);
       if (running.running && !dryRun) throw appMustQuit(running);
       const result = await runDb('cursor-recover', 'cursor', plan.targets.map(stripTarget),
@@ -514,7 +519,7 @@ const server = http.createServer(async (req, res) => {
       // 最要紧的一条：绝不能对正在被写入的数据库动手
       const running = await appRunning(plan.app);
       if (running.running && !dryRun) throw appMustQuit(running);
-      if (!dryRun && confirm !== '清理') throw httpError(400, '确认串不正确');
+      if (!dryRun && confirm !== CONFIRM.SESSION) throw httpError(400, `确认串不正确（应为「${CONFIRM.SESSION}」）`);
 
       // 备份 + 删行 + VACUUM 全程在 worker 里跑，主线程始终保持响应
       const result = await runDb('purge', plan.app.id, plan.targets.map(stripTarget), [ids, { backupDir: BACKUP_DIR, dryRun }]);
@@ -540,7 +545,7 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/purge' && req.method === 'POST') {
       const { app, target, paths = [], confirm } = await readBody(req);
-      if (confirm !== '彻底删除') throw httpError(400, '确认串不正确');
+      if (confirm !== CONFIRM.FILES) throw httpError(400, `确认串不正确（应为「${CONFIRM.FILES}」）`);
       await validateDeletionPaths({ app, target, paths });
 
       const done = [];

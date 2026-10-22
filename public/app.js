@@ -1537,20 +1537,28 @@ document.addEventListener('change', (e) => {
   if (e.target.name === 'mode') syncDrawerMode();
 });
 
+/* 确认串由服务端随 /api/scan 下发（lib/confirm-words.mjs 是唯一来源）。
+   前端不自己写这几个字 —— 两边各写一份，改一处忘另一处，
+   界面就会放行一个服务端必然拒绝的请求。
+   三个词分别对应三条路径，词本身说出那一步在做什么。 */
+const confirmWords = () => state.scan?.confirm || {};
+const PURGE_WORD = () => confirmWords().FILES || '彻底删除';
+const TASK_PURGE_WORD = () => confirmWords().SESSION || '清理';
+const RECOVER_WORD = () => confirmWords().RECOVER || '回灌';
+
 /* 彻底删除的确认串：输对之前按钮按不动。
    以前是"按钮一直可点，点了才报错" —— 那等于故意让人先撞一次墙。
    现在按钮状态直接反映"这句话你确认了没有"，顺带把还差几个字告诉人。 */
-const PURGE_WORD = '彻底删除';
 function syncPurgeWord() {
   if (mode() !== 'purge') return;
-  const ok = els.purgeWord.value === PURGE_WORD;
+  const ok = els.purgeWord.value === PURGE_WORD();
   els.drawerGo.disabled = !ok;
   els.drawerMsg.className = 'drawer-msg';
   if (ok) {
     // 输对了就把"还差…"那行擦掉 —— 留着它等于说"你还没输完"
     els.drawerMsg.textContent = '';
   } else if (els.purgeWord.value.length) {
-    els.drawerMsg.textContent = `还差「${PURGE_WORD.slice(els.purgeWord.value.length)}」—— 输全四个字才能彻底删除。`;
+    els.drawerMsg.textContent = `还差「${PURGE_WORD().slice(els.purgeWord.value.length)}」—— 输全才能彻底删除。`;
   } else {
     els.drawerMsg.textContent = '';
   }
@@ -1582,6 +1590,7 @@ document.addEventListener('keydown', (e) => {
        或者滚到清单里才发现筛空了，那时焦点早就不在输入框上，Esc 什么也不做。 */
     if (!els.drawer.hidden) closeDrawer();
     else if (!tEls.drawer.hidden) closeTaskDrawer();
+    else if (!rEls.drawer.hidden) closeRecoverDrawer();
     else if (state.q || state.statuses.size || state.group) {
       const wasSearch = Boolean(state.q);
       state.q = '';
@@ -1661,12 +1670,17 @@ const taskState = {
 /* Cursor 孤儿会话回灌。与上面的"清理"是两条完全不同的线：
    这里只新增行，不删任何东西；选中集合也单独放，避免和清理勾选串台。 */
 const rEls = {
+  // 页面上的列表（浏览与勾选）
   panel: $('recoverPanel'), lede: $('recoverLede'), warn: $('recoverWarn'),
   list: $('recoverList'), foot: $('recoverFoot'), count: $('recoverCount'),
   bubbles: $('recoverBubbles'), pickAll: $('recoverPickAll'), clear: $('recoverClear'),
-  btn: $('recoverBtn'), confirm: $('recoverConfirm'), note: $('recoverConfNote'),
-  word: $('recoverWord'), wordHint: $('recoverWordHint'), go: $('recoverGo'),
-  dry: $('recoverDry'), cancel: $('recoverCancel'), msg: $('recoverMsg'),
+  btn: $('recoverBtn'),
+  // 确认抽屉（与另外两条清理线同一套）
+  scrim: $('rscrim'), drawer: $('rdrawer'), stats: $('rdrawerStats'),
+  note: $('rdrawerNote'), listD: $('rdrawerList'), countD: $('rdrawerCount'),
+  dryWrap: $('rdryWrap'), dryList: $('rdryList'),
+  confirmBox: $('rConfirmBox'), word: $('rWord'), msg: $('rdrawerMsg'),
+  dryBtn: $('rdryBtn'), go: $('rdrawerGo'),
 };
 const recoverState = { data: null, sel: new Set(), open: false };
 
@@ -1854,7 +1868,8 @@ function hideRecoverable() {
   rEls.list.innerHTML = '';
   rEls.warn.hidden = true;
   rEls.foot.hidden = true;
-  rEls.confirm.hidden = true;
+  // 抽屉可能开着 —— 切走时一起收掉，不能让它挂在新工具的画面上
+  if (recoverState.open) closeRecoverDrawer();
   recoverState.data = null;
   recoverState.sel.clear();
   recoverState.open = false;
@@ -1868,8 +1883,7 @@ async function loadRecoverable() {  // 晚到的旧响应要丢掉：切走之�
   rEls.list.innerHTML = '';
   rEls.warn.hidden = true;
   rEls.foot.hidden = true;
-  rEls.confirm.hidden = true;
-  rEls.msg.textContent = '';
+  if (recoverState.open) closeRecoverDrawer();
   recoverState.open = false;
 
   try {
@@ -1945,24 +1959,134 @@ function renderRecoverable() {
   rEls.count.textContent = picked.length.toLocaleString();
   rEls.bubbles.textContent = picked.reduce((n, s) => n + s.bubbles, 0).toLocaleString();
 
-  const running = Boolean(d.app?.running);
-  rEls.confirm.hidden = !recoverState.open;
-  if (recoverState.open) {
-    rEls.wordHint.textContent = d.confirmWord || '回灌';
-    rEls.go.disabled = running || picked.length === 0;
-    rEls.note.innerHTML = running
-      ? `Cursor 仍在运行，现在不能写入。请完全退出后刷新本页再试。`
-      : `将新增 <b>${picked.length}</b> 条会话头、<b>${picked.reduce((n, s) => n + s.bubbles, 0)}</b> 条气泡，` +
-        `不动任何已有会话。写入前会备份到 <code>${esc(shortPath(d.backupDir || 'backups'))}</code>。`;
+  // 确认抽屉开着时，它的内容跟着选择集一起更新（取消勾选一条，抽屉里的清单要少一条）
+  if (recoverState.open) renderRecoverDrawer();
+}
+
+/* 回灌的确认串。它和另外两条清理线共用"输对才亮"的规矩，
+   但这条是**写入**（往库里加会话头与气泡），比删除更需要这道闸 ——
+   删除错了至少还在废纸篓里，回灌错了是往一个活库里塞东西。
+   这里原来完全没有这道闸：按钮只看"有没有勾选"和"Cursor 在不在跑"，
+   一直亮着，点下去才由服务端返回"确认串不正确"。 */
+function syncRecoverWord() {
+  const d = recoverState.data;
+  const word = d?.confirmWord || RECOVER_WORD();
+  const picked = (d?.sessions || []).filter((s) => recoverState.sel.has(s.id)).length;
+  const running = Boolean(d?.app?.running);
+  const ok = rEls.word.value === word;
+  rEls.go.disabled = running || picked === 0 || !ok;
+  /* 两个条件都要说：
+     ① 没勾任何会话 / Cursor 在跑 —— 这是**比输入**更前面的拦阻，
+        说了它就不必再说"还差几个字"，那会让两件事挤在一行里互相盖住；
+     ② 输入不完整 —— 只在没有 ① 的时候才有意义。
+     原来的顺序是 `if (running || !picked)` 直接 return，于是 Cursor 开着时
+     输错确认串也看不到"还差…"，人不知道自己还漏了一步。 */
+  if (!picked) {
+    rEls.msg.textContent = '';
+    rEls.msg.className = 'drawer-msg';
+    return;
+  }
+  if (running) {
+    rEls.msg.className = 'drawer-msg is-warn';
+    /* 输对了才把"退出 Cursor 就能点"说出来 —— 输错时说这句，等于告诉人
+       "你已经准备好了"，而其实还差一个词。 */
+    rEls.msg.textContent = `Cursor 仍在运行，现在不能写入。` +
+      (ok ? `退出 Cursor 后重新打开本页即可点「${word}」。` : '');
+    return;
+  }
+  if (ok) {
+    rEls.msg.textContent = '';
+    rEls.msg.className = 'drawer-msg';
+  } else if (rEls.word.value.length) {
+    rEls.msg.className = 'drawer-msg';
+    rEls.msg.textContent = `还差「${word.slice(rEls.word.value.length)}」—— 输全才能写入。`;
+  } else {
+    rEls.msg.textContent = '';
+    rEls.msg.className = 'drawer-msg';
   }
 }
+rEls.word?.addEventListener('input', syncRecoverWord);
+
+/**
+ * 打开回灌确认抽屉。
+ *
+ * 结构与另外两条清理线一致：**列表在页面上浏览与勾选，确认进抽屉**。
+ * 原来回灌把确认区塞在列表下面内联展开，同一个页面里出现两种确认姿势 ——
+ * 而它是三条路径里唯一往库里**写**东西的，最该长得像"要动手了"。
+ */
+function openRecoverDrawer() {
+  const d = recoverState.data;
+  if (!d) return;
+  const picked = (d.sessions || []).filter((s) => recoverState.sel.has(s.id));
+  if (!picked.length) {
+    showToast('先勾选要回灌的会话。', { error: true });
+    return;
+  }
+  recoverState.open = true;
+  rEls.msg.textContent = '';
+  rEls.msg.className = 'drawer-msg';
+  rEls.word.value = '';
+  rEls.dryWrap.hidden = true;
+  renderRecoverDrawer();
+  rEls.scrim.hidden = false;
+  rEls.drawer.hidden = false;
+  openModal(rEls.drawer);
+}
+
+function renderRecoverDrawer() {
+  const d = recoverState.data;
+  if (!d) return;
+  const picked = (d.sessions || []).filter((s) => recoverState.sel.has(s.id));
+  const bubbles = picked.reduce((n, s) => n + (s.bubbles || 0), 0);
+  const running = Boolean(d.app?.running);
+
+  rEls.stats.innerHTML =
+    `<div class="dstat"><span>会话</span><b>${picked.length.toLocaleString()}</b></div>
+     <div class="dstat"><span>消息</span><b>${bubbles.toLocaleString()}</b></div>
+     <div class="dstat"><span>正文合计</span><b>${fmtBytes(picked.reduce((n, s) => n + (s.bytes || 0), 0))}</b></div>`;
+
+  /* 这条路径是**新增**，不是删除 —— 说明里要把这一点说在最前面，
+     否则一个长得跟删除抽屉一样的界面会让人以为要丢东西。 */
+  rEls.note.innerHTML = running
+    ? `<b>Cursor 仍在运行</b>，现在不能写入。请完全退出 Cursor 后重新打开本页。`
+    : `回灌只**新增**会话头与气泡，不动任何已有会话；重复的会被跳过。` +
+      `动手前会把 <code>state.vscdb</code> 完整备份到 ` +
+      `<code>${esc(shortPath(d.backupDir || 'backups'))}</code>。`;
+
+  const sorted = picked.slice().sort((a, b) => (b.bytes || 0) - (a.bytes || 0));
+  rEls.listD.innerHTML = sorted.slice(0, 200).map((s) =>
+    `<li title="${esc(s.title)}"><span>${esc(s.title)}</span><span>${fmtBytes(s.bytes || 0)}</span></li>`).join('')
+    + (sorted.length > 200
+      ? `<li class="drawer-more"><span>下面还有 ${(sorted.length - 200).toLocaleString()} 项没列出来，` +
+        `<b>它们同样在这次的范围内</b>。</span><span></span></li>` : '');
+  rEls.countD.textContent = `${picked.length.toLocaleString()} 个`;
+
+  rEls.confirmBox.hidden = false;
+  /* 空跑是只读的 —— 服务端那边 `if (!dryRun && confirm !== ...)` 与
+     `if (running.running && !dryRun)` 都只在**写入**时拦，空跑随便跑。
+     前端却按 running 把它禁了，title 上还写着"Cursor 开着也能跑"，
+     等于摆一个按不动的按钮并告诉人"这个能用"。两处必须一致，以服务端为准。 */
+  rEls.dryBtn.disabled = false;
+  rEls.dryBtn.title = running
+    ? '空跑是只读的，Cursor 开着也能跑 —— 这里只核对会插入多少行'
+    : '不写任何东西，只核对会插入多少行';
+  syncRecoverWord();
+}
+
+const closeRecoverDrawer = () => {
+  recoverState.open = false;
+  rEls.scrim.hidden = true;
+  rEls.drawer.hidden = true;
+  rEls.msg.textContent = '';
+  closeModal();
+};
 
 async function callRecover(dryRun) {
   const d = recoverState.data;
   const ids = [...recoverState.sel];
   if (!d || !ids.length) return;
   rEls.go.disabled = true;
-  rEls.dry.disabled = true;
+  rEls.dryBtn.disabled = true;
   rEls.msg.className = 'drawer-msg';
   rEls.msg.textContent = dryRun ? '正在空跑核对…' : '正在备份并写入 state.vscdb…';
   try {
@@ -1975,28 +2099,37 @@ async function callRecover(dryRun) {
     if (!res.ok) throw new Error(data.error || res.statusText);
 
     if (dryRun) {
+      /* 空跑结果摊在抽屉里，与"会话清理"那条线同一个位置、同一个形状 ——
+         以前它只是一句 msg，另外两条都有一块逐项清单。 */
+      rEls.dryWrap.hidden = false;
+      rEls.dryList.innerHTML =
+        `<li><span>会话头（composerHeaders）</span><span>${(data.imported ?? 0).toLocaleString()}</span></li>` +
+        `<li><span>消息气泡（bubbleId）</span><span>${(data.bubbles ?? 0).toLocaleString()}</span></li>` +
+        `<li><span>跳过的已有会话</span><span>${(data.skipped ?? 0).toLocaleString()}</span></li>`;
       rEls.msg.className = 'drawer-msg is-ok';
-      rEls.msg.innerHTML = `空跑：将回灌 <b>${data.imported}</b> 个会话、<b>${data.bubbles}</b> 条气泡。` +
-        `没有写任何东西。`;
+      rEls.msg.innerHTML = `空跑完成：会写入 <b>${data.imported ?? 0}</b> 个会话、` +
+        `<b>${data.bubbles ?? 0}</b> 条气泡。没有写任何东西。`;
     } else {
       // 已回灌的会话从本地列表里移除，不用整页重扫
       const done = new Set((data.sessions || []).map((s) => s.id));
       if (d.sessions) d.sessions = d.sessions.filter((s) => !done.has(s.id));
       d.total = d.sessions?.length || 0;
       recoverState.sel.clear();
-      rEls.word.value = '';
-      rEls.msg.className = 'drawer-msg is-ok';
-      rEls.msg.innerHTML = `已回灌 <b>${data.imported}</b> 个会话、<b>${data.bubbles}</b> 条气泡。` +
-        (data.backup ? `备份在 <code>${esc(shortPath(data.backup))}</code>。` : '') +
-        `重启 Cursor 后，它们会出现在会话列表里。`;
+      /* 与另外两条清理线同一条收尾规矩：动作已经完成了，抽屉就没有继续
+         开着的理由 —— 先关抽屉，再把结果搬到屏幕上。 */
+      const backupTxt = data.backup ? `备份在 ${shortPath(data.backup)}。` : '';
+      closeRecoverDrawer();
+      showToast(`已回灌 <b>${data.imported ?? 0}</b> 个会话、<b>${data.bubbles ?? 0}</b> 条气泡。` +
+        `${esc(backupTxt)}重启 Cursor 后，它们会出现在会话列表里。`);
       renderRecoverable();
     }
   } catch (err) {
     rEls.msg.className = 'drawer-msg is-err';
     rEls.msg.textContent = err.message;
   } finally {
-    rEls.go.disabled = false;
-    rEls.dry.disabled = false;
+    // 收尾时按确认串的真实状态恢复 —— 无条件打开会绕过刚加的门控
+    rEls.dryBtn.disabled = false;
+    syncRecoverWord();
   }
 }
 
@@ -2015,18 +2148,12 @@ rEls.list?.addEventListener('change', (e) => {
   else recoverState.sel.delete(box.dataset.recoverId);
   renderRecoverable();
 });
-rEls.btn?.addEventListener('click', () => {
-  recoverState.open = true;
-  rEls.msg.textContent = '';
-  renderRecoverable();
-});
-rEls.cancel?.addEventListener('click', () => {
-  recoverState.open = false;
-  rEls.msg.textContent = '';
-  renderRecoverable();
-});
-rEls.dry?.addEventListener('click', () => callRecover(true));
+rEls.btn?.addEventListener('click', openRecoverDrawer);
+rEls.dryBtn?.addEventListener('click', () => callRecover(true));
 rEls.go?.addEventListener('click', () => callRecover(false));
+rEls.scrim?.addEventListener('click', closeRecoverDrawer);
+$('rdrawerClose')?.addEventListener('click', closeRecoverDrawer);
+$('rdrawerCancel')?.addEventListener('click', closeRecoverDrawer);
 
 const visibleTasks = () => {
   const d = taskState.data;
@@ -2683,8 +2810,7 @@ function checkLine(data) {
  * 进程探测 → 备份 → 事务+外键 → VACUUM+自检。被拒时服务端说清卡在哪一步。
  */
 /* 会话清理的确认串，与文件清理同一条规矩：输对之前按钮按不动。
-   两个抽屉做同一件事，交互不该一个"先点再报错"、一个"输对才亮"。 */
-const TASK_PURGE_WORD = '清理';
+   词由服务端给（见上面 confirmWords）。 */
 
 async function callPurge(dryRun) {
   const d = taskState.data;
@@ -2714,7 +2840,7 @@ async function callPurge(dryRun) {
     tEls.msg.textContent = err.message;
   } finally {
     // 收尾时按确认串的真实状态恢复，不要无条件打开 —— 那会绕过刚加的门控
-    tEls.go.disabled = tEls.word.value !== TASK_PURGE_WORD;
+    tEls.go.disabled = tEls.word.value !== TASK_PURGE_WORD();
     tEls.dryBtn.disabled = false;
     tEls.go.textContent = '删除';
   }
@@ -2871,14 +2997,14 @@ tEls.age.addEventListener('change', () => {
 tEls.search.addEventListener('input', () => { taskState.q = tEls.search.value.trim().toLowerCase(); renderTaskList(); });
 tEls.sort.addEventListener('change', () => { taskState.sort = tEls.sort.value; renderTaskList(); });
 function syncTaskWord() {
-  const ok = tEls.word.value === TASK_PURGE_WORD;
+  const ok = tEls.word.value === TASK_PURGE_WORD();
   tEls.go.disabled = !ok;
   if (ok) {
     tEls.msg.textContent = '';
     tEls.msg.className = 'drawer-msg';
   } else if (tEls.word.value.length) {
     tEls.msg.className = 'drawer-msg';
-    tEls.msg.textContent = `还差「${TASK_PURGE_WORD.slice(tEls.word.value.length)}」—— 输全才能删除。`;
+    tEls.msg.textContent = `还差「${TASK_PURGE_WORD().slice(tEls.word.value.length)}」—— 输全才能删除。`;
   }
 }
 tEls.word.addEventListener('input', syncTaskWord);

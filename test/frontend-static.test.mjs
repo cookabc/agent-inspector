@@ -316,9 +316,68 @@ test('点推荐清理却什么都删不掉时，不许给一个按了没反应�
   assert.match(app, /showToast\(dropped/);
 });
 
-test('两个抽屉的确认串都是"输对才亮"，不是"点了才报错"', () => {
-  assert.match(app, /const PURGE_WORD = '彻底删除'/);
-  assert.match(app, /const TASK_PURGE_WORD = '清理'/);
+test('三条改动磁盘的路径共用同一套确认交互', () => {
+  /* 实测被指出来过：同样是"要动手了"，三条路径的交互居然不一样 ——
+     文件清理和会话清理进抽屉，回灌却把确认区塞在列表下面内联展开；
+     按钮顺序也各排各的。同一个工具里出现两种确认姿势，人会怀疑自己点错了地方。
+
+     统一后的规矩（这条测试锁住它）：
+       ① 列表在页面上浏览与勾选，**确认一律进抽屉**
+       ② 每个抽屉都有：统计 / 说明 / 待处理清单 / 确认串输入 / 空跑（有意义的才有）
+       ③ 按钮顺序：辅助动作 → 取消 → 主操作（最右）
+       ④ 主操作在动作完成后立刻关抽屉，结果用 toast 搬到屏幕上
+       ⑤ 确认串输对之前，主按钮按不动 */
+
+  // ① 三个抽屉都在
+  for (const id of ['drawer', 'tdrawer', 'rdrawer']) {
+    assert.match(html, new RegExp(`id="${id}"[^>]*role="dialog"`), `${id} 要是一个 dialog`);
+    assert.match(html, new RegExp(`id="${id}"[^>]*aria-modal="true"`), `${id} 要有 aria-modal`);
+  }
+
+  // ② 三个抽屉都有确认串输入 + 主操作按钮
+  for (const [box, word, go] of [
+    ['purgeConfirm', 'purgeWord', 'drawerGo'],
+    ['tConfirmBox', 'tWord', 'tdrawerGo'],
+    ['rConfirmBox', 'rWord', 'rdrawerGo'],
+  ]) {
+    assert.match(html, new RegExp(`id="${box}"`), `缺确认串区：${box}`);
+    assert.match(html, new RegExp(`id="${word}"`), `缺确认串输入：${word}`);
+    assert.match(html, new RegExp(`id="${go}"`), `缺主操作按钮：${go}`);
+  }
+
+  // ③ 主操作按钮在取消之后（DOM 顺序 = 视觉顺序，两者都在右侧按钮组里）
+  for (const [cancel, go] of [['drawerCancel', 'drawerGo'], ['tdrawerCancel', 'tdrawerGo'], ['rdrawerCancel', 'rdrawerGo']]) {
+    const ci = html.indexOf(`id="${cancel}"`);
+    const gi = html.indexOf(`id="${go}"`);
+    assert.ok(ci > 0 && gi > 0, `${cancel} / ${go} 都要存在`);
+    assert.ok(ci < gi, `${go} 要排在 ${cancel} 后面（主操作在最右）`);
+  }
+
+  // ④ 三条路径都在动作成功后关抽屉 —— 不能一条关、一条留
+  assert.match(app, /closeDrawer\(\);\s*\n\s*showToast\(/);
+  assert.match(app, /closeRecoverDrawer\(\);\s*\n\s*showToast\(/);
+
+  // ⑤ 回灌的确认区不能再内联展开在列表下面
+  assert.doesNotMatch(html, /class="recover-confirm"/, '回灌的确认要进抽屉，不要内联');
+});
+
+test('三条写入路径的确认串都是"输对才亮"，且来自同一份定义', () => {
+  /* 确认串以前散在四处：前端两个常量、服务端两条字面量、cursor-purge 里
+     一个没人 import 的死导出。改一处忘另一处，界面就会放行一个服务端
+     必然拒绝的请求 —— 而且三条路径用三个词，"清理"既用于删除又差点用于写入。
+     现在只有 lib/confirm-words.mjs 一份，服务端校验它、随 /api/scan 下发，
+     前端只读下发的值。 */
+  // 前端不许自己写死这几个字
+  assert.doesNotMatch(app, /const PURGE_WORD = '彻底删除'/);
+  assert.doesNotMatch(app, /const TASK_PURGE_WORD = '清理'/);
+  assert.match(app, /const PURGE_WORD = \(\) => confirmWords\(\)\.FILES/);
+  assert.match(app, /const TASK_PURGE_WORD = \(\) => confirmWords\(\)\.SESSION/);
+  assert.match(app, /const RECOVER_WORD = \(\) => confirmWords\(\)\.RECOVER/);
+
+  // 三条路径都要有 input 监听 —— 少一条就是"按钮一直亮着，点了才报错"
+  assert.match(app, /els\.purgeWord\.addEventListener\('input', syncPurgeWord\)/);
+  assert.match(app, /tEls\.word\.addEventListener\('input', syncTaskWord\)/);
+  assert.match(app, /rEls\.word\?\.addEventListener\('input', syncRecoverWord\)/);
   assert.match(app, /els\.drawerGo\.disabled = !ok/);
   assert.match(app, /tEls\.go\.disabled = !ok/);
   // 收尾时按真实状态恢复，不要无条件打开

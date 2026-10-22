@@ -265,20 +265,9 @@
       <div class="recover-list" id="recoverList"></div>
       <div class="recover-foot" id="recoverFoot" hidden>
         <span>已选 <b id="recoverCount">0</b> 个会话 · <b id="recoverBubbles">0</b> 条消息</span>
-        <button class="btn btn-primary btn-sm" id="recoverBtn" type="button">回灌到 Cursor…</button>
+        <button class="btn btn-primary btn-sm" id="recoverBtn" type="button">回灌…</button>
       </div>
-      <div class="recover-confirm" id="recoverConfirm" hidden>
-        <p id="recoverConfNote"></p>
-        <label class="purge-confirm">输入 <b id="recoverWordHint">回灌</b> 确认
-          <input id="recoverWord" autocomplete="off" spellcheck="false">
-        </label>
-        <div class="recover-confirm-btns">
-          <button class="btn btn-ghost btn-sm" id="recoverCancel" type="button">取消</button>
-          <button class="btn btn-ghost btn-sm" id="recoverDry" type="button">空跑核对</button>
-          <button class="btn btn-primary btn-sm" id="recoverGo" type="button">确认回灌</button>
-        </div>
-        <p class="drawer-msg" id="recoverMsg"></p>
-      </div>
+
     </div>
   </section>
 
@@ -413,6 +402,50 @@
       <button class="btn btn-ghost" id="tdryBtn" type="button">先空跑核对</button>
       <button class="btn btn-ghost" id="tdrawerCancel" type="button">取消</button>
       <button class="btn btn-danger" id="tdrawerGo" type="button">删除</button>
+    </div>
+  </footer>
+</aside>
+
+<!-- ── 回灌确认 ──────────────────────────────────────────────
+     与上面两个抽屉同一套：列表在页面上浏览，确认进抽屉。
+     回灌是三条路径里唯一**往库里加东西**的，所以主操作按钮用 primary
+     而不是 danger —— 它不是删除，别让它看起来像。 -->
+<div class="drawer-scrim" id="rscrim" hidden></div>
+<aside class="drawer" id="rdrawer" hidden role="dialog" aria-modal="true" aria-labelledby="rdrawerTitle" tabindex="-1">
+  <header class="drawer-head">
+    <h3 id="rdrawerTitle">确认回灌</h3>
+    <button class="btn btn-ghost btn-icon" id="rdrawerClose" type="button" aria-label="关闭">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+
+  <div class="drawer-body">
+    <div class="drawer-stats" id="rdrawerStats"></div>
+    <p class="tdrawer-note" id="rdrawerNote"></p>
+
+    <div class="drawer-list-head">
+      <span>将要回灌的会话</span>
+      <span id="rdrawerCount"></span>
+    </div>
+    <ul class="drawer-list" id="rdrawerList"></ul>
+
+    <div id="rdryWrap" hidden>
+      <div class="drawer-list-head" style="margin-bottom:8px"><span>空跑核对：实际会写入的行</span></div>
+      <ul class="dryrun" id="rdryList"></ul>
+    </div>
+
+    <label class="purge-confirm" id="rConfirmBox" hidden>
+      <span>回灌会往库里写入新会话（会先自动备份）。请输入 <code>回灌</code> 以确认：</span>
+      <input type="text" id="rWord" placeholder="回灌" autocomplete="off">
+    </label>
+  </div>
+
+  <footer class="drawer-foot">
+    <p class="drawer-msg" id="rdrawerMsg" role="status"></p>
+    <div class="drawer-btns">
+      <button class="btn btn-ghost" id="rdryBtn" type="button">先空跑核对</button>
+      <button class="btn btn-ghost" id="rdrawerCancel" type="button">取消</button>
+      <button class="btn btn-primary" id="rdrawerGo" type="button">回灌</button>
     </div>
   </footer>
 </aside>
