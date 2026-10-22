@@ -112,9 +112,27 @@ test('普通文件在非保护分类里可选', () => {
   }
 });
 
-test('分类缺失时按 review 处理 —— 不因为查不到就放行，也不误锁', () => {
-  assert.equal(isSelectable({}), true);
-  assert.equal(isSelectable({ link: true }), false);
+test('分类查不到时不放行 —— 判不出来就不许勾', () => {
+  /* 这条曾被写成相反的样子：`cat?.verdict ?? 'review'`，即"查不到就当谨慎清理"，
+     于是分类表与规则表短暂不一致时，未归类的东西成了默认可删项。
+     两种错法的代价不对称：误锁一个需要人手动放开（可恢复），
+     误放一个受保护的东西（不可恢复）。所以缺省必须是 never。 */
+  assert.equal(isSelectable({}), false, '没有分类 → 不可勾');
+  assert.equal(isSelectable({}, null), false, '分类为 null → 不可勾');
+  assert.equal(isSelectable({}, {}), false, '分类对象缺 verdict → 不可勾');
+  assert.equal(isSelectable({}, { verdict: 'review' }), true, '明确给了 review 才可勾');
+  assert.equal(isSelectable({ link: true }, { verdict: 'review' }), false, '软链接一律不可勾');
+});
+
+test('fmtBytes 对脏输入不印出 NaN / Infinity / 负数', () => {
+  /* 界面上一旦出现 "NaN B" 或 "-1 B"，人只会以为工具算错了。
+     目录在删除回执里用 -1 当哨兵，那个值不该直接流到格式化函数里。 */
+  for (const bad of [NaN, Infinity, -Infinity, undefined, null, -1, -1048576, 'abc', {}, []]) {
+    const out = fmtBytes(bad);
+    assert.doesNotMatch(out, /NaN|Infinity|^-/, `fmtBytes(${String(bad)}) 印出了 ${out}`);
+  }
+  assert.equal(fmtBytes(-1), '0 B');
+  assert.equal(fmtBytes(NaN), '0 B');
 });
 
 test('真实形态：Codex 旧版本目录里的 codex 是个软链接，同目录的其他文件不是', () => {

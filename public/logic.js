@@ -20,12 +20,20 @@ const GB = 1024 ** 3, MB = 1024 ** 2, KB = 1024;
  * 点「推荐清理」→ 选区里混进一个软链接 → 服务端「先校验全批再动手」→
  * 整批被拒。用户看到的是"明明勾上了却删不掉"，而错误信息只提了那一个文件。
  *
+ * 失败方向必须是「不放行」。原来缺省按 'review' 处理 —— 分类查不到时
+ * 默认可勾选，等于"我们不知道自己是什么，那就当你能删"。分类表与规则表
+ * 一旦短暂不一致（加规则忘了补分类），未归类的东西就成了默认可清理项。
+ * 现在缺省按 'never'：判不出来就不许勾。这只会让某个新分类暂时不能删，
+ * 不会让受保护的东西被删掉 —— 两种错法的代价不对称。
+ *
  * @param {{link?: boolean, c: string}} file 扫描出来的文件行
- * @param {{verdict?: string}} [cat] 该行所属分类（缺省时按 unknown 处理）
+ * @param {{verdict?: string}} [cat] 该行所属分类（缺省时按不可清理处理）
  */
 export function isSelectable(file, cat) {
-  const verdict = cat?.verdict ?? 'review';
-  return verdict !== 'never' && !file.link;
+  if (file.link) return false;
+  const verdict = cat?.verdict;
+  if (!verdict) return false;          // 判不出来 → 不许勾
+  return verdict !== 'never';
 }
 
 /**
@@ -41,6 +49,14 @@ export function isSelectable(file, cat) {
  * 但它们的存在是"任何体积都不会印出 1024"这条不变量的一部分。
  */
 export function fmtBytes(n) {
+  /* 入口先归一：任何非有限数、负数、非数字都当 0。
+     实测过 NaN / undefined / Infinity / -1 会原样印成 "NaN B"、"undefined B"、
+     "Infinity EB"、"-1 B"（目录用 -1 当哨兵），而界面上一旦出现这些字样，
+     人只会以为工具算错了 —— 宁可显示 0 B 并让别处去解释真正的原因。 */
+  const num = Number(n);
+  if (!Number.isFinite(num) || num < 0) n = 0;
+  else n = num;
+
   const UNITS = [
     ['EB', 1024 ** 6, 2],
     ['PB', 1024 ** 5, 2],

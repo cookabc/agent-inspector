@@ -322,6 +322,19 @@ async function purge(rel, appId, targetKey) {
   const st = await fsp.lstat(abs);
   const bytes = st.isDirectory() ? -1 : st.size;
 
+  /* 备份目录本身不能落在删除目标里 —— 那样备份会被随后那次 rm 一起删掉，
+     结果是"备份成功、备份不存在"。实测场景：--root 指向仓库自身、
+     勾选删除 backups/ 时，落点就在 backups/ 底下。
+     这不是理论问题：它把唯一的退路变成了幻觉。 */
+  const bdir = path.resolve(BACKUP_DIR);
+  const target = path.resolve(abs);
+  if (target === bdir || target.startsWith(bdir + path.sep) ||
+      bdir === target || bdir.startsWith(target + path.sep)) {
+    throw httpError(400,
+      `拒绝：${rel} 与备份目录互相包含 —— 备份会落进被删范围里，等于没有备份。` +
+      `请换一个审计根目录（--root），或先手动移走备份。`);
+  }
+
   const backup = await backupBeforeDelete(abs, appId, rel);
   await fsp.rm(abs, { recursive: true, force: true });
   return { path: rel, app: appId, target: targetKey, bytes, backup };
@@ -374,7 +387,16 @@ function isProtected(plan, target, rel, directory = false, abs = null) {
     const refined = app.refineCategory(rel, abs, cat);
     if (refined) cat = refined;
   }
-  return Boolean(app.CATEGORIES[cat]?.locked);
+  /* 分类查不到时**不放行**。原来写的是 Boolean(...?.locked)，规则表产出一个
+     CATEGORIES 里没有的 id 时结果是 false —— 判不出来反而当可删。
+     加一条规则忘了补分类，就会静默打开一个删除口子。宁可拒绝并要求先补分类。 */
+  const meta = app.CATEGORIES[cat];
+  if (!meta) {
+    throw httpError(500,
+      `拒绝删除：${app.id} 的规则产出了未定义的分类「${cat}」（${rel}）。` +
+      `先在 lib/apps/${app.id}.mjs 的 CATEGORIES 里补上它，再重试。`);
+  }
+  return Boolean(meta.locked);
 }
 
 /* ── HTTP ─────────────────────────────────────────────────── */

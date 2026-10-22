@@ -248,3 +248,47 @@ test('归档会话自己名下没有数据时不会误删别人的 blob', async 
   const after = keysOf(dbPath);
   assert.ok(after.some((k) => k === `agentKv:blob:${hexOf(keep)}`), '活会话的 blob 不能被归档会话的删除带走');
 });
+
+/* ── 引用计数位集的边界 ──────────────────────────────────── */
+
+/**
+ * 位集有两个只在特定规模/形状下才暴露的缺陷，都已修，这里钉住。
+ * 它们的共同点是"平时测不出来"：小夹具下永远走不到那两条分支。
+ */
+
+test('下标 31 的 owner 不能被漏掉（位集最高位）', async (t) => {
+  /* 位集按 32 个会话一 word 存。取最低位那段原来是 `Math.log2(bit | 0)`；
+     对 1<<31，`bit | 0` 是负数，log2 得 NaN，下标变成 sids[NaN] = undefined。
+
+     后果方向是**该删的没删**（不是删错）：onlyIn 里 `goneSet.has(undefined)`
+     恒为 false，于是这个 blob 被判成"还有人用"。两个方向都验证过 ——
+     「留下一个 owner」时两版结果一样（都正确地不删），
+     只有**三个 owner 全在删除集里**时才暴露：该 blob 永远删不掉。
+
+     触发条件：
+        · >= 32 个会话，使下标 31 存在
+        · 这个 blob 被 >= 3 个会话引用（否则走 single 快路径，不进位集）
+        · 下标 31 的那个会话也在删除集里
+     夹具就按这个形状造。 */
+  const shared = Buffer.from('shared by S00/S05/S31, all being deleted');
+
+  const sessions = [];
+  for (let i = 0; i < 32; i++) {
+    sessions.push({ id: `S${String(i).padStart(2, '0')}`, messages: ['own filler'] });
+  }
+  for (const i of [0, 5, 31]) sessions[i].messages.push(`refs ${hexOf(shared)}`);
+
+  const { ide, dbPath } = await makeDb(t, { blobs: [{ content: shared }], sessions });
+  const r = analyzePurge(ide);
+  assert.equal(r.sessions.length, 32, '必须有 32 个会话，否则最高位没被用到');
+
+  // 三个 owner 全删 → 这个 blob 应当被判定为"可删"
+  const { purgeSessions } = await import('../lib/cursor-purge.mjs');
+  await purgeSessions(ide, ['S00', 'S05', 'S31'], {
+    backupDir: path.join(path.dirname(dbPath), 'bk'),
+  });
+
+  const left = keysOf(dbPath);
+  assert.ok(!left.includes(`agentKv:blob:${hexOf(shared)}`),
+    '三个引用它的会话都删了，这个 blob 就该一起回收；还在说明下标 31 的 owner 被漏掉了');
+});
