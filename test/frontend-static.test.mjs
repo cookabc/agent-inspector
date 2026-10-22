@@ -415,6 +415,25 @@ test('0 个会话的工具不给筛选钮（点了必然空）', () => {
   assert.match(app, /这次汇总里没有它的会话/);
 });
 
+test('宽屏与单列的阅读顺序一致：会话管理在前，文件清单在后', () => {
+  /* 并排时靠 grid-template-areas 摆位置，落回单列时靠 DOM 顺序。
+     两边一不一致不会报错，只会让人在窄屏上读到一个不同的顺序 ——
+     宽屏"左会话右文件"，缩窄之后突然变成"文件在前"，同一页两个版本。
+
+     判据：DOM 里 #tasks 在 #files 之前，且 grid-template-areas 的第一行
+     内容行也是 tasks 在前。 */
+  const ti = html.indexOf('id="tasks"');
+  const fi = html.indexOf('id="files"');
+  assert.ok(ti > 0 && fi > 0, '两块都要在页面上');
+  assert.ok(ti < fi, 'DOM 顺序：会话管理要在文件清单之前（单列时按它排）');
+
+  const areas = css.match(/grid-template-areas:\s*\n\s*"([^"]+)"\s*\n\s*"([^"]+)"/);
+  assert.ok(areas, '找不到 grid-template-areas 的定义');
+  const bodyRow = areas[2].split(/\s+/);
+  assert.deepEqual(bodyRow, ['tasks', 'files'],
+    `宽屏并排的两列也要会话在前：实际是 ${bodyRow.join(' | ')}`);
+});
+
 test('工具标识色不能借用状态色', () => {
   /* 状态色是固定语义：绿=安全、黄=谨慎、橙=异常、红=禁止。
      拿它来区分工具，"黄色"就会同时意味着"这是 Cursor"和"这要小心"，

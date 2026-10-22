@@ -165,42 +165,6 @@
     </section>
   </section>
 
-  <!-- ── 逐项清单（文件）────────────────────────────────── -->
-  <section class="panel" id="files" aria-labelledby="listTitle">
-    <h2 id="listTitle">文件清单</h2>
-    <p class="lede" id="splitLede"></p>
-    <div class="split" id="split"></div>
-
-    <div class="toolbar">
-      <label class="search">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
-          <circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>
-        </svg>
-        <input type="search" id="search" placeholder="搜索路径…（按 / 聚焦）" autocomplete="off" spellcheck="false">
-      </label>
-      <div class="chips" id="statusChips" role="group" aria-label="按可清理程度筛选"></div>
-      <div class="toolbar-end">
-        <label class="sort">
-          <span>排序</span>
-          <select id="sortSel">
-            <option value="size">体积</option>
-            <option value="time">修改时间</option>
-            <option value="name">名称</option>
-          </select>
-        </label>
-        <div class="btn-pair" role="group" aria-label="逐项清单的勾选快捷操作">
-          <button class="btn btn-ghost btn-sm" id="fileSelAll" type="button">全选</button>
-          <button class="btn btn-ghost btn-sm" id="clearSelBtn" type="button">取消</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 空态提示紧贴在工具栏下面：离得远了，人看不出是哪个条件筛空的。 -->
-    <p class="empty" id="emptyHint" hidden>没有匹配的条目。</p>
-
-    <div class="groups" id="groups"></div>
-  </section>
-
   <!-- ── 会话管理 ───────────────────────────────────────── -->
   <section class="panel" id="tasks" aria-labelledby="taskTitle">
     <h2 id="taskTitle">会话管理</h2>
@@ -269,6 +233,42 @@
       </div>
 
     </div>
+  </section>
+
+  <!-- ── 逐项清单（文件）────────────────────────────────── -->
+  <section class="panel" id="files" aria-labelledby="listTitle">
+    <h2 id="listTitle">文件清单</h2>
+    <p class="lede" id="splitLede"></p>
+    <div class="split" id="split"></div>
+
+    <div class="toolbar">
+      <label class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>
+        </svg>
+        <input type="search" id="search" placeholder="搜索路径…（按 / 聚焦）" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="chips" id="statusChips" role="group" aria-label="按可清理程度筛选"></div>
+      <div class="toolbar-end">
+        <label class="sort">
+          <span>排序</span>
+          <select id="sortSel">
+            <option value="size">体积</option>
+            <option value="time">修改时间</option>
+            <option value="name">名称</option>
+          </select>
+        </label>
+        <div class="btn-pair" role="group" aria-label="逐项清单的勾选快捷操作">
+          <button class="btn btn-ghost btn-sm" id="fileSelAll" type="button">全选</button>
+          <button class="btn btn-ghost btn-sm" id="clearSelBtn" type="button">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 空态提示紧贴在工具栏下面：离得远了，人看不出是哪个条件筛空的。 -->
+    <p class="empty" id="emptyHint" hidden>没有匹配的条目。</p>
+
+    <div class="groups" id="groups"></div>
   </section>
 
   <!-- ── 诊断 ───────────────────────────────────────────── -->

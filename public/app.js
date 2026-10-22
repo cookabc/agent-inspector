@@ -378,10 +378,12 @@ function renderHero() {
   // 总量下面只说一件事：这里面有多少是失控日志。其余的分档数字交给下面的筛选条，
   // 不在这里重复一遍。
   const shape = `${esc(state.index.label)} 共 <b>${t.files.toLocaleString()}</b> 个文件、<b>${t.dirs.toLocaleString()}</b> 个目录。`;
+  /* 只说总量，不再逐家列一遍 —— 顶部那排标签上每家已经写着自己的体积，
+     在这里重复会让这句折成三行，把总览卡撑高一截（实测 1280 宽下多出 45px）。
+     想看"哪家占得多"抬头看标签，比在这里读一串逗号分隔的名字快。 */
   const others = state.apps.filter((a) => a.app !== state.appId && a.totals.bytes > 0);
   const grand = others.length
-    ? `${state.apps.length} 个工具加起来 <b>${fmtBytes(state.scan.grand.bytes)}</b>，另有 ${
-        others.map((a) => `${esc(a.label)} ${fmtBytes(a.totals.bytes)}`).join('、')}。`
+    ? `这台机器上 ${state.apps.length} 个工具合计 <b>${fmtBytes(state.scan.grand.bytes)}</b>。`
     : '';
   els.heroSub.innerHTML = runawayBytes > 0
     ? shape + `其中 <b>${fmtBytes(runawayBytes)}</b> 来自 <b>${runawayCount}</b> 个失控放大的日志，` +
@@ -1244,11 +1246,11 @@ function renderRecommend() {
      ZCode/Codex/Claude 下成立；Cursor 的推荐项是「已安装扩展」，
      那句"删掉不影响会话、配置和凭据"对它就是假话。 */
   els.recName.textContent = all.length <= 2 ? all.map((c) => c.label).join(' · ') : '文件与日志';
+  /* 这一行只留"共几项"和例外说明。
+     "删了会怎样"挪到按钮旁边那行去说 —— 两处都在讲后果时，留位置更靠下的
+     那个：读到它紧接着就能决定按不按按钮，不用再往上找。 */
   els.recSub.innerHTML =
-    `${esc(cats.map((c) => c.label).join('、'))}，共 <b>${count.toLocaleString()}</b> 项。` +
-    (cats.every((c) => c.verdict === 'safe' || c.verdict === 'junk')
-      ? `删掉不影响会话、配置和凭据。`
-      : `删了有代价 —— 每一类下面都写了具体会怎样。`) +
+    `共 <b>${count.toLocaleString()}</b> 项。` +
     // 范围里有删不掉的（软链接、受保护）就照实说，别让"共 N 项"显得比实际多
     (blocked > 0
       ? `<span class="rec-off">另有 ${blocked.toLocaleString()} 项删不掉（软链接或受保护内容），已排除。</span>`
@@ -1263,7 +1265,10 @@ function renderRecommend() {
     : '已经一项都不剩了，把上面的条目勾回来';
 
   els.recCap.innerHTML =
-    `勾选后摊开确认清单，<b>不会立刻删除任何东西</b>。` +
+    (cats.every((c) => c.verdict === 'safe' || c.verdict === 'junk')
+      ? `删掉不影响会话、配置和凭据。`
+      : `<b>删了有代价</b> —— 每一类下面都写了具体会怎样。`) +
+    ` 勾选后摊开确认清单，<b>不会立刻删除任何东西</b>。` +
     (off.length
       ? `<span class="rec-off">已排除 <code>${off.map((c) => esc(c.label)).join('、')}</code> — 点上面的条目可以放回来。</span>`
       : '');

@@ -170,8 +170,10 @@ p { margin: 0; }
   gap: 18px;
 }
 
-/* 文件清单和会话管理并排：两块都是"一长串可筛可勾的条目"，纵向摞在一起
-   会让人滚两遍长列表。够宽时各占一半，窄屏自动落回单列。 */
+/* 会话管理在左、文件清单在右：两块都是"一长串可筛可勾的条目"，
+   纵向摞在一起会让人滚两遍长列表。够宽时并排，窄屏自动落回单列。
+   单列时的顺序由 DOM 决定 —— HTML 里会话管理也在前，所以两种布局的
+   阅读顺序一致，不会宽屏是"左会话右文件"、窄屏却变成"文件在前"。 */
 .single {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -179,14 +181,16 @@ p { margin: 0; }
   align-items: start;
 }
 
-@media (min-width: 1180px) {
+@media (min-width: 1024px) {
   .single {
-    /* 文件清单是主内容（三块分组 + 逐项条目），会话管理是列在旁边的一列，
-       所以给左边多一点。 */
-    grid-template-columns: minmax(0, 1.32fr) minmax(0, 1fr);
+    /* 会话管理在左，文件清单在右。
+       宽度仍按"内容有多少"分，不按左右：文件清单是长的那一栏
+       （几百上千行），会话通常只有个位数到几十条，给窄的一边反而让它
+       在左侧拖出一大片空白。1 : 1.22 让长的那一栏拿到更多横向空间。 */
+    grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr);
     grid-template-areas:
       "hero  hero"
-      "files tasks"
+      "tasks files"
       "diag  diag";
   }
   .single > .hero    { grid-area: hero; }
@@ -198,10 +202,10 @@ p { margin: 0; }
      所以它自然落在第一行，不需要再写 grid-row。 */
   .single > .all-view { grid-column: 1 / -1; }
 
-  /* 会话管理比文件清单短得多（Claude 这类压根只有一段说明）。
-     让它跟着滚：在左栏那串长清单里往下翻时，右侧的会话过滤与勾选始终在手边，
-     不会翻到一半就只剩空白。 */
-  .single > #tasks {
+  /* 两栏都很长，各自滚到底要滚两遍。让**右栏**跟着滚：
+     左边那串会话是主内容（标题长、行多），往下翻它时右侧的文件分类与筛选
+     始终在手边 —— 翻到一半看见"这个文件能删"，不用滚回页面顶部去找勾选。 */
+  .single > #files {
     position: sticky;
     top: 16px;
     max-height: calc(100vh - 32px);
@@ -210,9 +214,9 @@ p { margin: 0; }
   }
 }
 
-/* 布局落回单列时不许吸顶：那时它是正常的一整块，吸住会把页面盖住。 */
-@media (max-width: 1179px) {
-  .single > #tasks { position: static; max-height: none; overflow: visible; }
+/* 布局落回单列时不许吸顶：那时它是一整块，吸住会把页面盖住。 */
+@media (max-width: 1023px) {
+  .single > #files { position: static; max-height: none; overflow: visible; }
 }
 
 /* 让 <a>/按钮 有统一的可见焦点 */
@@ -376,7 +380,7 @@ p { margin: 0; }
 .hero {
   display: flex;
   flex-direction: column;
-  padding: clamp(22px, 3.4vw, 36px);
+  padding: clamp(16px, 2vw, 22px);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   background:
@@ -397,7 +401,7 @@ p { margin: 0; }
 }
 
 .hero-figure {
-  font-size: clamp(48px, 7.6vw, 84px);
+  font-size: clamp(34px, 4.4vw, 48px);
   font-weight: 700;
   letter-spacing: -.045em;
   line-height: 1;
@@ -410,13 +414,13 @@ p { margin: 0; }
 
 /* ── 可以清理的：两条并排的清理线 ───────────────────────── */
 
-.clean { display: flex; flex-direction: column; justify-content: center; gap: 12px; }
+.clean { display: flex; flex-direction: column; justify-content: center; gap: 9px; }
 
 /* 清理线现在长在总览卡里面：左边是分母，右边是分子。一条细线分开就够，
    不再各占一张卡 —— 中间隔一道页面底色，反而要人自己把两件事接起来。 */
 .hero > .clean {
-  margin-top: 20px;
-  padding-top: 20px;
+  margin-top: 12px;
+  padding-top: 12px;
   border-top: 1px solid var(--line);
 }
 
@@ -425,18 +429,21 @@ p { margin: 0; }
 @media (min-width: 1000px) {
   .hero {
     display: grid;
-    grid-template-columns: minmax(300px, 400px) minmax(0, 1fr);
+    /* 左栏的下限不能太紧：那句"共 N 个文件…另有 Claude Code …"是按
+       `62ch` 排的，栏一窄就被压成 4 行，卡的高度反而上去了。
+       320px 时实测 4 行、90px；放到 380px 收成 3 行。 */
+    grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
     /* 左栏只有"总量 + 一句出处"，右栏叠着两条清理线 —— 高度差被
        align-items:start 全丢在左下角，看着像块没填满的版面。
        居中让留白摊到上下两边，读起来是"这栏就这么多内容"，不是"少画了东西"。 */
     align-items: center;
-    gap: 0 32px;
+    gap: 0 26px;
   }
   .hero > .clean {
     grid-column: 2;
     margin-top: 0;
     padding-top: 0;
-    padding-inline-start: 32px;
+    padding-inline-start: 26px;
     border-top: 0;
     border-inline-start: 1px solid var(--line);
   }
@@ -466,7 +473,7 @@ p { margin: 0; }
 .lane {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 9px;
   padding: 0;
   border: 0;
   background: none;
@@ -488,7 +495,17 @@ p { margin: 0; }
   }
 }
 
-.lane-head { display: flex; flex-direction: column; gap: 1px; }
+/* 名称与数字并排：竖着排时这一块占 49px，横过来只占一行。
+   用 flex-start 而不是 space-between —— 右栏在宽屏有 700px+，
+   两端对齐会把数字甩到最右边，和上面那句说明之间留出一条空带，
+   看起来像两个不相干的东西。名称、数字、口径说明依次读下来才对。 */
+.lane-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  min-width: 0;
+}
 .lane-name {
   font-size: 11px;
   font-weight: 600;
@@ -497,7 +514,7 @@ p { margin: 0; }
   color: var(--muted);
 }
 .lane-figure {
-  font-size: clamp(26px, 3vw, 32px);
+  font-size: clamp(22px, 2.4vw, 27px);
   font-weight: 700;
   letter-spacing: -.035em;
   line-height: 1.15;
@@ -513,8 +530,9 @@ p { margin: 0; }
   flex-wrap: wrap;
   gap: 10px 14px;
   margin-top: auto;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
+  /* 不再加一条上边框：这条清理线本来就在 hero 卡里，上面已经有一条
+     细线分隔"总量/可清理"，再画一条只是多一层噪音，多占 12px。 */
+  padding-top: 0;
 }
 .lane-foot .btn { padding: 9px 16px; font-size: 13.5px; }
 /* 说明文字吃掉按钮右边的整片宽度：卡里这么宽的一条底边只放两样东西，
@@ -1167,13 +1185,15 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
 
 .app-warn {
   display: flex;
-  gap: 10px;
-  padding: 11px 13px;
+  gap: 9px;
+  padding: 9px 12px;
   border-radius: var(--r-md);
   border: 1px solid color-mix(in oklab, var(--st-serious) 40%, var(--line));
   background: color-mix(in oklab, var(--st-serious) 10%, var(--surface));
   font-size: 12.5px;
-  line-height: 1.6;
+  /* 1.6 是为大段正文定的；这条提示最多三行，收到 1.5 能省一行的高度，
+     折行处也不至于挤在一起。 */
+  line-height: 1.5;
   color: var(--ink-2);
 }
 .app-warn svg { width: 16px; height: 16px; flex: none; margin-top: 1px; color: var(--st-serious); }
@@ -1836,7 +1856,9 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: clamp(22px, 3vw, 32px);
+  /* 与 .hero 的真实内边距保持一致 —— 骨架和数据是两个尺寸的话，
+     数据一到手整页会往下跳一截。 */
+  padding: clamp(16px, 2vw, 22px);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   background: var(--surface);
@@ -1844,8 +1866,8 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
 /* hero 内部按真实布局分成"大数字 + 右侧清理卡"两栏 */
 .sk-hero {
   display: grid;
-  grid-template-columns: minmax(0, 400px) minmax(0, 1fr);
-  gap: 10px 32px;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 10px 26px;
   align-items: start;
 }
 .sk-hero .sk-line:nth-child(1) { grid-column: 1; }
@@ -1891,7 +1913,7 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
 .sk-w-full { width: 100%; }
 .sk-w-90 { width: 90%; }
 .sk-w-70 { width: 70%; }
-.sk-figure { width: min(320px, 60%); height: 64px; border-radius: var(--r-md); }
+.sk-figure { width: min(240px, 60%); height: 42px; border-radius: var(--r-md); }
 
 @keyframes sk-shimmer {
   from { background-position: 140% 0; }
