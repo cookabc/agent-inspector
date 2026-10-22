@@ -38,7 +38,7 @@ Cursor 是一个反向的例子：会话列表只认 `state.vscdb` 里的 `compo
 | | |
 |---|---|
 | 系统 | **macOS**。"移入废纸篓"用 `~/.Trash`，"在 Finder 中显示"用 `open -R` |
-| Node | **≥ 22.5**（`node:sqlite` 从这个版本起才有；22.5–23.3 需要 `--experimental-sqlite`，23.4 起不用）。在 Node 24 上开发与实测 |
+| Node | **≥ 22.5**（`node:sqlite` 从这个版本起才有；22.5–23.3 需要 `--experimental-sqlite`，23.4 起不用）。在 Node 24 上开发与实测，CI 另跑 22.5 与 26 |
 | 依赖 | 无。不用 `npm install` |
 
 非 macOS 上也能扫、能看、能彻底删除，但"移入废纸篓"和"在 Finder 中显示"没有落点 ——
@@ -269,7 +269,8 @@ Cursor 的清理方式与三家都不同，见下面「Cursor：为什么可以�
 
 zstd 用的是 Node 内置的 `zlib.zstdDecompressSync`（22.15 / 23.8 起有），
 所以这条兜底路径没有引入任何依赖。更老的 Node 上它直接不可用 —— 列表仍然完整，
-只是没有标题，`problems` 里会说明原因。
+只是那几条没有投影的会话按 id 显示，`problems` 里会写明是"当前 Node 没有内置 zstd"。
+**正常路径完全不受影响**：只要投影在，读列表根本不碰正文，22.5 上照样能读出全部标题。
 
 归档与置顶状态不在投影里，在 `storages/workspace.json` 的
 `global.archivedSessionIds` / `global.pinnedSessionIds`。这份文件读不到时，
@@ -493,7 +494,7 @@ test/frontend-static.test.mjs  前端静态检查：tablist 键盘模型、抽�
 
 ### 验证
 
-运行 `npm run check` 检查语法并执行回归测试（当前 178 个）。测试只使用临时扫描目录和临时 HOME，
+运行 `npm run check` 检查语法并执行回归测试（当前 180 个；Node 22.5 上有 13 个跳过 —— 见下）。测试只使用临时扫描目录和临时 HOME，
 不读取真实会话数据，也不操作真实废纸篓。它覆盖：各工具的扫描与历史面板、
 删除边界（根目录 / 绝对路径 / `..` / 符号链接 / 大小写别名 / 单文件目标 / 未知 app）、
 批量请求的原子性、废纸篓往返，以及"Claude Code 的按行删除在任何进程检查之前就被拒"
@@ -519,6 +520,9 @@ Codex 那份夹具把三个库都建出来 —— 其中两个**没有** `thread
 还有一条锁路径：`bodyRel` 必须能在该 app 自己扫出来的文件清单里找到 ——
 差一层目录就会变成"勾上的会话在文件清单里找不到对应正文"。
 CI 在 Linux、macOS 及 Node 22.5 / 24 / 26 上执行；Linux 跳过 macOS 废纸篓测试。
+Node 22.5 上有 13 个跳过：那个版本没有 `zlib.zstdCompressSync`，造不出 zstd 夹具。
+产品代码不受影响（读取侧有 null 守卫，且正常路径根本不碰正文），
+所以是让夹具跳过，而不是让夹具的短板把测试染红。
 
 ### 为什么要有 worker
 

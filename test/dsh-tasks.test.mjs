@@ -26,6 +26,15 @@ const classify = dshApp.classify;
 const WS = '/tmp/agent-inspector-ws-test';
 const SLUG = '--tmp-agent-inspector-ws-test--';
 
+/**
+ * 能不能造出真的 zstd 数据。
+ *
+ * `zlib.zstdCompressSync` 要到 Node 22.15 / 23.8 才有，而 CI 矩阵里有 22.5 ——
+ * 那一档造不出夹具。这不是产品代码的问题（读取侧有 null 守卫，退化路径本身
+ * 在最后一条测试里单独验），所以这里跳过而不是让夹具的短板把测试染红。
+ */
+const CAN_ZSTD = typeof zlib.zstdCompressSync === 'function';
+
 /** 造一个 ~/.dsh。spec.sessions 里的每一项要么给 projection，要么给 events。 */
 async function makeRoot(t, spec = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-inspector-dsh-'));
@@ -98,6 +107,28 @@ test('标题、cwd、步数、模型全部来自投影缓存，不解压正文',
   assert.equal(d.problems.length, 0, `不该有问题：${d.problems.join('；')}`);
 });
 
+test('有投影时完全不碰正文 —— 连 zstd 都不需要', async (t) => {
+  /* 这是整个模块的设计前提：列表只需要元数据，而元数据在未压缩的投影里。
+     验证方式是让正文**不存在**：只要读取路径碰了它，这里就会出问题
+     （体积会变 0、标题会退回 id、problems 会多一条解压失败）。
+     老 Node 上没有 zstd 也能读到标题，靠的就是这一条。 */
+  const id = 'session-bbbb1111-0000-0000-0000-0000000000b1';
+  const root = await makeRoot(t, {
+    sessions: [{
+      id,
+      projection: proj('只靠投影'),
+      identity: { createdAt: 1790000000000, cwd: os.tmpdir() },
+      bodyBytes: 2048,
+    }],
+  });
+
+  const d = await scanTasks(root);
+  const row = d.tasks.find((x) => x.id === id);
+  assert.equal(row.title, '只靠投影');
+  assert.equal(row.bytes, 2048);
+  assert.deepEqual(d.problems, [], `投影齐全时不该报任何问题：${JSON.stringify(d.problems)}`);
+});
+
 test('模型名把 provider 与 model 拼起来，缺一个就不硬拼分隔符', async (t) => {
   const a = 'session-aaaa0000-0000-0000-0000-00000000000a';
   const b = 'session-bbbb0000-0000-0000-0000-00000000000b';
@@ -115,6 +146,7 @@ test('模型名把 provider 与 model 拼起来，缺一个就不硬拼分隔符
 /* ── 兜底：投影缺失时解压 ─────────────────────────────────── */
 
 test('投影缺失时解压正文取标题，且只认用户自己发的那条', async (t) => {
+  if (!CAN_ZSTD) return t.skip('这台 Node 没有 zstdCompressSync，造不出夹具');
   const id = 'session-cccc0000-0000-0000-0000-00000000000c';
   const root = await makeRoot(t, {
     sessions: [{
@@ -138,6 +170,7 @@ test('投影缺失时解压正文取标题，且只认用户自己发的那条',
 });
 
 test('session/title 覆盖先前的兜底标题（改名后要以最后一条为准）', async (t) => {
+  if (!CAN_ZSTD) return t.skip('这台 Node 没有 zstdCompressSync，造不出夹具');
   const id = 'session-dddd0000-0000-0000-0000-00000000000d';
   const root = await makeRoot(t, {
     sessions: [{
@@ -165,6 +198,45 @@ test('正文不是合法 zstd 时不清空会话，只是没有标题', async (t
   assert.ok(row, '解不开正文不等于会话不存在');
   assert.equal(row.bytes, 300, '体积照旧从 stat 来');
   assert.match(row.title, new RegExp(id), '没有标题时退回 id，不编造');
+  // 缺标题这件事要说出来，不能让人以为工具读坏了
+  assert.ok(
+    d.problems.some((p) => p.includes('没有投影缓存')),
+    `缺标题必须报出来：${JSON.stringify(d.problems)}`,
+  );
+});
+
+test('没有投影时不能静默 —— 老 Node 上要说明是 zstd 不可用', async (t) => {
+  /* 这条要在两种 Node 上都跑：有 zstd 时说"从正文解压"，没有时说
+     "当前 Node 没有内置 zstd"。判据本身不依赖压缩能力，所以不 skip。 */
+  if (!CAN_ZSTD) {
+    // 造不出合法 zstd 也无所谓 —— 这条测的是"缺标题要报出来"，不是能不能解开
+  }
+  /* CI 在 Node 22.5 上跑，而 zlib.zstdDecompressSync 要到 22.15 / 23.8 才有。
+     那条路径下会话照样列出、体积照样算，只是没有标题 —— 必须明说原因，
+     否则看起来像"这个工具读不出标题"。 */
+  const id = 'session-aaaa1111-0000-0000-0000-0000000000a1';
+  const root = await makeRoot(t, {
+    sessions: [{
+      id,
+      projection: false,
+      // 没有 zstd 时给一段垃圾正文：这条测的是"缺标题要报出来"，
+      // 解不解得开不影响判据（两种 Node 上都要能过）。
+      ...(CAN_ZSTD
+        ? { events: [
+          { type: 'session', version: 4, id, createdAt: 1, cwd: os.tmpdir() },
+          { type: 'user/message', data: { content: [{ type: 'text', text: '问一句' }], source: { kind: 'user' } } },
+        ] }
+        : { bodyBytes: 128 }),
+    }],
+  });
+  const d = await scanTasks(root);
+  const row = d.tasks.find((x) => x.id === id);
+  assert.ok(row, '没有投影也要列出来');
+  const note = d.problems.find((p) => p.includes('没有投影缓存'));
+  assert.ok(note, `要报出缺投影：${JSON.stringify(d.problems)}`);
+  // 有 zstd 时说"从正文解压"，没有时说"当前 Node 没有内置 zstd"
+  const hasZstd = typeof (await import('node:zlib')).zstdDecompressSync === 'function';
+  assert.match(note, hasZstd ? /从正文开头解压/ : /没有内置 zstd 解压/);
 });
 
 /* ── 状态与原因 ───────────────────────────────────────────── */

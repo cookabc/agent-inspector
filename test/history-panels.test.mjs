@@ -183,12 +183,18 @@ async function seedDsh(home) {
 
   // 正文开头（兜底路径要解压它）
   const zlib = await import('node:zlib');
+  /* 这条会话故意不给投影，用来验兜底路径。正文写成真 zstd 还是垃圾都行：
+     这条测试只关心"行与 byState 的契约"，标题从投影来还是从 id 来不影响判据。
+     `zstdCompressSync` 要到 Node 22.15 / 23.8 才有，而 CI 矩阵里有 22.5 ——
+     那一档造不出压缩数据，退回一段解不开的字节即可。 */
   const lines = [
     { type: 'session', version: 4, id: noProj, createdAt: 1790000000000, cwd: WS, agentPreset: 'standard' },
     { type: 'user/message', data: { content: [{ type: 'text', text: '没有投影的会话' }], source: { kind: 'user' } } },
   ].map((o) => JSON.stringify(o)).join('\n') + '\n';
-  await fs.writeFile(path.join(root, 'sessions', slug, noProj, 'session.v4.jsonl.zstd'),
-    zlib.zstdCompressSync(Buffer.from(lines, 'utf8')));
+  const body = typeof zlib.zstdCompressSync === 'function'
+    ? zlib.zstdCompressSync(Buffer.from(lines, 'utf8'))
+    : Buffer.from(lines, 'utf8');
+  await fs.writeFile(path.join(root, 'sessions', slug, noProj, 'session.v4.jsonl.zstd'), body);
 
   // 工作区索引：一条归档、一条置顶
   await fs.mkdir(path.join(root, 'storages'), { recursive: true });
