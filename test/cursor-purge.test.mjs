@@ -292,3 +292,20 @@ test('下标 31 的 owner 不能被漏掉（位集最高位）', async (t) => {
   assert.ok(!left.includes(`agentKv:blob:${hexOf(shared)}`),
     '三个引用它的会话都删了，这个 blob 就该一起回收；还在说明下标 31 的 owner 被漏掉了');
 });
+
+test('blobs referenced by unknown key families are retained', async t => {
+  const content = Buffer.from('shared with future schema');
+  const f = await makeDb(t, { blobs: [{ content }], sessions: [{ id: 'A', messages: [hexOf(content)] }] });
+  const db = new DatabaseSync(f.dbPath);
+  db.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)').run('future:state', hexOf(content)); db.close();
+  await purgeSessions(f.ide, ['A'], { backupDir: path.join(f.root, 'backups') });
+  assert.ok(keysOf(f.dbPath).includes(`agentKv:blob:${hexOf(content)}`));
+});
+
+test('a retained unowned blob keeps its referenced descendants', async t => {
+  const child = Buffer.from('referenced child'), parent = Buffer.from(`ref ${hexOf(child)}`);
+  const f = await makeDb(t, { blobs: [{ content: child }, { content: parent }], sessions: [{ id: 'A', messages: [hexOf(child)] }] });
+  await purgeSessions(f.ide, ['A'], { backupDir: path.join(f.root, 'backups') });
+  assert.ok(keysOf(f.dbPath).includes(`agentKv:blob:${hexOf(child)}`));
+  assert.ok(keysOf(f.dbPath).includes(`agentKv:blob:${hexOf(parent)}`));
+});

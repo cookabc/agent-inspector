@@ -288,3 +288,29 @@ test('POST /api/tasks/cursor/recover dry run is allowed even while Cursor runs',
   assert.equal(res.body.bubbles, 3);
   assert.deepEqual(counts(s.dbPath), before);
 });
+
+test('reimport preserves existing orphan KV data even when the header is missing', async t => {
+  const f = await fixture(t);
+  const db = new DatabaseSync(f.dbPath);
+  db.prepare('INSERT INTO cursorDiskKV VALUES (?, ?)').run(`composerData:${ORPHAN}`, 'valuable original');
+  db.close();
+  const result = await reimportOrphans(f.cli, f.ide, [ORPHAN], { backupDir: f.backupDir });
+  assert.equal(result.imported, 0);
+  const read = new DatabaseSync(f.dbPath, { readOnly: true });
+  try { assert.equal(read.prepare('SELECT value FROM cursorDiskKV WHERE key=?').get(`composerData:${ORPHAN}`).value, 'valuable original'); }
+  finally { read.close(); }
+});
+
+test('an unreadable header index cannot classify every transcript as orphan', async t => {
+  const f = await fixture(t);
+  const db = new DatabaseSync(f.dbPath); db.exec('DROP TABLE composerHeaders'); db.close();
+  const scan = await scanOrphans(f.cli, f.ide);
+  assert.equal(scan.sessions.length, 0);
+  assert.ok(scan.problems.length);
+});
+
+test('empty recovery selections never mean recover everything', async t => {
+  const f = await fixture(t);
+  await assert.rejects(reimportOrphans(f.cli, f.ide, [], { backupDir: f.backupDir }), { statusCode: 400 });
+  assert.equal(counts(f.dbPath).headers, 1);
+});
