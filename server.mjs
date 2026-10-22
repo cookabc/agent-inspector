@@ -262,7 +262,13 @@ async function deletablePath(appId, targetKey, rel) {
   const normalized = path.relative(targetRoot(target), abs);
   async function inspect(file, relative) {
     const st = await fsp.lstat(file);
-    if (isProtected(plan, target, relative, st.isDirectory())) {
+    /* 传绝对路径进去：有些分类光看路径判不出来，得读文件本身
+       （Codex 的 rollout 首行带 history_base 就说明它只是会话的一段）。
+       扫描视图走 lib/scan.mjs 的 refineCategory 拿到了 locked，
+       删除路径这里却没走同一套 —— 于是"显示请勿删除"和"实际能删"对不上。
+       实测后果：删整个 sessions/ 目录时，里面锁住的续段被一起 rm 掉了。
+       判定必须只有一条路径。 */
+    if (isProtected(plan, target, relative, st.isDirectory(), file)) {
       throw httpError(403, `受保护内容不能删除：${target.short}/${relative}`);
     }
     // rm/rename 不跟随目录内的链接；检查也不进入其目标。
@@ -300,12 +306,53 @@ async function moveToTrash(rel, appId, targetKey) {
   return { path: rel, app: appId, target: targetKey, bytes: st.isDirectory() ? -1 : st.size, to };
 }
 
+/**
+ * 彻底删除一个路径 —— 动手之前先拷一份到 backups/。
+ *
+ * 「移入废纸篓」自带退路，不需要备份；这一条是 rm -rf，删掉就没了。
+ * 之前它什么都不留：误删一次就是永久的（实测过一次，整目录的会话正文没了）。
+ *
+ * 备份失败就**中止这一项**，不删。宁可让这一批少删一个，
+ * 也不能在"备份也没做成"的状态下把东西抹掉。
+ *
+ * 目录按原结构整体拷进备份里的同一个相对路径下，所以恢复时能整棵放回去。
+ */
 async function purge(rel, appId, targetKey) {
   const abs = await deletablePath(appId, targetKey, rel);
   const st = await fsp.lstat(abs);
   const bytes = st.isDirectory() ? -1 : st.size;
+
+  const backup = await backupBeforeDelete(abs, appId, rel);
   await fsp.rm(abs, { recursive: true, force: true });
-  return { path: rel, app: appId, target: targetKey, bytes };
+  return { path: rel, app: appId, target: targetKey, bytes, backup };
+}
+
+/**
+ * 把 abs 拷到 backups/<时间戳>-file-purge/<app>/<原相对路径>。
+ * 返回备份所在目录；失败时抛错，让调用方中止删除。
+ */
+async function backupBeforeDelete(abs, appId, rel) {
+  const stamp = (() => {
+    const d = new Date();
+    const p2 = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+  })();
+  const dir = path.join(BACKUP_DIR, `${stamp}-file-purge`, String(appId || 'unknown'));
+  const dest = path.join(dir, ...rel.split('/'));
+  try {
+    await fsp.mkdir(path.dirname(dest), { recursive: true });
+    await fsp.cp(abs, dest, { recursive: true, force: true, errorOnExist: false });
+  } catch (err) {
+    throw httpError(500, `备份失败，已放弃删除 ${rel}：${err.message}`);
+  }
+  // 自检：目标真的存在且非空（空目录也算成功，否则删空目录会被永远卡住）
+  let ok = false;
+  try {
+    const bst = await fsp.lstat(dest);
+    ok = bst.isDirectory() || bst.size > 0 || bst.isSymbolicLink();
+  } catch {}
+  if (!ok) throw httpError(500, `备份校验失败，已放弃删除 ${rel}`);
+  return dest;
 }
 
 /**
@@ -314,15 +361,20 @@ async function purge(rel, appId, targetKey) {
  *   containerDirs  纯容器目录，自己不保护，由后代决定（如 ZCode 的 v2/）
  * Cursor 的 state.vscdb 已经在规则里归到 database（locked），不需要特判。
  */
-function isProtected(plan, target, rel, directory = false) {
+function isProtected(plan, target, rel, directory = false, abs = null) {
   const { app } = plan;
   for (const dir of app.protectedDirs || []) {
     if (rel === dir || rel.startsWith(`${dir}/`)) return true;
   }
   if (directory && (app.containerDirs || []).includes(rel)) return false;
-  return Boolean(app.CATEGORIES[app.classify(
-    directory ? `${rel}/` : rel, 0, { app: app.id, t: target.key }
-  )]?.locked);
+  let cat = app.classify(directory ? `${rel}/` : rel, 0, { app: app.id, t: target.key });
+  /* 与扫描视图同一条补判。少了这一段，界面说"请勿删除"的东西在删除时仍会被放行 ——
+     两个地方各判一次、判得还不一样，是最难查的那类 bug。 */
+  if (app.refineCategory && abs && !directory) {
+    const refined = app.refineCategory(rel, abs, cat);
+    if (refined) cat = refined;
+  }
+  return Boolean(app.CATEGORIES[cat]?.locked);
 }
 
 /* ── HTTP ─────────────────────────────────────────────────── */

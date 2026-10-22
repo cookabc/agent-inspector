@@ -394,3 +394,54 @@ test('every history panel scans and reports its own shape', async t => {
     assert.equal(typeof body.scanMs, 'number', `${app} 的 scanMs 要是数字`);
   }
 });
+
+/**
+ * 删除路径必须和扫描视图用同一套分类。
+ *
+ * 实测 bug（2026-10-22，代价是删掉了真实数据）：Codex 的分页续段在扫描视图里
+ * 被 refineCategory 判成 transcriptSegment（locked，界面显示"请勿删除"），
+ * 但删除者走的是 isProtected → app.classify，那里没有 refineCategory，
+ * 于是同一路径在删除时被判成可清的 transcript。删整个 sessions/ 目录时，
+ * 里面的续段被一起 rm 掉了。
+ *
+ * 判据：带 history_base 的 rollout 文件，无论单删还是作为目录的一部分删，
+ * 都必须被 403 拦住。
+ */
+test('分页续段：单删与被目录连带删都必须被拒', async (t) => {
+  const f = await fixture(t);
+  // 在 fixture 的临时 HOME 里造一条续段
+  const segId = '01a142d6-811a-7b22-b4f9-021a20e9fa91';
+  const rel = `sessions/2026/10/21/rollout-2026-10-21T18-37-24-${segId}.jsonl`;
+  const abs = path.join(f.home, '.codex', rel);
+  await fs.mkdir(path.dirname(abs), { recursive: true });
+  await fs.writeFile(abs, JSON.stringify({
+    timestamp: '2026-10-21T10:37:24.157Z', ordinal: 4990, type: 'session_meta',
+    payload: {
+      session_id: segId, history_mode: 'paginated',
+      history_base: { thread_id: segId, end_ordinal_exclusive: 4990, end_byte_offset: 66878152 },
+    },
+  }) + '\n');
+
+  // ① 单删这个文件
+  const one = await f.post('/api/purge', { app: 'codex', target: 'root', paths: [rel], confirm: '彻底删除' });
+  assert.equal(one.status, 403, `续段不该被单删：${JSON.stringify(one.body)}`);
+  assert.match(one.body.error, /受保护/);
+
+  // ② 删它所在的目录（递归检查必须也拦住）
+  const dir = path.dirname(rel);
+  const many = await f.post('/api/purge', { app: 'codex', target: 'root', paths: [dir], confirm: '彻底删除' });
+  assert.equal(many.status, 403, `续段不该被目录连带删：${JSON.stringify(many.body)}`);
+
+  // 文件还在
+  await fs.access(abs);
+
+  // ③ 普通文件仍可删，且留下备份
+  const okAbs = path.join(f.home, '.codex', 'cache', 'ok.txt');
+  await fs.mkdir(path.dirname(okAbs), { recursive: true });
+  await fs.writeFile(okAbs, 'hello');
+  const ok = await f.post('/api/purge', { app: 'codex', target: 'root', paths: ['cache/ok.txt'], confirm: '彻底删除' });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.ok(ok.body.deleted[0].backup, '彻底删除必须留下备份路径');
+  const bpath = ok.body.deleted[0].backup;
+  assert.ok(await fs.readFile(bpath, 'utf8'), '备份文件要有内容');
+});

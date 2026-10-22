@@ -2433,12 +2433,19 @@ function renderTaskList() {
   const rowHtml = (t) => {
     const sel = taskState.sel.has(t.id);
     const open = taskState.open.has(t.id);
+    /* 分页续段：这个 .jsonl 只是会话的一段。Codex 恢复时要求完整血统，
+       删掉任何一段都会让整条会话永久不可恢复 —— 而且它报的是
+       "missing source rollout"，看着像别处坏了。行上必须说出来。 */
+    const segNote = t.lineage?.continuation
+      ? `分页第 ${t.lineage.endOrdinal} 段起`
+      : '';
     const meta = [
       taskState.group ? '' : shortPath(t.workspace),
       `${fmtDate(t.updatedAt)} 最后使用`,
       t.model ? t.model : '',
       t.children ? `${t.children} 子会话` : '',
       t.typeLabel,
+      segNote,
     ].filter(Boolean).join(' · ');
     const body = t.bodyRel
       ? `<button class="btn btn-ghost btn-sm" type="button" data-locate="${esc(t.bodyRel)}">在文件清单中定位</button>`
@@ -2474,6 +2481,11 @@ function renderTaskList() {
           <div><dt>模型</dt><dd>${esc(t.model || '—')}</dd></div>
           <div class="tspan"><dt>会话 ID</dt><dd><code>${esc(t.id)}</code></dd></div>
           <div class="tspan"><dt>正文</dt><dd title="${esc(t.bodyRel || '')}"><code>${esc(t.bodyRel || '库内存储')}</code></dd></div>
+          ${t.lineage?.continuation ? `<div class="tspan"><dt>血统</dt>
+            <dd>分页续段：这个文件从第 <b>${t.lineage.endOrdinal.toLocaleString()}</b> 个 ordinal 起接，
+              前面那段在另一个文件里。Codex 恢复会话时要顺着它往回找 ——
+              <b>删掉任何一段，整条会话都再也恢复不了</b>（报 missing source rollout）。
+              它在文件清单里已锁成「请勿删除」。</dd></div>` : ''}
           ${ex && ex.exclusiveBytes > 0 ? `<div class="tspan"><dt>删除会连带回收</dt>
             <dd title="${ex.exclusiveBytes.toLocaleString()} 字节">
               <b>${fmtBytes(ex.exclusiveBytes)}</b>

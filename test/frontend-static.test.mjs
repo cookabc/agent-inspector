@@ -486,6 +486,18 @@ test('工具标识色不能借用状态色', () => {
   }
 });
 
+test('分页续段在界面上要说出"删了会毁整条会话"', () => {
+  /* Codex 把长会话按压缩点切成多段 rollout。续段首行带 history_base，
+     删掉它整条会话永久不可恢复，而 Codex 报的是 "missing source rollout" ——
+     看起来像别处坏了。行上和详情里都必须明说。 */
+  // 行上标出它从第几段起
+  assert.match(app, /t\.lineage\?\.continuation/);
+  assert.match(app, /分页第 \$\{t\.lineage\.endOrdinal\} 段起/);
+  // 详情里说清后果
+  assert.match(app, /missing source rollout/);
+  assert.match(app, /删掉任何一段，整条会话都再也恢复不了/);
+});
+
 test('次要文字在三种浅色底上都过 AA', () => {
   /* --muted 原来 #868d80：白底 3.42、surface-2 2.85 —— 而它被用在十几处
      10.5–12px 的小字上（"删了会怎样"、分类计数、排序标签、工具路径）。
