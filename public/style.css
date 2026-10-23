@@ -26,7 +26,7 @@
   --accent:        #3e63dd;
   --accent-soft:   #edf2fe;
   --on-accent:     #fdfdfc;
-  --shadow-sm:     0 1px 2px rgba(20, 23, 15, .05);
+  /* 阴影只留给浮层：tooltip、抽屉、底部操作条、toast。页内一律平面+细线。 */
   --shadow-md:     0 1px 2px rgba(20, 23, 15, .05), 0 10px 30px -14px rgba(20, 23, 15, .22);
   --shadow-lg:     0 2px 4px rgba(20, 23, 15, .06), 0 30px 60px -24px rgba(20, 23, 15, .30);
 
@@ -44,6 +44,11 @@
   --r-md: 8px;
   --r-lg: 8px;
 
+  /* 动效单源：曲线一律 ease-out、时长一律 250ms；骨架屏与忙碌条这类
+     「后台在忙」的循环动画不在此列（它们表状态，不做状态切换）。 */
+  --dur: 250ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
   /* 分组卡片里正文的缩进：让说明对齐到标题，而不是对齐到折叠箭头 */
   --group-indent: 42px;
 
@@ -57,34 +62,36 @@
 
      加第五个工具时不能随手挑一个"看着还行"的紫：第一次挑的紫与 codex
      在深色下只差 ΔE 22，比现有组内最小距离（28）还近，两个色签并排
-     就分不出来。现在的 dsh 用 hue 296，与四色都拉得开。
+     就分不出来。
 
-     顺带补了老账：深色下 zcode 与 codex 原来只差 ΔE 28，也偏近 ——
-     codex 深色提到 #ca91f3（hue 274）后全组最小 33。判据写在测试里：
-     任意两色在浅/深两套下 ΔE 都 ≥ 30。 */
+     浅色五值 = Radix 各家的 11 档（文字档，白底可读）。深色五值 =
+     官方 dark 刻度里挑的组合：11 档为主（mauve/violet/mint），
+     pink/ruby 用 9/10 档 —— dark 刻度里这两家任何同档值都只差
+     ΔE 个位数，换档才拉得开。判据写在测试里：任意两色在浅/深两套
+     下 ΔE 都 ≥ 30，且全部值都是 Radix 官方刻度原值。 */
   --tool-zcode:  #65636d;   /* Radix mauve-11  */
   --tool-codex:  #6550b9;   /* Radix violet-11 */
   --tool-cursor: #027864;   /* Radix mint-11   */
-  --tool-claude: #c2298a;   /* Radix pink-11  */
-  --tool-dsh:    #ca244d;   /* Radix ruby-11  */
+  --tool-claude: #c2298a;   /* Radix pink-11   */
+  --tool-dsh:    #ca244d;   /* Radix ruby-11   */
 }
 
-/* 深色底上这些色要提亮，否则对比度掉到 3:1 上下（浅色那组是给白底调的）。 */
+/* 深色底上换用 dark 刻度，浅色那组在深底上会掉到 3:1 上下。 */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --tool-zcode:  #f2eff3;
-    --tool-codex:  #c2b5f5;
-    --tool-cursor: #7ecfbd;
-    --tool-claude: #d6409f;
-    --tool-dsh:    #efacb8;
+    --tool-zcode:  #b5b2bc;   /* Radix dark mauve-11  */
+    --tool-codex:  #baa7ff;   /* Radix dark violet-11 */
+    --tool-cursor: #58d5ba;   /* Radix dark mint-11   */
+    --tool-claude: #d6409f;   /* Radix dark pink-9    */
+    --tool-dsh:    #ec5a72;   /* Radix dark ruby-10   */
   }
 }
 :root[data-theme="dark"] {
-  --tool-zcode:  #f2eff3;
-  --tool-codex:  #c2b5f5;
-  --tool-cursor: #7ecfbd;
-  --tool-claude: #d6409f;
-  --tool-dsh:    #efacb8;
+  --tool-zcode:  #b5b2bc;   /* Radix dark mauve-11  */
+  --tool-codex:  #baa7ff;   /* Radix dark violet-11 */
+  --tool-cursor: #58d5ba;   /* Radix dark mint-11   */
+  --tool-claude: #d6409f;   /* Radix dark pink-9    */
+  --tool-dsh:    #ec5a72;   /* Radix dark ruby-10   */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -102,7 +109,6 @@
     --accent:      #8da4ef;
     --accent-soft: #1f2d5c;
     --on-accent:   #202020;
-    --shadow-sm:   0 1px 2px rgba(0, 0, 0, .4);
     --shadow-md:   0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px -14px rgba(0, 0, 0, .7);
     --shadow-lg:   0 2px 4px rgba(0, 0, 0, .5), 0 30px 60px -24px rgba(0, 0, 0, .8);
   }
@@ -122,7 +128,6 @@
   --accent:      #8da4ef;
   --accent-soft: #1f2d5c;
   --on-accent:   #202020;
-  --shadow-sm:   0 1px 2px rgba(0, 0, 0, .4);
   --shadow-md:   0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px -14px rgba(0, 0, 0, .7);
   --shadow-lg:   0 2px 4px rgba(0, 0, 0, .5), 0 30px 60px -24px rgba(0, 0, 0, .8);
 }
@@ -315,14 +320,13 @@ p { margin: 0; }
   color: var(--muted);
   cursor: pointer;
   white-space: nowrap;
-  transition: border-color 250ms cubic-bezier(0.16, 1, 0.3, 1), background 250ms cubic-bezier(0.16, 1, 0.3, 1), color 250ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: border-color var(--dur) var(--ease-out), background var(--dur) var(--ease-out), color var(--dur) var(--ease-out);
 }
 .app-tab:hover { border-color: var(--line); color: var(--ink); background: var(--surface); }
 .app-tab.is-on {
   background: var(--surface);
   border-color: var(--line-strong);
   color: var(--ink);
-  box-shadow: var(--shadow-sm);
 }
 .app-tab.is-empty { opacity: .55; }
 
@@ -342,7 +346,7 @@ p { margin: 0; }
   background: transparent;
   color: var(--ink);
   cursor: pointer;
-  transition: background 250ms cubic-bezier(0.16, 1, 0.3, 1), border-color 250ms cubic-bezier(0.16, 1, 0.3, 1), color 250ms cubic-bezier(0.16, 1, 0.3, 1), transform 250ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out), color var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
   white-space: nowrap;
 }
 .btn:active { transform: translateY(.5px); }
@@ -350,7 +354,7 @@ p { margin: 0; }
 .btn-icon { padding: 6px; }
 .btn-icon svg { width: 16px; height: 16px; }
 
-.btn-ghost { border-color: var(--line); background: var(--surface); box-shadow: var(--shadow-sm); }
+.btn-ghost { border-color: var(--line); background: var(--surface); }
 .btn-ghost:hover { background: var(--surface-2); border-color: var(--line-strong); }
 .btn-ghost.is-on {
   background: var(--accent-soft);
@@ -363,7 +367,6 @@ p { margin: 0; }
   background: var(--accent);
   color: var(--on-accent);
   font-weight: 550;
-  box-shadow: var(--shadow-sm);
 }
 .btn-primary:hover { filter: brightness(1.07); }
 .btn-primary:disabled { opacity: .45; cursor: not-allowed; filter: none; }
@@ -385,10 +388,7 @@ p { margin: 0; }
   padding: clamp(16px, 2vw, 22px);
   border: 0.5px solid var(--line);
   border-radius: var(--r-lg);
-  background:
-    radial-gradient(120% 140% at 0% 0%, var(--accent-soft) 0%, transparent 55%),
-    var(--surface);
-  box-shadow: var(--shadow-md);
+  background: var(--surface);
 }
 
 .hero-head { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -594,7 +594,7 @@ p { margin: 0; }
   background: var(--surface);
   color: var(--muted);
   cursor: pointer;
-  transition: background 250ms cubic-bezier(0.16, 1, 0.3, 1), border-color 250ms cubic-bezier(0.16, 1, 0.3, 1), color 250ms cubic-bezier(0.16, 1, 0.3, 1), opacity 250ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out), color var(--dur) var(--ease-out), opacity var(--dur) var(--ease-out);
 }
 .rec-chip:hover { border-color: var(--line-strong); color: var(--ink-2); }
 /* 勾选框：推荐清理的条目和三块会话分组共用同一个零件 */
@@ -628,7 +628,6 @@ p { margin: 0; }
   border: 0.5px solid var(--line);
   border-radius: var(--r-lg);
   background: var(--surface);
-  box-shadow: var(--shadow-sm);
   padding: clamp(18px, 2.4vw, 26px);
   display: flex;
   flex-direction: column;
@@ -702,7 +701,7 @@ p { margin: 0; }
   border-right: 0.5px solid var(--muted);
   border-bottom: 0.5px solid var(--muted);
   transform: rotate(-45deg);
-  transition: transform 250ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform var(--dur) var(--ease-out);
   margin-inline-start: 6px;
 }
 .note-fold[open] > .note-title::after { transform: rotate(45deg); }
@@ -770,7 +769,7 @@ pre code { background: none; padding: 0; }
 .split-block.is-other { --c: var(--line-strong); border-color: var(--c); }
 
 /* 每一块就是一个勾选框：勾上时整块点亮 —— 框打勾、描边加重、底色跟着来 */
-.split-block.is-clickable { cursor: pointer; transition: border-color 250ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 250ms cubic-bezier(0.16, 1, 0.3, 1); }
+.split-block.is-clickable { cursor: pointer; transition: border-color var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease-out); }
 .split-block.is-clickable:hover { border-color: var(--line-strong); }
 
 /* 空分组：静静地摆在那里交代"这一组没有东西"，不做成可按的样子。
@@ -827,7 +826,6 @@ pre code { background: none; padding: 0; }
   border: 0.5px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--surface);
-  box-shadow: var(--shadow-sm);
   overflow: hidden;
   /* 靠右收尾：两个面板的工具条因此是同一个节奏 ——
      筛选控件从左边排起，勾选快捷键压在右边。 */
@@ -915,7 +913,7 @@ pre code { background: none; padding: 0; }
   background: var(--surface);
   color: var(--ink-2);
   cursor: pointer;
-  transition: background 250ms cubic-bezier(0.16, 1, 0.3, 1), border-color 250ms cubic-bezier(0.16, 1, 0.3, 1), color 250ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out), color var(--dur) var(--ease-out);
 }
 .chip:hover { border-color: var(--line-strong); color: var(--ink); }
 .chip.is-on { background: var(--tint); border-color: var(--c); color: var(--ink); font-weight: 550; }
@@ -983,7 +981,7 @@ pre code { background: none; padding: 0; }
   width: 16px; height: 16px;
   flex: none;
   color: var(--muted);
-  transition: transform 250ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform var(--dur) var(--ease-out);
 }
 .group.is-open .caret { transform: rotate(90deg); }
 
@@ -1050,7 +1048,7 @@ pre code { background: none; padding: 0; }
   white-space: nowrap;
 }
 .group-more:hover { text-decoration: underline; }
-.group-more svg { width: 11px; height: 11px; flex: none; transition: transform 250ms cubic-bezier(0.16, 1, 0.3, 1); }
+.group-more svg { width: 11px; height: 11px; flex: none; transition: transform var(--dur) var(--ease-out); }
 .group-more[aria-expanded="true"] svg { transform: rotate(90deg); }
 
 .group-explain {
@@ -1159,7 +1157,7 @@ input[type="checkbox"] {
   cursor: pointer;
   display: grid;
   place-content: center;
-  transition: background 250ms cubic-bezier(0.16, 1, 0.3, 1), border-color 250ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out);
 }
 input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
 input[type="checkbox"]:checked::after {
@@ -1339,10 +1337,10 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   background: none;
   color: var(--muted);
   cursor: pointer;
-  transition: background 250ms cubic-bezier(0.16, 1, 0.3, 1), color 250ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background var(--dur) var(--ease-out), color var(--dur) var(--ease-out);
 }
 .trow-caret:hover { background: var(--surface-3); color: var(--ink); }
-.trow-caret svg { width: 11px; height: 11px; transition: transform 250ms cubic-bezier(0.16, 1, 0.3, 1); }
+.trow-caret svg { width: 11px; height: 11px; transition: transform var(--dur) var(--ease-out); }
 .tsession.is-open .trow-caret svg { transform: rotate(90deg); }
 .trow-title {
   font-weight: 550;
@@ -1498,7 +1496,7 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
 .tgroup-caret {
   width: 12px; height: 12px;
   color: var(--muted);
-  transition: transform 250ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform var(--dur) var(--ease-out);
 }
 .tgroup:not(.is-folded) .tgroup-caret { transform: rotate(90deg); }
 .tgroup-name {
@@ -1605,7 +1603,7 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   -webkit-backdrop-filter: saturate(180%) blur(18px);
   border-top: 0.5px solid var(--line);
   box-shadow: var(--shadow-lg);
-  animation: rise .2s ease;
+  animation: rise var(--dur) var(--ease-out);
 }
 @keyframes rise { from { transform: translateY(14px); opacity: 0 } to { transform: none; opacity: 1 } }
 
@@ -1641,7 +1639,7 @@ body.is-modal { overflow: hidden; }
   background: var(--surface);
   border-inline-start: 0.5px solid var(--line);
   box-shadow: var(--shadow-lg);
-  animation: slide .22s cubic-bezier(.22, .8, .3, 1);
+  animation: slide var(--dur) var(--ease-out);
 }
 @keyframes slide { from { transform: translateX(24px); opacity: 0 } to { transform: none; opacity: 1 } }
 
@@ -1665,7 +1663,7 @@ body.is-modal { overflow: hidden; }
   border: 0.5px solid var(--line);
   border-radius: var(--r-md);
   cursor: pointer;
-  transition: border-color 250ms cubic-bezier(0.16, 1, 0.3, 1), background 250ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: border-color var(--dur) var(--ease-out), background var(--dur) var(--ease-out);
 }
 .mode:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
 input[type="radio"] {
@@ -1680,7 +1678,7 @@ input[type="radio"] {
   cursor: pointer;
   display: grid;
   place-content: center;
-  transition: border-color 250ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: border-color var(--dur) var(--ease-out);
 }
 input[type="radio"]:checked { border-color: var(--accent); }
 input[type="radio"]:checked::after {
@@ -1730,6 +1728,9 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
   color: var(--muted);
   font-weight: 600;
 }
+
+/* 空跑核对区的表头：上面没有别的元素顶着，自己补一档间距 */
+.drawer-list-head--gap { margin-bottom: 8px; }
 
 .drawer-list {
   list-style: none;
@@ -1982,7 +1983,7 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
   background: linear-gradient(90deg, transparent, var(--accent), transparent);
   background-size: 40% 100%;
   background-repeat: no-repeat;
-  transition: opacity 250ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity var(--dur) var(--ease-out);
 }
 body.is-busy .topbar::after {
   opacity: 1;
@@ -2030,20 +2031,20 @@ body.is-busy .topbar::after {
   background: var(--accent);
   opacity: 0;
   transform: scaleY(.6);
-  transition: opacity 250ms cubic-bezier(0.16, 1, 0.3, 1), transform 250ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
 }
 .row:hover::before { opacity: 1; transform: scaleY(1); }
 .row.is-on::before { opacity: 1; transform: scaleY(1); }
 
 /* 勾选一行时，体积数字轻轻跳一下，让"数字在跟着选"看得见 */
-.row.is-on .row-size { color: var(--accent); transition: color 250ms cubic-bezier(0.16, 1, 0.3, 1); }
+.row.is-on .row-size { color: var(--accent); transition: color var(--dur) var(--ease-out); }
 
 /* 卡片 hover 抬一点，暗示"这一块可以点" */
 .split-block.is-clickable:hover { transform: translateY(-1px); }
-.split-block.is-clickable { transition: border-color 250ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 250ms cubic-bezier(0.16, 1, 0.3, 1), transform 250ms cubic-bezier(0.16, 1, 0.3, 1); }
+.split-block.is-clickable { transition: border-color var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease-out), transform var(--dur) var(--ease-out); }
 
 /* 会话行的展开箭头有个轻微回弹，点下去有实感 */
-.trow-caret { transition: background 250ms cubic-bezier(0.16, 1, 0.3, 1), color 250ms cubic-bezier(0.16, 1, 0.3, 1), transform 250ms cubic-bezier(0.16, 1, 0.3, 1); }
+.trow-caret { transition: background var(--dur) var(--ease-out), color var(--dur) var(--ease-out), transform var(--dur) var(--ease-out); }
 .trow-caret:active { transform: scale(.9); }
 
 /* 复制/揭示这类一次性动作后按下的凹陷感 */
@@ -2307,14 +2308,13 @@ html.is-theme-switching *::after {
   text-align: left;
   cursor: pointer;
   transition:
-    transform var(--dur, 250ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)),
-    box-shadow var(--dur, 250ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1)),
-    filter var(--dur, 250ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+    transform var(--dur) var(--ease-out),
+    box-shadow var(--dur) var(--ease-out),
+    filter var(--dur) var(--ease-out);
 }
 .tm-box:hover {
   z-index: 2;
-  transform: scale(1.02);
-  box-shadow: 0 4px 14px rgb(0 0 0 / .14);
+  border-color: var(--ink-2);
   filter: saturate(1.12);
 }
 .tm-box:focus-visible {

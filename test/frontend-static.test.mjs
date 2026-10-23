@@ -231,7 +231,7 @@ test('两块会话分组都为空时折成一行说明，并改掉"分成三组"
   assert.match(app, /class="split-note"/);
   // 只剩一块时说"分成三组"是假话；但原因已由 split-note 交代，这里只留操作提示
   assert.match(app, /const twoEmpty = orphan\.length === 0 && live\.length === 0/);
-  assert.match(app, /点一块选中整块，再点一下取消/);
+  assert.match(app, /点整块可勾选这一组/);
   assert.doesNotMatch(app, /所以只有<b>「非会话文件」<\/b>一块/, '别把 split-note 的话再说一遍');
   assert.match(css, /\.split-note \{[\s\S]{0,200}grid-column: 1 \/ -1/);
 });
@@ -311,7 +311,7 @@ test('点推荐清理却什么都删不掉时，不许给一个按了没反应�
   const r = app.slice(app.indexOf('const sumCats'), app.indexOf('const REC_KEY'));
   assert.match(r, /selectableOnly\(all, c\)/, '按钮数字要按"真正能删的"算');
   assert.match(app, /const nothingPickable = on\.length > 0 && count === 0/);
-  assert.match(app, /都删不掉 —— 它们是软链接/);
+  assert.match(app, /个文件都删不掉：都是软链接或受保护内容/);
   // openDrawer 里空选区也要有反馈，不能默默 return
   assert.match(app, /showToast\(dropped/);
 });
@@ -451,7 +451,7 @@ test('工具标识色不能借用状态色', () => {
   assert.match(css, /\.chip\[data-all-tool="zcode"\]\s*\{ --c: var\(--tool-zcode\)/);
 
   // 深色下要单独提亮，否则浅色那组在深底上掉到 3:1 左右
-  const darkTool = css.split('--tool-zcode:  #f2eff3').length - 1;
+  const darkTool = css.split('--tool-zcode:  #b5b2bc').length - 1;
   assert.ok(darkTool >= 2, '深色两套（media + data-theme）都要覆盖');
 
   /* 每加一个工具，新色必须与已有色都拉得开 —— 只靠"看着不一样"不够。
