@@ -16,9 +16,9 @@
   --surface-3:     #e9e8e6;
   --ink:           #21201c;
   --ink-2:         #63635e;
-  /* 次要文字。原来 #898e87 在白底上只有 3.42:1、--surface-2 上 2.85:1，
+  /* 次要文字。原来 #868d80 在白底上只有 3.42:1、--surface-2 上 2.85:1，
      而它被用在十几处 10.5–12px 的小字上（"删了会怎样"、分类计数、排序标签、
-     工具路径）—— 全都低于 AA 的 4.5:1。加深到 #5c625b 之后：
+     工具路径）—— 全都低于 AA 的 4.5:1。加深到 #5e655a 之后：
      白底 6.03、surface-2 5.01、surface-3 4.59，三档都过线。 */
   --muted:         #5f6563;
   --line:          #e2e1de;
@@ -26,9 +26,9 @@
   --accent:        #3e63dd;
   --accent-soft:   #edf2fe;
   --on-accent:     #fdfdfc;
-  --shadow-sm:     0 1px 2px var(--black-a1);
-  --shadow-md:     0 1px 2px var(--black-a1), 0 10px 30px -14px var(--black-a4);
-  --shadow-lg:     0 2px 4px var(--black-a1), 0 30px 60px -24px var(--black-a5);
+  --shadow-sm:     0 1px 2px rgba(20, 23, 15, .05);
+  --shadow-md:     0 1px 2px rgba(20, 23, 15, .05), 0 10px 30px -14px rgba(20, 23, 15, .22);
+  --shadow-lg:     0 2px 4px rgba(20, 23, 15, .06), 0 30px 60px -24px rgba(20, 23, 15, .30);
 
   --st-good:       #2a7e3b;
   --st-warning:    #ab6400;
@@ -60,7 +60,7 @@
      就分不出来。现在的 dsh 用 hue 296，与四色都拉得开。
 
      顺带补了老账：深色下 zcode 与 codex 原来只差 ΔE 28，也偏近 ——
-     codex 深色提到 #d19dff（hue 274）后全组最小 33。判据写在测试里：
+     codex 深色提到 #ca91f3（hue 274）后全组最小 33。判据写在测试里：
      任意两色在浅/深两套下 ΔE 都 ≥ 30。 */
   --tool-zcode:  #65636d;   /* Radix mauve-11  */
   --tool-codex:  #6550b9;   /* Radix violet-11 */
@@ -91,47 +91,47 @@
   :root:not([data-theme="light"]) {
     color-scheme: dark;
     --bg:          #202020;
-    --surface:     #232225;
-    --surface-2:   #2f312e;
-    --surface-3:   #383a36;
+    --surface:     #242424;
+    --surface-2:   #2e2e2e;
+    --surface-3:   #383838;
     --ink:         #fcfcfc;
     --ink-2:       #cecece;
-    --muted:       #afb5ad;
-    --line:        #383a36;
-    --line-strong: #544f46;
+    --muted:       #a6a6a6;
+    --line:        #383838;
+    --line-strong: #525252;
     --accent:      #8da4ef;
     --accent-soft: #1f2d5c;
     --on-accent:   #202020;
-    --shadow-sm:   0 1px 2px var(--black-a6);
-    --shadow-md:   0 1px 2px var(--black-a6), 0 10px 30px -14px var(--black-a9);
-    --shadow-lg:   0 2px 4px var(--black-a7), 0 30px 60px -24px var(--black-a10);
+    --shadow-sm:   0 1px 2px rgba(0, 0, 0, .4);
+    --shadow-md:   0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px -14px rgba(0, 0, 0, .7);
+    --shadow-lg:   0 2px 4px rgba(0, 0, 0, .5), 0 30px 60px -24px rgba(0, 0, 0, .8);
   }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg:          #202020;
-  --surface:     #232225;
-  --surface-2:   #2f312e;
-  --surface-3:   #383a36;
+  --surface:     #242424;
+  --surface-2:   #2e2e2e;
+  --surface-3:   #383838;
   --ink:         #fcfcfc;
   --ink-2:       #cecece;
-  --muted:       #afb5ad;
-  --line:        #383a36;
-  --line-strong: #544f46;
+  --muted:       #a6a6a6;
+  --line:        #383838;
+  --line-strong: #525252;
   --accent:      #8da4ef;
   --accent-soft: #1f2d5c;
   --on-accent:   #202020;
-  --shadow-sm:   0 1px 2px var(--black-a6);
-  --shadow-md:   0 1px 2px var(--black-a6), 0 10px 30px -14px var(--black-a9);
-  --shadow-lg:   0 2px 4px var(--black-a7), 0 30px 60px -24px var(--black-a10);
+  --shadow-sm:   0 1px 2px rgba(0, 0, 0, .4);
+  --shadow-md:   0 1px 2px rgba(0, 0, 0, .4), 0 10px 30px -14px rgba(0, 0, 0, .7);
+  --shadow-lg:   0 2px 4px rgba(0, 0, 0, .5), 0 30px 60px -24px rgba(0, 0, 0, .8);
 }
 
 /* 状态色 → 底色派生。状态色本身永不变，只派生大面积用的淡色。 */
-.st-good     { --c: var(--st-good);     --tint: var(--st-good); }
-.st-warning  { --c: var(--st-warning);  --tint: var(--st-warning); }
-.st-serious  { --c: var(--st-serious);  --tint: var(--st-serious); }
-.st-critical { --c: var(--st-critical); --tint: var(--st-critical); }
+.st-good     { --c: var(--st-good);     --tint: color-mix(in oklab, var(--st-good) 14%, var(--surface)); }
+.st-warning  { --c: var(--st-warning);  --tint: color-mix(in oklab, var(--st-warning) 18%, var(--surface)); }
+.st-serious  { --c: var(--st-serious);  --tint: color-mix(in oklab, var(--st-serious) 18%, var(--surface)); }
+.st-critical { --c: var(--st-critical); --tint: color-mix(in oklab, var(--st-critical) 14%, var(--surface)); }
 
 *, *::before, *::after { box-sizing: border-box; }
 
@@ -250,7 +250,7 @@ p { margin: 0; }
   gap: 16px;
   padding-block: 10px;
   padding-inline: clamp(16px, 4vw, 40px);
-  background: var(--bg);
+  background: color-mix(in oklab, var(--bg) 82%, transparent);
   backdrop-filter: saturate(180%) blur(16px);
   -webkit-backdrop-filter: saturate(180%) blur(16px);
   border-bottom: 0.5px solid var(--line);
@@ -265,7 +265,7 @@ p { margin: 0; }
   place-items: center;
   width: 32px; height: 32px;
   flex: none;
-  border-radius: 6px;
+  border-radius: 9px;
   background: var(--ink);
   color: var(--bg);
 }
@@ -322,7 +322,7 @@ p { margin: 0; }
   background: var(--surface);
   border-color: var(--line-strong);
   color: var(--ink);
-  box-shadow: none;
+  box-shadow: var(--shadow-sm);
 }
 .app-tab.is-empty { opacity: .55; }
 
@@ -350,7 +350,7 @@ p { margin: 0; }
 .btn-icon { padding: 6px; }
 .btn-icon svg { width: 16px; height: 16px; }
 
-.btn-ghost { border-color: var(--line); background: var(--surface); box-shadow: none; }
+.btn-ghost { border-color: var(--line); background: var(--surface); box-shadow: var(--shadow-sm); }
 .btn-ghost:hover { background: var(--surface-2); border-color: var(--line-strong); }
 .btn-ghost.is-on {
   background: var(--accent-soft);
@@ -363,12 +363,12 @@ p { margin: 0; }
   background: var(--accent);
   color: var(--on-accent);
   font-weight: 550;
-  box-shadow: none;
+  box-shadow: var(--shadow-sm);
 }
 .btn-primary:hover { filter: brightness(1.07); }
 .btn-primary:disabled { opacity: .45; cursor: not-allowed; filter: none; }
 
-.btn-danger { background: var(--st-critical); color: #fdfdff; font-weight: 550; }
+.btn-danger { background: var(--st-critical); color: #fff; font-weight: 550; }
 .btn-danger:hover { filter: brightness(1.07); }
 .btn-danger:disabled, .btn-ghost:disabled {
   opacity: .4;
@@ -388,7 +388,7 @@ p { margin: 0; }
   background:
     radial-gradient(120% 140% at 0% 0%, var(--accent-soft) 0%, transparent 55%),
     var(--surface);
-  box-shadow: none;
+  box-shadow: var(--shadow-md);
 }
 
 .hero-head { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -403,7 +403,7 @@ p { margin: 0; }
 }
 
 .hero-figure {
-  font-size: 32px;
+  font-size: clamp(34px, 4.4vw, 48px);
   font-weight: 700;
   letter-spacing: -.045em;
   line-height: 1;
@@ -523,7 +523,7 @@ p { margin: 0; }
   color: var(--muted);
 }
 .lane-figure {
-  font-size: 32px;
+  font-size: clamp(22px, 2.4vw, 27px);
   font-weight: 700;
   letter-spacing: -.035em;
   line-height: 1.15;
@@ -609,7 +609,7 @@ p { margin: 0; }
   color: transparent;
 }
 .box svg { width: 9px; height: 9px; }
-.rec-chip.is-on .box, .split-block.is-on .box { background: var(--c); border-color: var(--c); color: #fdfdff; }
+.rec-chip.is-on .box, .split-block.is-on .box { background: var(--c); border-color: var(--c); color: #fff; }
 .rec-chip.is-on {
   background: var(--tint);
   border-color: var(--c);
@@ -628,7 +628,7 @@ p { margin: 0; }
   border: 0.5px solid var(--line);
   border-radius: var(--r-lg);
   background: var(--surface);
-  box-shadow: none;
+  box-shadow: var(--shadow-sm);
   padding: clamp(18px, 2.4vw, 26px);
   display: flex;
   flex-direction: column;
@@ -650,7 +650,7 @@ p { margin: 0; }
   flex: none;
   border-radius: 50%;
   background: var(--c, var(--muted));
-  box-shadow: none;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--c, var(--muted)) 22%, transparent);
 }
 .dot-serious { --c: var(--st-serious); }
 
@@ -671,8 +671,8 @@ p { margin: 0; }
    跟周围一圈圆角白卡片拉开层次，页面才有节奏。 */
 .note {
   padding: 14px clamp(16px, 2.6vw, 26px);
-  background: var(--st-serious);
-  border-block: 0.5px solid var(--st-serious);
+  background: color-mix(in oklab, var(--st-serious) 7%, var(--bg));
+  border-block: 0.5px solid color-mix(in oklab, var(--st-serious) 26%, var(--line));
 }
 .note-fold > summary { list-style: none; cursor: pointer; }
 .note-fold > summary::-webkit-details-marker { display: none; }
@@ -762,7 +762,7 @@ pre code { background: none; padding: 0; }
    既不好也不坏。 */
 .split-block.is-orphan {
   --c: var(--st-serious);
-  --tint: var(--st-serious);
+  --tint: color-mix(in oklab, var(--st-serious) 6%, var(--surface));
   border-color: var(--c);
   background: var(--tint);
 }
@@ -797,14 +797,14 @@ pre code { background: none; padding: 0; }
 .split-note svg { width: 14px; height: 14px; flex: none; margin-top: 2px; color: var(--muted); }
 .split-block.is-on {
   border-color: var(--c);
-  box-shadow: none;
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--c) 16%, transparent);
 }
 /* 勾了一半：框里打勾但填色浅一档，光晕也收掉 —— 看得出"还没全勾" */
-.split-block.is-part { border-color: var(--c); }
+.split-block.is-part { border-color: color-mix(in oklab, var(--c) 55%, var(--line)); }
 .split-block.is-part .box {
-  background: var(--c);
+  background: color-mix(in oklab, var(--c) 34%, var(--surface));
   border-color: var(--c);
-  color: #fdfdff;
+  color: #fff;
 }
 
 .split-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
@@ -827,7 +827,7 @@ pre code { background: none; padding: 0; }
   border: 0.5px solid var(--line);
   border-radius: var(--r-sm);
   background: var(--surface);
-  box-shadow: none;
+  box-shadow: var(--shadow-sm);
   overflow: hidden;
   /* 靠右收尾：两个面板的工具条因此是同一个节奏 ——
      筛选控件从左边排起，勾选快捷键压在右边。 */
@@ -951,7 +951,7 @@ pre code { background: none; padding: 0; }
   background: var(--surface);
   overflow: hidden;
 }
-.group.is-locked { border-color: var(--st-critical); }
+.group.is-locked { border-color: color-mix(in oklab, var(--st-critical) 34%, var(--line)); }
 
 .group-head {
   display: grid;
@@ -1080,7 +1080,7 @@ pre code { background: none; padding: 0; }
   align-items: center;
   gap: 12px;
   padding: 7px 14px;
-  border-bottom: 0.5px solid var(--line);
+  border-bottom: 0.5px solid color-mix(in oklab, var(--line) 55%, transparent);
   font-size: 12px;
 }
 .row:last-child { border-bottom: 0; }
@@ -1112,8 +1112,8 @@ pre code { background: none; padding: 0; }
   flex: none;
 }
 .row-tag.is-orphan {
-  background: var(--st-serious);
-  color: var(--st-serious);
+  background: color-mix(in oklab, var(--st-serious) 16%, var(--surface));
+  color: color-mix(in oklab, var(--st-serious) 72%, var(--ink));
   font-weight: 600;
 }
 
@@ -1165,8 +1165,8 @@ input[type="checkbox"]:checked { background: var(--accent); border-color: var(--
 input[type="checkbox"]:checked::after {
   content: "";
   width: 9px; height: 5px;
-  border-left: 0.5px solid var(--on-accent);
-  border-bottom: 0.5px solid var(--on-accent);
+  border-left: 2px solid var(--on-accent);
+  border-bottom: 2px solid var(--on-accent);
   transform: translateY(-1px) rotate(-45deg);
 }
 input[type="checkbox"]:indeterminate { background: var(--accent); border-color: var(--accent); }
@@ -1197,8 +1197,8 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   gap: 9px;
   padding: 9px 12px;
   border-radius: var(--r-md);
-  border: 0.5px solid var(--st-serious);
-  background: var(--st-serious);
+  border: 0.5px solid color-mix(in oklab, var(--st-serious) 40%, var(--line));
+  background: color-mix(in oklab, var(--st-serious) 10%, var(--surface));
   font-size: 12px;
   /* 1.6 是为大段正文定的；这条提示最多三行，收到 1.5 能省一行的高度，
      折行处也不至于挤在一起。 */
@@ -1208,8 +1208,8 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
 .app-warn svg { width: 16px; height: 16px; flex: none; margin-top: 1px; color: var(--st-serious); }
 .app-warn b { color: var(--ink); }
 .app-warn.is-ok {
-  border-color: var(--st-good);
-  background: var(--st-good);
+  border-color: color-mix(in oklab, var(--st-good) 40%, var(--line));
+  background: color-mix(in oklab, var(--st-good) 9%, var(--surface));
 }
 .app-warn.is-ok svg { color: var(--st-good); }
 
@@ -1226,7 +1226,7 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   position: relative;
   height: 100%;
   background: var(--tint);
-  box-shadow: none;
+  box-shadow: inset 1px 0 0 var(--surface-2);
   min-width: 0;
 }
 .dbbar-seg:first-child { box-shadow: none; }
@@ -1321,7 +1321,7 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   align-items: center;
   gap: 12px;
   padding: 9px 13px;
-  border-bottom: 0.5px solid var(--line);
+  border-bottom: 0.5px solid color-mix(in oklab, var(--line) 55%, transparent);
   font-size: 14px;
   cursor: pointer;
 }
@@ -1399,7 +1399,7 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   display: flex;
   flex-direction: column;
   border: 0.5px solid var(--line);
-  border-radius: 6px;
+  border-radius: 10px;
   overflow: hidden;
 }
 .recover-row {
@@ -1453,7 +1453,7 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   gap: 9px;
   padding: 13px 14px;
   border: 0.5px solid var(--line-strong);
-  border-radius: 6px;
+  border-radius: 10px;
   background: var(--surface-2);
   font-size: 12px;
   color: var(--ink-2);
@@ -1469,7 +1469,7 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
    药丸吃掉 69px + 一个 12px 的 gap，直接把标题挤到 267px：
    实测 84 行里有 60 行标题被 ellipsis 截掉。
 
-   状态不上色。试过用 `--c`（st-warning 的 #ffba18 之类）上色，两个问题：
+   状态不上色。试过用 `--c`（st-warning 的 #fab219 之类）上色，两个问题：
    一是黄底黄字在白背景上对比度只有 1.6:1，读不清；二是加粗上色后
    这行又变宽，meta 截断从 0 行涨回 14 行 —— 省下来的空间当场还回去了。
 
@@ -1525,14 +1525,14 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
 }
 .tgroup-n { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .tgroup-size { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.tgroup-body .trow { border-bottom: 0.5px solid var(--line); }
+.tgroup-body .trow { border-bottom: 0.5px solid color-mix(in oklab, var(--line) 55%, transparent); }
 .tgroup-body .tsession:last-child .trow { border-bottom: 0; }
 
 /* 会话详情：展开一行，把 ID、路径、模型这些"要复制出去"的东西摊平。 */
 .tdetail {
   padding: 2px 13px 12px 57px;
-  background: var(--surface-2);
-  border-bottom: 0.5px solid var(--line);
+  background: color-mix(in oklab, var(--surface-2) 55%, transparent);
+  border-bottom: 0.5px solid color-mix(in oklab, var(--line) 55%, transparent);
 }
 .tsession:last-child .tdetail { border-bottom: 0; }
 .tdetail-grid {
@@ -1580,7 +1580,7 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   border-radius: var(--r-md);
   overflow: hidden;
 }
-.dryrun li { display: flex; justify-content: space-between; padding: 5px 11px; border-bottom: 0.5px solid var(--line); }
+.dryrun li { display: flex; justify-content: space-between; padding: 5px 11px; border-bottom: 0.5px solid color-mix(in oklab, var(--line) 55%, transparent); }
 .dryrun li:last-child { border-bottom: 0; }
 .dryrun li span:last-child { color: var(--ink); font-variant-numeric: tabular-nums; font-weight: 550; }
 
@@ -1600,12 +1600,12 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   flex-wrap: wrap;
   padding: 12px clamp(16px, 4vw, 40px);
   padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-  background: var(--surface);
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
   backdrop-filter: saturate(180%) blur(18px);
   -webkit-backdrop-filter: saturate(180%) blur(18px);
   border-top: 0.5px solid var(--line);
-  box-shadow: none;
-  animation: none;
+  box-shadow: var(--shadow-lg);
+  animation: rise .2s ease;
 }
 @keyframes rise { from { transform: translateY(14px); opacity: 0 } to { transform: none; opacity: 1 } }
 
@@ -1620,9 +1620,9 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   position: fixed;
   inset: 0;
   z-index: 60;
-  background: var(--ink);
+  background: color-mix(in oklab, var(--ink) 42%, transparent);
   backdrop-filter: blur(2px);
-  animation: none;
+  animation: fade .18s ease;
 }
 @keyframes fade { from { opacity: 0 } to { opacity: 1 } }
 
@@ -1640,8 +1640,8 @@ body.is-modal { overflow: hidden; }
   flex-direction: column;
   background: var(--surface);
   border-inline-start: 0.5px solid var(--line);
-  box-shadow: none;
-  animation: none;
+  box-shadow: var(--shadow-lg);
+  animation: slide .22s cubic-bezier(.22, .8, .3, 1);
 }
 @keyframes slide { from { transform: translateX(24px); opacity: 0 } to { transform: none; opacity: 1 } }
 
@@ -1747,7 +1747,7 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
   justify-content: space-between;
   gap: 12px;
   padding: 6px 11px;
-  border-bottom: 0.5px solid var(--line);
+  border-bottom: 0.5px solid color-mix(in oklab, var(--line) 55%, transparent);
 }
 .drawer-list li:last-child { border-bottom: 0; }
 .drawer-list li span:first-child { min-width: 0; }
@@ -1807,7 +1807,7 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
   font-size: 12px;
   line-height: 1.45;
   max-width: 300px;
-  box-shadow: none;
+  box-shadow: var(--shadow-md);
 }
 .tooltip b { font-variant-numeric: tabular-nums; }
 
@@ -1832,11 +1832,11 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
   color: var(--bg);
   font-size: 12px;
   line-height: 1.5;
-  box-shadow: none;
-  animation: none;
+  box-shadow: var(--shadow-lg);
+  animation: toast-in .18s ease;
 }
 .toast b { font-variant-numeric: tabular-nums; }
-.toast.is-err { background: var(--st-critical); color: #fdfdff; }
+.toast.is-err { background: var(--st-critical); color: #fff; }
 .toast[hidden] { display: none; }
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(6px); }
@@ -1893,7 +1893,7 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
   min-height: 110px;
   border-radius: var(--r-md);
   background: var(--surface-2);
-  animation: none;
+  animation: sk-pulse 1.5s ease-in-out infinite;
 }
 @keyframes sk-pulse {
   0%, 100% { opacity: .55; }
@@ -1910,11 +1910,11 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
   background: linear-gradient(
     100deg,
     var(--surface-2) 30%,
-    var(--surface-2) 50%,
+    color-mix(in oklab, var(--surface-2) 55%, var(--surface-3)) 50%,
     var(--surface-2) 70%
   );
   background-size: 240% 100%;
-  animation: none;
+  animation: sk-shimmer 1.5s ease-in-out infinite;
 }
 .sk-line { height: 13px; }
 .sk-block { height: 84px; border-radius: var(--r-md); }
@@ -1931,13 +1931,13 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
 
 /* 数据到手：骨架淡出、正文淡入。用 animation 而不是 transition，
    因为骨架是直接从 DOM 里移除的，没有可过渡的中间态。 */
-.skeleton.is-done { animation: none; pointer-events: none; }
+.skeleton.is-done { animation: sk-out .18s ease forwards; pointer-events: none; }
 @keyframes sk-out { to { opacity: 0; transform: translateY(-4px); } }
 
 /* 首屏内容入场。只跑一次 —— 骨架移除后那一帧才有意义；
    切工具走的是下面的 is-switching，用更短的纯淡入。 */
 .single > section, .single > .note {
-  animation: none;
+  animation: enter .22s ease both;
 }
 .skeleton ~ section, .skeleton ~ .note { animation-delay: .04s; }
 @keyframes enter {
@@ -1947,7 +1947,7 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
 
 /* 切工具：数据是瞬间替换的，给一记很短的淡入表示"已经换人了"。
    不做位移 —— 上下跳会让人以为内容重排了。 */
-.single > .is-switching { animation: none; }
+.single > .is-switching { animation: switch-in .16s ease both; }
 @keyframes switch-in {
   from { opacity: .55; }
   to   { opacity: 1; }
@@ -1962,10 +1962,10 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
   width: 11px; height: 11px;
   margin-inline-start: 8px;
   border-radius: 50%;
-  border: 0.5px solid var(--muted);
+  border: 2px solid color-mix(in oklab, var(--muted) 30%, transparent);
   border-top-color: var(--accent);
   vertical-align: middle;
-  animation: none;
+  animation: spin .7s linear infinite;
 }
 
 /* ── 顶栏的全局忙碌条 ───────────────────────────────────── */
@@ -1986,7 +1986,7 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
 }
 body.is-busy .topbar::after {
   opacity: 1;
-  animation: none;
+  animation: busy-slide 1.05s ease-in-out infinite;
 }
 @keyframes busy-slide {
   from { background-position: -40% 0; }
@@ -2007,14 +2007,14 @@ body.is-busy .topbar::after {
   width: 13px; height: 13px;
   margin: -6.5px 0 0 -6.5px;
   border-radius: 50%;
-  border: 0.5px solid var(--line);
+  border: 2px solid color-mix(in oklab, currentColor 30%, transparent);
   border-top-color: var(--accent);
-  animation: none;
+  animation: spin .7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* 顶栏按钮是深色到浅色的两套主题，转圈的底色要跟着变 */
-.btn-primary.is-busy::after { border-color: var(--black-a5); border-top-color: #fdfdff; }
+.btn-primary.is-busy::after { border-color: rgba(255,255,255,.35); border-top-color: #fff; }
 
 /* ── 交互反馈细部 ───────────────────────────────────────── */
 
@@ -2123,7 +2123,7 @@ body.is-busy .topbar::after {
   background: transparent;
   color: var(--muted);
 }
-.all-tool.is-err { color: var(--st-critical); border-color: var(--st-critical); }
+.all-tool.is-err { color: var(--st-critical); border-color: color-mix(in oklab, var(--st-critical) 30%, var(--line)); }
 
 .all-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .all-filter .search { flex: 0 1 320px; }
@@ -2160,7 +2160,7 @@ body.is-busy .topbar::after {
   gap: 10px;
   padding: 7px 13px;
   font-size: 14px;
-  border-bottom: 0.5px solid var(--line);
+  border-bottom: 0.5px solid color-mix(in oklab, var(--line) 55%, transparent);
 }
 .all-row:last-child { border-bottom: 0; }
 .all-row:hover { background: var(--surface-2); }
@@ -2183,24 +2183,24 @@ body.is-busy .topbar::after {
 .all-app[data-app-tone="dsh"]    { --tc: var(--tool-dsh);    }
 
 .all-app[data-app-tone] {
-  background: var(--tc);
+  background: color-mix(in oklab, var(--tc) 13%, var(--surface));
   color: var(--tc);
 }
 
 /* 筛选钮跟着各自的工具色走：行里的色签和上面的钮是同一个色，
    不然"哪一行是 Cursor"和"哪个钮是 Cursor"要靠读字才连得起来。 */
 .chip[data-all-tool] { --c: var(--line-strong); }
-.chip[data-all-tool="zcode"]  { --c: var(--tool-zcode);  --tint: var(--tool-zcode); }
-.chip[data-all-tool="codex"]  { --c: var(--tool-codex);  --tint: var(--tool-codex); }
-.chip[data-all-tool="cursor"] { --c: var(--tool-cursor); --tint: var(--tool-cursor); }
-.chip[data-all-tool="claude"] { --c: var(--tool-claude); --tint: var(--tool-claude); }
-.chip[data-all-tool="dsh"]    { --c: var(--tool-dsh);    --tint: var(--tool-dsh); }
+.chip[data-all-tool="zcode"]  { --c: var(--tool-zcode);  --tint: color-mix(in oklab, var(--tool-zcode) 12%, var(--surface)); }
+.chip[data-all-tool="codex"]  { --c: var(--tool-codex);  --tint: color-mix(in oklab, var(--tool-codex) 12%, var(--surface)); }
+.chip[data-all-tool="cursor"] { --c: var(--tool-cursor); --tint: color-mix(in oklab, var(--tool-cursor) 12%, var(--surface)); }
+.chip[data-all-tool="claude"] { --c: var(--tool-claude); --tint: color-mix(in oklab, var(--tool-claude) 12%, var(--surface)); }
+.chip[data-all-tool="dsh"]    { --c: var(--tool-dsh);    --tint: color-mix(in oklab, var(--tool-dsh) 12%, var(--surface)); }
 
 /* 选中态只让**色点**满载工具色，整块的边框与底色保持中性。
    八个筛选钮都亮着的时候，满饱和的边框会互相抢，屏幕上反而看不出谁是谁。
    （深色底上 `--line-strong` 偏亮，一整块看着像浮起来 —— 用 `--line` 更稳。） */
 .chip[data-all-tool].is-on {
-  border-color: var(--c);
+  border-color: color-mix(in oklab, var(--c) 40%, var(--line));
   color: var(--ink);
 }
 .chip[data-all-tool].is-on i { background: var(--c); }
@@ -2209,7 +2209,7 @@ body.is-busy .topbar::after {
 .chip[data-all-tool]:not(.is-on) { background: var(--surface); border-color: var(--line); color: var(--muted); }
 .chip[data-all-tool]:not(.is-on) i {
   background: transparent;
-  box-shadow: none;
+  box-shadow: inset 0 0 0 1.5px var(--c);
 }
 
 /* 「这次汇总里没有它的会话」那个不可点的标签：用同一个色，但压暗 */
@@ -2228,7 +2228,7 @@ body.is-busy .topbar::after {
   width: 7px; height: 7px;
   border-radius: 50%;
   background: transparent;
-  box-shadow: none;
+  box-shadow: inset 0 0 0 1.5px var(--tc);
   flex: none;
 }
 
@@ -2314,7 +2314,7 @@ html.is-theme-switching *::after {
 .tm-box:hover {
   z-index: 2;
   transform: scale(1.02);
-  box-shadow: none;
+  box-shadow: 0 4px 14px rgb(0 0 0 / .14);
   filter: saturate(1.12);
 }
 .tm-box:focus-visible {

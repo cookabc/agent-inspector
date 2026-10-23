@@ -208,18 +208,30 @@ export function verdictTreemap(categories, rect) {
   const gaps = GAP * (bands.length - 1);
   const usable = Math.max(1, rect.h - gaps);
 
-  // Tiny categories remain selectable in the adjacent category list.
-  // Map area always represents bytes, without a minimum visual weight.
+  // A band with a tiny share of the disk still has to be visible and
+  // clickable — otherwise "there is 0.3% in there, but you cannot see it"
+  // is the map's answer, which is the wrong answer.
+  const MIN_BAND = 14;
+
+  // Give every band at least MIN_BAND of height, then share what is left
+  // by size.
+  const floor = Math.min(MIN_BAND, usable / bands.length);
+  const floorTotal = floor * bands.length;
+  const spare = Math.max(0, usable - floorTotal);
+  const bandTotal = bands.reduce((sum, band) => sum + band.value, 0);
+
   const out = [];
   let y = rect.y;
   for (const band of bands) {
-    const share = band.value / total;
-    const height = share * usable;
+    const share = bandTotal > 0 ? band.value / bandTotal : 0;
+    const height = Math.max(1, floor + share * spare);
 
     const laid = squarify(
       band.items.map((c) => ({ id: c.id, value: c.value })),
       { x: rect.x, y, w: rect.w, h: height },
-      0,
+      // Every category gets a floor on the area it may take, so a band with
+      // a dozen tiny categories still shows a dozen readable blocks.
+      0.035,
     );
     const byId = new Map(laid.map((item) => [item.id, item]));
     for (const category of band.items) {

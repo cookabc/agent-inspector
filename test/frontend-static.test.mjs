@@ -229,9 +229,9 @@ test('两块会话分组都为空时折成一行说明，并改掉"分成三组"
      不带 sess_ id。各立一张 126px 的空卡片白白吃掉半屏。 */
   assert.match(app, /const bothEmpty = orphan\.length === 0 && live\.length === 0/);
   assert.match(app, /class="split-note"/);
-  // 只剩一块时由 split-note 交代原因，不重复显示分组说明
+  // 只剩一块时说"分成三组"是假话；但原因已由 split-note 交代，这里只留操作提示
   assert.match(app, /const twoEmpty = orphan\.length === 0 && live\.length === 0/);
-  assert.match(app, /els\.splitLede\.textContent = twoEmpty \? "" : "按会话状态选择文件"/);
+  assert.match(app, /点一块选中整块，再点一下取消/);
   assert.doesNotMatch(app, /所以只有<b>「非会话文件」<\/b>一块/, '别把 split-note 的话再说一遍');
   assert.match(css, /\.split-note \{[\s\S]{0,200}grid-column: 1 \/ -1/);
 });

@@ -120,18 +120,28 @@ test('the verdict treemap drops categories with no size', () => {
   assert.equal(out[0].id, 'a');
 });
 
-test('tiny categories retain their exact byte proportions across and within bands', () => {
+test('a tiny band still gets a visible, clickable strip', () => {
+  // One category eats 99% of the disk and the rest is scattered. If the
+  // bands were sized purely by share, everything else would collapse to a
+  // hairline — and the map would be telling the reader "there is nothing
+  // else here", which is the wrong answer.
   const categories = [
     { id: 'big', label: '大头', value: 9900, verdict: 'review', status: 'warning' },
     { id: 'tiny1', label: '小一', value: 40, verdict: 'safe', status: 'good' },
     { id: 'tiny2', label: '小二', value: 40, verdict: 'never', status: 'critical' },
-    { id: 'tiny3', label: '小三', value: 20, verdict: 'safe', status: 'good' },
+    { id: 'tiny3', label: '小三', value: 20, verdict: 'junk', status: 'good' },
   ];
   const out = verdictTreemap(categories, { x: 0, y: 0, w: 400, h: 400 });
-  const area = out.reduce((sum, box) => sum + box.w * box.h, 0);
+
   for (const box of out) {
-    assert.ok(Math.abs(box.w * box.h / area - box.value / 10000) < 1e-10, `${box.id} area must represent its byte share`);
+    assert.ok(box.h >= 10, `${box.id} is only ${box.h} tall — too thin to click`);
+    assert.ok(box.w >= 20, `${box.id} is only ${box.w} wide — too thin to click`);
   }
+
+  // And the small bands still read as smaller than the big one.
+  const big = out.find((box) => box.id === 'big');
+  const tiny = out.find((box) => box.id === 'tiny1');
+  assert.ok(big.h > tiny.h, 'the dominant category should still dominate');
 });
 
 test('the verdict treemap bands never overlap', () => {
