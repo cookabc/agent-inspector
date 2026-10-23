@@ -184,7 +184,7 @@ test('构成条按量出来的像素决定放不放文字，不按百分比也�
 });
 
 test('界面上不许把 undefined 印出来：单 app 的会话行没有 appLabel 字段', () => {
-  /* 实测 bug：抽屉清单里写 `${esc(t.appLabel)} · ${esc(t.title)}`，
+  /* 实测 bug：抽屉清单里写 `${esc(t.appLabel)}，${esc(t.title)}`，
      而任何后端适配器都没有给会话行塞过 appLabel —— 于是每个 app 的清单
      第一项都是 "undefined · 标题"。这类缺陷不会报错，只是把实现细节
      漏到屏幕上，而这套工具的全部信任都建立在"屏幕上的字是真的"上。
@@ -192,7 +192,7 @@ test('界面上不许把 undefined 印出来：单 app 的会话行没有 appLab
      唯一例外是跨工具的「全部」视图：那边每一行必须自带归属，
      aggregateSessions() 确实给每行赋了 appLabel。 */
   assert.match(app, /const who = d\.appLabel/);
-  assert.match(app, /<span>\$\{esc\(who\)\} · \$\{esc\(t\.title\)\}<\/span>/);
+  assert.match(app, /<span>\$\{esc\(who\)\}，\$\{esc\(t\.title\)\}<\/span>/);
 
   // 抽屉那段不许再取行上的 appLabel（只看代码，注释里正解释这件事）
   const drawer = app.slice(app.indexOf('function openTaskDrawer'), app.indexOf('function checkLine'))
@@ -451,7 +451,7 @@ test('工具标识色不能借用状态色', () => {
   assert.match(css, /\.chip\[data-all-tool="zcode"\]\s*\{ --c: var\(--tool-zcode\)/);
 
   // 深色下要单独提亮，否则浅色那组在深底上掉到 3:1 左右
-  const darkTool = css.split('--tool-zcode:  #6ba5ff').length - 1;
+  const darkTool = css.split('--tool-zcode:  #f2eff3').length - 1;
   assert.ok(darkTool >= 2, '深色两套（media + data-theme）都要覆盖');
 
   /* 每加一个工具，新色必须与已有色都拉得开 —— 只靠"看着不一样"不够。

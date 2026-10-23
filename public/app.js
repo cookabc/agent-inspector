@@ -291,7 +291,7 @@ function applyApp() {
     els.scanNote.textContent = `扫描用时 ${(state.scan.durationMs / 1000).toFixed(1)}s`;
     /* 上面那句 selection.clear() 只清了数据，操作条是上一次渲染留下的 DOM ——
        不清它，从某个工具带着勾选切过来，「全部」这一屏底部会挂着
-       "1 项 · 99 KB / 清理…"。而这一屏根本没有文件清单，那个按钮点下去
+       "1 项，99 KB / 清理…"。而这一屏根本没有文件清单，那个按钮点下去
        什么也删不掉。这一屏是只读的，操作条就不该存在。 */
     renderActionbar();
     renderTaskFoot();
@@ -372,8 +372,8 @@ function renderAppTabs() {
     return `<button type="button" class="app-tab ${on ? 'is-on' : ''}${empty ? ' is-empty' : ''}"
       role="tab" id="apptab-${esc(a.app)}" aria-selected="${on}" tabindex="${on ? '0' : '-1'}"
       aria-controls="single" data-app="${esc(a.app)}"
-      title="${esc(a.targets.map((t) => `${t.short}${t.exists ? '' : '（没有）'}`).join('、'))} · ${
-        empty ? '未安装' : `${fmtBytes(a.totals.bytes)} · ${a.totals.files.toLocaleString()} 个文件`}">
+      title="${esc(a.targets.map((t) => `${t.short}${t.exists ? '' : '（没有）'}`).join('、'))}，${
+        empty ? '未安装' : `${fmtBytes(a.totals.bytes)}，${a.totals.files.toLocaleString()} 个文件`}">
       <span class="app-tab-name">${esc(a.label)}</span>
     </button>`;
   }).join('');
@@ -390,6 +390,7 @@ function filesOf(catId) {
 function renderHero() {
   const t = state.index.totals;
   els.heroBytes.textContent = fmtBytes(t.bytes);
+  els.heroBytes.title = bytesTip(t.bytes);
 
   const runaway = state.index.categories.filter((c) => c.id === 'runaway');
   const runawayBytes = runaway.reduce((s, c) => s + c.bytes, 0);
@@ -403,10 +404,10 @@ function renderHero() {
      想看"哪家占得多"抬头看标签，比在这里读一串逗号分隔的名字快。 */
   const others = state.apps.filter((a) => a.app !== state.appId && a.totals.bytes > 0);
   const grand = others.length
-    ? `这台机器上 ${state.apps.length} 个工具合计 <b>${fmtBytes(state.scan.grand.bytes)}</b>。`
+    ? `这台机器上 ${state.apps.length} 个工具合计 ${bytesB(state.scan.grand.bytes)}。`
     : '';
   els.heroSub.innerHTML = runawayBytes > 0
-    ? shape + `其中 <b>${fmtBytes(runawayBytes)}</b> 来自 <b>${runawayCount}</b> 个失控放大的日志，` +
+    ? shape + `其中 ${bytesB(runawayBytes)} 来自 <b>${runawayCount}</b> 个失控放大的日志，` +
       `占 <b>${((runawayBytes / t.bytes) * 100).toFixed(0)}%</b>。` + grand
     : shape + grand;
 
@@ -484,7 +485,7 @@ function renderTreemap() {
         state.catFilter === box.id ? ' is-selected' : ''
       }" data-cat="${esc(box.id)}"
         style="left:${(box.x / W) * 100}%;top:${(box.y / H) * 100}%;width:${(box.w / W) * 100}%;height:${(box.h / H) * 100}%"
-        title="${esc(cat.label)} · ${fmtBytes(bytes)} · ${pct}% · ${esc(band ? band.label : box.verdict)}"
+        title="${esc(cat.label)}，${fmtBytes(bytes)}（${bytesTip(bytes)}），${pct}%，${esc(band ? band.label : box.verdict)}"
         aria-label="${esc(cat.label)}，${fmtBytes(bytes)}，占 ${pct}%，${esc(band ? band.label : box.verdict)}">
         ${label}
       </button>`;
@@ -505,7 +506,7 @@ function renderTreemap() {
     .sort((a, b) => a[1].bytes - b[1].bytes)
     .map(([verdict, entry]) => {
       const pct = ((entry.bytes / state.index.totals.bytes) * 100).toFixed(0);
-      return `<span class="tm-legend-item"><i class="dot st-${esc(entry.status)}"></i>` +
+      return `<span class="tm-legend-item" title="${bytesTip(entry.bytes)}"><i class="dot st-${esc(entry.status)}"></i>` +
         `${esc(entry.label)} <b>${fmtBytes(entry.bytes)}</b> <em>${pct}%</em></span>`;
     })
     .join('');
@@ -624,10 +625,10 @@ function renderGroups() {
             all.length === totalHere
               ? `${totalHere.toLocaleString()} 项`
               : `筛出 ${all.length.toLocaleString()} / ${totalHere.toLocaleString()} 项`
-          }${selCount ? ` · 已选 ${selCount.toLocaleString()}` : ''}</span>
+          }${selCount ? `，已选 ${selCount.toLocaleString()}` : ''}</span>
         </div>
         <div class="group-right">
-          <span class="group-size" title="${visBytes.toLocaleString()} 字节${
+          <span class="group-size" title="${bytesTip(visBytes)}${
             filtered ? `（整个分类 ${cat.bytes.toLocaleString()} 字节）` : ''}">${
             visLabel}${showAll ? `<em> / ${allLabel}</em>` : ''}</span>
           <input type="checkbox" data-group-box="${cat.id}"
@@ -644,7 +645,7 @@ function renderGroups() {
         <button class="group-more" data-more="${cat.id}" aria-expanded="${state.explain.has(cat.id)}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
-          ${state.explain.has(cat.id) ? '收起说明' : '这是什么 · 为什么在这里'}
+          ${state.explain.has(cat.id) ? '收起说明' : '这是什么，为什么在这里'}
         </button>
       </div>
 
@@ -686,7 +687,7 @@ function rowHtml(f, cat) {
     <span class="row-path" title="${esc(targetShort(f.t)) + '/' + esc(f.p)}">
       <span class="row-dir">${esc(dir)}</span><b class="row-name">${esc(name)}</b>${tTag}${linkTag}${sidTag}
     </span>
-    <span class="row-size">${fmtBytes(f.s)}</span>
+    <span class="row-size" title="${bytesTip(f.s)}">${fmtBytes(f.s)}</span>
     <span class="row-time">${when}</span>
     ${canReveal() ? `<button class="row-reveal" data-reveal="${esc(keyOf(f))}" title="在 Finder 中显示" aria-label="在 Finder 中显示">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>
@@ -742,6 +743,7 @@ function renderActionbar() {
   els.actionbar.hidden = n === 0;
   els.abCount.textContent = n.toLocaleString();
   els.abBytes.textContent = fmtBytes(selectedBytes());
+  els.abBytes.title = bytesTip(selectedBytes());
   els.abReveal.hidden = !canReveal();
 }
 
@@ -785,8 +787,8 @@ function openDrawer() {
 
   els.drawerStats.innerHTML = `
     <div class="dstat"><span>条目</span><b>${rows.length.toLocaleString()}</b></div>
-    <div class="dstat"><span>合计</span><b>${fmtBytes(bytes)}</b></div>
-    <div class="dstat"><span>最大一项</span><b title="${esc(rowTitle(biggest))}">${fmtBytes(biggest.s)}</b></div>`;
+    <div class="dstat"><span>合计</span><b title="${bytesTip(bytes)}">${fmtBytes(bytes)}</b></div>
+    <div class="dstat"><span>最大一项</span><b title="${esc(rowTitle(biggest))}，${bytesTip(biggest.s)}">${fmtBytes(biggest.s)}</b></div>`;
 
   // 这批里都是些什么 —— 按分类摊开，别只给一个总数
   // 跨 app 时同名分类（各工具都有一类"缓存"）是不同的元信息对象，
@@ -814,7 +816,7 @@ function openDrawer() {
     const name = cut < 0 ? f.p : f.p.slice(cut + 1);
     return `<li title="${esc(rowTitle(f))}">
       <span class="dl-path"><span class="row-dir">${esc(dir)}</span><b>${esc(name)}</b></span>
-      <span>${fmtBytes(f.s)}</span></li>`;
+      <span title="${bytesTip(f.s)}">${fmtBytes(f.s)}</span></li>`;
   }).join('')
     + (rows.length > 300
         // 截断的只是这张预览表，不是删除范围 —— 不写清楚，人会以为剩下的不删。
@@ -1039,6 +1041,12 @@ function showToast(html, opts = {}) {
 
 /** 带精确字节数的体积片段 —— toast 里所有面积数字都走它。 */
 const bytesWithExact = (n) => `<b title="${n.toLocaleString()} 字节">${fmtBytes(n)}</b>`;
+/** 体积标签的悬停提示：完整字节数。
+ *  磁盘审计的数最后要跟 `du` 对得上 —— "1.40 GB" 对不上，
+ *  "1,502,341,376 字节" 才对得上。所以凡是拿来核对的体积都挂这个。 */
+const bytesTip = (n) => `${Number(n || 0).toLocaleString()} 字节`;
+/** 正文里的体积：加粗 + 悬停给精确字节数。 */
+const bytesB = (n) => `<b title="${bytesTip(n)}">${fmtBytes(n)}</b>`;
 
 /* ── 提示气泡 ───────────────────────────────────────────── */
 
@@ -1177,14 +1185,14 @@ function renderAllSessions() {
       <header class="all-group-head">
         <span class="all-group-name" title="${esc(g.ws || '库里只有工作区 id，还原不出路径')}">${esc(base)}</span>
         <span class="all-group-path">${esc(named)}</span>
-        <span class="all-group-n">${g.rows.length.toLocaleString()} 个 · ${fmtBytes(g.bytes)}</span>
+        <span class="all-group-n" title="${bytesTip(g.bytes)}">${g.rows.length.toLocaleString()} 个，${fmtBytes(g.bytes)}</span>
       </header>
       ${g.rows.map((t) => `
         <div class="all-row">
           <span class="all-app" data-app-tone="${esc(t.app)}">${esc(t.appLabel)}</span>
           <span class="all-title" title="${esc(t.title)}">${esc(t.title)}</span>
           <span class="all-when">${fmtDate(t.updatedAt)}</span>
-          <span class="all-size">${fmtBytes(t.bytes)}</span>
+          <span class="all-size" title="${bytesTip(t.bytes)}">${fmtBytes(t.bytes)}</span>
         </div>`).join('')}
     </section>`;
   }).join('');
@@ -1209,10 +1217,11 @@ function renderSplit() {
   const twoEmpty = orphan.length === 0 && live.length === 0;
 
   // 数字全部长在下面几块上，这里只交代"为什么这么分"，不再把同一批数字念一遍
+  // One sentence, not two: the group names already say what the groups
+  // are, and the protected-content rule is shown on the blocks themselves.
   els.splitLede.innerHTML = twoEmpty
-    ? `点一块选中整块，再点一下取消；受保护的内容不会被选中。`
-    : `按<b>会话是否还在</b>分成三组 —— 点一块就选中那一组，再点一下取消。` +
-      `受保护的内容不会被选中。`;
+    ? `点一块选中整块，再点一下取消。`
+    : `按<b>会话是否还在</b>分成三组，点一块选中那一组。`;
 
   /* 每块自己就是一个勾选框：点一下把这一组整个勾上，行也跟着筛到这一组，
      在下面的清单里能看见勾。再点一下取消。
@@ -1246,9 +1255,9 @@ function renderSplit() {
     const flag = empty
       ? (filtered && xs.length ? '这一组当前筛选下没有条目' : '这一组没有可勾选的条目')
       : allOn
-        ? `已选 <b>${picked.length.toLocaleString()}</b> 项 · <b>${fmtBytes(sum(picked))}</b>　再点一下取消${toggle}`
+        ? `已选 <b>${picked.length.toLocaleString()}</b> 项，<b>${fmtBytes(sum(picked))}</b>，再点一下取消${toggle}`
         : part
-          ? `已选 <b>${picked.length.toLocaleString()}</b> / <b>${can.length.toLocaleString()}</b> 项 · ` +
+          ? `已选 <b>${picked.length.toLocaleString()}</b> / <b>${can.length.toLocaleString()}</b> 项，` +
             `<b>${fmtBytes(sum(picked))}</b>　再点一下补全${toggle}`
           : anyPicked
             ? `点这里换成这一组${toggle}`
@@ -1266,7 +1275,7 @@ function renderSplit() {
       <header class="split-head">
         <h3><span class="box" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
           stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span>${esc(title)}</h3>
-        <span class="split-size" title="${shownBytes.toLocaleString()} 字节">${fmtBytes(shownBytes)}</span>
+        <span class="split-size" title="${bytesTip(shownBytes)}">${fmtBytes(shownBytes)}</span>
       </header>
       <p class="split-desc">${esc(desc)}</p>
       <p class="split-meta">${
@@ -1297,9 +1306,9 @@ function renderSplit() {
 
   els.split.innerHTML = sessNote + (bothEmpty ? '' : [
     block('is-orphan', '会话已不存在', '会话库里找不到它，只剩文件残留。可以直接清理。', orphan,
-      sids(orphan) ? ` · ${sids(orphan).toLocaleString()} 个会话` : '', 'orphan', vis(orphan)),
+      sids(orphan) ? `，${sids(orphan).toLocaleString()} 个会话` : '', 'orphan', vis(orphan)),
     block('is-live', '会话仍在', `这些会话还在 ${esc(state.index.label)} 里，文件有用，请谨慎。`, live,
-      sids(live) ? ` · ${sids(live).toLocaleString()} 个会话` : '', 'live', vis(live)),
+      sids(live) ? `，${sids(live).toLocaleString()} 个会话` : '', 'live', vis(live)),
   ].join('')) + block('is-other', '非会话文件', '日志、缓存、配置等，不属于任何会话。', other, '', 'other', vis(other));
 }
 
@@ -1365,11 +1374,12 @@ function renderRecommend() {
   els.recFoot.hidden = false;
 
   els.recFigure.textContent = fmtBytes(bytes);
+  els.recFigure.title = bytesTip(bytes);
 
   /* 这一句得跟着实际范围变。写死"日志、缓存与系统垃圾"只在
      ZCode/Codex/Claude 下成立；Cursor 的推荐项是「已安装扩展」，
      那句"删掉不影响会话、配置和凭据"对它就是假话。 */
-  els.recName.textContent = all.length <= 2 ? all.map((c) => c.label).join(' · ') : '文件与日志';
+  els.recName.textContent = all.length <= 2 ? all.map((c) => c.label).join('、') : '文件与日志';
   /* 这一行只留"共几项"和例外说明。
      "删了会怎样"挪到按钮旁边那行去说 —— 两处都在讲后果时，留位置更靠下的
      那个：读到它紧接着就能决定按不按按钮，不用再往上找。 */
@@ -1382,10 +1392,10 @@ function renderRecommend() {
 
   els.recBtn.disabled = !count;
   els.recBtn.innerHTML = count
-    ? `推荐清理 <span class="rec-size">${fmtBytes(bytes)}</span>`
+    ? `推荐清理 <span class="rec-size" title="${bytesTip(bytes)}">${fmtBytes(bytes)}</span>`
     : '推荐清理';
   els.recBtn.title = count
-    ? `${count.toLocaleString()} 项 · 共 ${fmtBytes(bytes)}（${cats.map((c) => c.label).join('、')}）`
+    ? `${count.toLocaleString()} 项，共 ${fmtBytes(bytes)}（${cats.map((c) => c.label).join('、')}）`
     : '已经一项都不剩了，把上面的条目勾回来';
 
   els.recCap.innerHTML =
@@ -1408,7 +1418,7 @@ function recChips(list) {
       data-rec="${c.id}" aria-pressed="${isOn}" title="${esc(c.what)}">
       <span class="box" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
         stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span>
-      ${esc(c.label)} <em>${fmtBytes(c.bytes)}</em>
+      ${esc(c.label)} <em title="${bytesTip(c.bytes)}">${fmtBytes(c.bytes)}</em>
     </button>`;
   }).join('');
 }
@@ -1421,7 +1431,7 @@ function renderChips() {
     const bytes = cats.reduce((a, c) => a + c.bytes, 0);
     return `<button type="button" class="chip ${STATUS_CLASS[s]} ${state.statuses.has(s) ? 'is-on' : ''}"
       data-status="${s}" aria-pressed="${state.statuses.has(s)}">
-      <i></i>${STATUS_LABEL[s]} <em style="font-style:normal;opacity:.7">${fmtBytes(bytes)}</em>
+      <i></i>${STATUS_LABEL[s]} <em style="font-style:normal;opacity:.7" title="${bytesTip(bytes)}">${fmtBytes(bytes)}</em>
     </button>`;
   }).join('');
 }
@@ -2109,7 +2119,7 @@ function renderRecoverable() {
       `${s.messages} 条消息`,
       s.tools ? `${s.tools} 次工具调用` : '',
       s.workspaceResolved ? '' : '路径未还原',
-    ].filter(Boolean).join(' · ');
+    ].filter(Boolean).join('、');
     return `<label class="recover-row ${sel ? 'is-on' : ''}" data-recover-row="${esc(s.id)}">
       <input type="checkbox" data-recover-id="${esc(s.id)}" ${sel ? 'checked' : ''}
         aria-label="选择会话 ${esc(s.title)}">
@@ -2117,7 +2127,7 @@ function renderRecoverable() {
         <span class="recover-title" title="${esc(s.title)}">${esc(s.title)}</span>
         <span class="recover-meta" title="${esc(meta)}">${esc(meta)}</span>
       </span>
-      <span class="recover-size">${fmtBytes(s.bytes)}</span>
+      <span class="recover-size" title="${bytesTip(s.bytes)}">${fmtBytes(s.bytes)}</span>
     </label>`;
   }).join('');
 
@@ -2223,7 +2233,7 @@ function renderRecoverDrawer() {
 
   const sorted = picked.slice().sort((a, b) => (b.bytes || 0) - (a.bytes || 0));
   rEls.listD.innerHTML = sorted.slice(0, 200).map((s) =>
-    `<li title="${esc(s.title)}"><span>${esc(s.title)}</span><span>${fmtBytes(s.bytes || 0)}</span></li>`).join('')
+    `<li title="${esc(s.title)}"><span>${esc(s.title)}</span><span title="${bytesTip(s.bytes || 0)}">${fmtBytes(s.bytes || 0)}</span></li>`).join('')
     + (sorted.length > 200
       ? `<li class="drawer-more"><span>下面还有 ${(sorted.length - 200).toLocaleString()} 项没列出来，` +
         `<b>它们同样在这次的范围内</b>。</span><span></span></li>` : '');
@@ -2420,22 +2430,22 @@ function renderTasks() {
       : `其中 <b>${purgeable}</b> 条可以清（勾选框没灰的就是）。`)
     : '';
   tEls.lede.innerHTML = d.readOnly
-    ? `${esc(who)} 的会话库 <b>${fmtBytes(d.db.total)}</b>，读到 <b>${d.totals.count}</b> 个会话、` +
-      `<b>${fmtBytes(text)}</b> 的正文。下面按键族摊开这 ${fmtBytes(d.db.total)} 到底是怎么分的。` +
+    ? `${esc(who)} 的会话库 ${bytesB(d.db.total)}，读到 <b>${d.totals.count}</b> 个会话、` +
+      `${bytesB(text)} 的正文。下面按键族摊开这 ${fmtBytes(d.db.total)} 到底是怎么分的。` +
       (untitledNote ? ` ${untitledNote}` : '')
     : d.fileBased
       ? `${esc(who)} 的会话正文就是 <b>${d.db.bodies?.count || 0}</b> 个正文文件，` +
-        `共 <b>${fmtBytes(d.db.bodies?.bytes || 0)}</b>；本机没有会话数据库 —— 清理走文件那条线。` +
+        `共 ${bytesB(d.db.bodies?.bytes || 0)}；本机没有会话数据库 —— 清理走文件那条线。` +
         `读到 <b>${d.totals.count}</b> 个会话。` +
         (purgeNote ? ` ${purgeNote}` : '')
       : d.db.bodies
-        ? `${esc(who)} 的会话分两处存：索引库 <b>${fmtBytes(d.db.total)}</b>，` +
-          `正文文件 <b>${fmtBytes(d.db.bodies.bytes)}</b>（<b>${d.db.bodies.count}</b> 个 rollout 文件）。` +
+        ? `${esc(who)} 的会话分两处存：索引库 ${bytesB(d.db.total)}，` +
+          `正文文件 ${bytesB(d.db.bodies.bytes)}（<b>${d.db.bodies.count}</b> 个 rollout 文件）。` +
           `读到 <b>${d.totals.count}</b> 个会话。`
-        : `会话库 <b>${fmtBytes(d.db.total)}</b>，装着 <b>${d.totals.count}</b> 个会话、` +
-          `<b>${fmtBytes(text)}</b> 的正文。` +
+        : `会话库 ${bytesB(d.db.total)}，装着 <b>${d.totals.count}</b> 个会话、` +
+          `${bytesB(text)} 的正文。` +
           (del
-            ? `其中 <b>${del.count}</b> 个已在界面上删除，仍占 <b>${fmtBytes(del.bytes)}</b>。`
+            ? `其中 <b>${del.count}</b> 个已在界面上删除，仍占 ${bytesB(del.bytes)}。`
             : '');
 
   // 动手之前的前提，三个 app 三种说法 —— 都从后端的能力标记来，不在前端猜
@@ -2531,7 +2541,7 @@ function renderDbBar() {
          所以先全部渲染，量 scrollWidth 之后再把放不下的收起来。 */
       const full = `${s.label} ${fmtBytes(s.bytes)}`;
       return `<div class="dbbar-seg ${cls}" style="width:${floors[i]}%"
-        data-tip="${esc(s.tip || `${s.label} · ${fmtBytes(s.bytes)}`)}">
+        data-tip="${esc(`${s.tip ? s.tip + ' ' : s.label + '，'}${fmtBytes(s.bytes)}（${bytesTip(s.bytes)}）`)}">
         <span data-variant="full">${esc(full)}</span>
         <span data-variant="size" hidden>${fmtBytes(s.bytes)}</span>
       </div>`;
@@ -2572,7 +2582,7 @@ function renderComposition() {
       return `<div class="tcomp-row${c.family === '' && c.table === 'kvTotal' ? ' is-total' : ''}">
         <span class="tcomp-label" title="${esc(c.table)}:${esc(c.family)}">${esc(c.label)}</span>
         <span class="tcomp-bar"><i style="width:${Math.max(1, pct)}%"></i></span>
-        <span class="tcomp-n">${c.count == null ? '' : `${c.count.toLocaleString()} 行 · `}${fmtBytes(c.bytes)}</span>
+        <span class="tcomp-n" title="${bytesTip(c.bytes)}">${c.count == null ? '' : `${c.count.toLocaleString()} 行，`}${fmtBytes(c.bytes)}</span>
       </div>`;
     }).join('');
 }
@@ -2591,7 +2601,7 @@ function renderTaskChips() {
     const label = STATE_META_CN[g.state] || g.state;
     return `<button type="button" class="chip ${STATE_TONE[g.state] || ''} ${taskState.states.has(g.state) ? 'is-on' : ''}"
       data-tstate="${g.state}" aria-pressed="${taskState.states.has(g.state)}"
-      title="${esc(label)} ${g.count} 个 · ${fmtBytes(g.bytes)}">
+      title="${esc(label)} ${g.count} 个，${fmtBytes(g.bytes)}（${bytesTip(g.bytes)}）">
       <i></i>${esc(label)} <em style="font-style:normal;opacity:.7">${g.count}</em>
     </button>`;
   }).join('');
@@ -2617,7 +2627,7 @@ function renderTaskList() {
       t.children ? `${t.children} 子会话` : '',
       t.typeLabel,
       segNote,
-    ].filter(Boolean).join(' · ');
+    ].filter(Boolean).join('、');
     const body = t.bodyRel
       ? `<button class="btn btn-ghost btn-sm" type="button" data-locate="${esc(t.bodyRel)}">在文件清单中定位</button>`
       : '';
@@ -2642,7 +2652,7 @@ function renderTaskList() {
           <span class="trow-title" title="${esc(t.title)}">${esc(t.title)}</span>
           <span class="trow-meta" title="${esc(t.workspace)}"><b class="trow-state-m ${stateTone(t)}">${esc(stateLabel(t))}</b>${esc(meta)}</span>
         </div>
-        <span class="trow-size">${fmtBytes(t.bytes)}</span>
+        <span class="trow-size" title="${bytesTip(t.bytes)}">${fmtBytes(t.bytes)}</span>
       </div>
       ${open ? `<div class="tdetail" data-detail="${esc(t.id)}">
         <dl class="tdetail-grid">
@@ -2701,8 +2711,8 @@ function renderTaskList() {
           <b>${esc(base)}</b>
           <code>${esc(shortPath(g.ws))}</code>
         </span>
-        <span class="tgroup-n">${g.tasks.length} 个会话${selN ? ` · 已选 ${selN}` : ''}</span>
-        <span class="tgroup-size">${fmtBytes(g.bytes)}</span>
+        <span class="tgroup-n">${g.tasks.length} 个会话${selN ? `，已选 ${selN}` : ''}</span>
+        <span class="tgroup-size" title="${bytesTip(g.bytes)}">${fmtBytes(g.bytes)}</span>
       </header>
       ${folded ? '' : `<div class="tgroup-body">${g.tasks.map(rowHtml).join('')}</div>`}
     </section>`;
@@ -2739,7 +2749,7 @@ function renderTaskFoot() {
   // 只读的 app 连"清理"这个入口都不摆 —— 摆了也是必然被拒的按钮
   tEls.foot.hidden = !d || d.readOnly || count === 0;
   /* 这一栏的数字也要擦干净，不能只靠 hidden：从某个工具带着勾选切到「全部」，
-     整块虽然 display:none 了，里面的 "已选 1 个会话 · 99 KB" 还留在 DOM 里。
+     整块虽然 display:none 了，里面的 "已选 1 个会话，99 KB" 还留在 DOM 里。
      下一次它被放出来（切回同一个工具）之前，读屏与复制文本都能拿到这句旧话。 */
   if (!d) {
     tEls.tfCount.textContent = '0';
@@ -2750,6 +2760,7 @@ function renderTaskFoot() {
   }
   tEls.tfCount.textContent = count.toLocaleString();
   tEls.tfBytes.textContent = fmtBytes(bytes);
+  tEls.tfBytes.title = bytesTip(bytes);
   tEls.purgeBtn.textContent = d?.fileBased ? '按文件清理…' : '清理…';
 
   // 这个按钮永远可点 —— 它只是打开抽屉。空跑核对是只读的，应用开着也安全，
@@ -2805,6 +2816,7 @@ function renderTaskQuick() {
 
   const s = taskQuickSet();
   els.tqFigure.textContent = fmtBytes(s.bytes);
+  els.tqFigure.title = bytesTip(s.bytes);
   els.tqSub.innerHTML =
     `${esc(d.appLabel)} 界面上你删过的 <b>${del.count}</b> 个会话。它的"删除"只是打个标记 —— ` +
     `正文一行没少，${fmtBytes(del.bytes)} 还躺在会话库里。`;
@@ -2819,7 +2831,7 @@ function renderTaskQuick() {
 
   els.taskQuickBtn.disabled = !s.tasks.length;
   els.taskQuickBtn.innerHTML = s.tasks.length
-    ? `一键清理 <span class="rec-size">${fmtBytes(s.bytes)}</span>`
+    ? `一键清理 <span class="rec-size" title="${bytesTip(s.bytes)}">${fmtBytes(s.bytes)}</span>`
     : '一键清理';
 
   const skips = [];
@@ -2950,10 +2962,10 @@ function openTaskDrawer() {
 
   const sorted = picked.slice().sort((a, b) => b.bytes - a.bytes);
   /* 前缀用这一屏的 who，不用 t.appLabel —— 会话行上根本没有这个字段
-     （它是全局视图时代的遗留），取不到就印出 "undefined · 标题"。
+     （它是全局视图时代的遗留），取不到就印出 "undefined，标题"。
      抽屉一次只服务一个 app，who 就是准确的来源。 */
   tEls.listD.innerHTML = sorted.slice(0, 200).map((t) =>
-    `<li title="${esc(t.title)}"><span>${esc(who)} · ${esc(t.title)}</span><span>${fmtBytes(t.bytes)}</span></li>`).join('')
+    `<li title="${esc(t.title)}"><span>${esc(who)}，${esc(t.title)}</span><span>${fmtBytes(t.bytes)}</span></li>`).join('')
     + (sorted.length > 200 ? `<li><span>…还有 ${(sorted.length - 200).toLocaleString()} 个</span><span></span></li>` : '');
   tEls.countD.textContent = `${count.toLocaleString()} 个`;
 

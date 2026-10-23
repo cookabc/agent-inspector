@@ -219,7 +219,7 @@
     <div class="task-foot" id="taskFoot" hidden>
       <div class="ab-summary">
         <span>已选</span> <strong id="tfCount">0</strong>
-        <span>个会话 · 文本 <b id="tfBytes">0 B</b></span>
+        <span>个会话，文本 <b id="tfBytes">0 B</b></span>
       </div>
       <button class="btn btn-primary" id="taskPurgeBtn" type="button">清理…</button>
     </div>
@@ -239,7 +239,7 @@
       <div class="app-warn" id="recoverWarn" hidden></div>
       <div class="recover-list" id="recoverList"></div>
       <div class="recover-foot" id="recoverFoot" hidden>
-        <span>已选 <b id="recoverCount">0</b> 个会话 · <b id="recoverBubbles">0</b> 条消息</span>
+        <span>已选 <b id="recoverCount">0</b> 个会话，<b id="recoverBubbles">0</b> 条消息</span>
         <button class="btn btn-primary btn-sm" id="recoverBtn" type="button">回灌…</button>
       </div>
 
@@ -308,8 +308,8 @@
   </div><!-- /#single -->
 
   <footer class="foot">
-    <p>文件清单只读取大小与时间，从不读取内容；会话管理面板读会话库走的是只读连接。清理默认移入废纸篓，可随时恢复。</p>
-    <p>体积按 <b>1024</b> 进制（1 GB = 1024 MB）—— 把 MB 除以 1000 去凑 GB 是对不上的。鼠标停在任意体积上可以看到精确字节数。</p>
+    <p>文件清单只读大小与时间，不读内容；会话库也是只读连接。</p>
+    <p>体积按 <b>1024</b> 进制。悬停任意体积可看精确字节数。</p>
   </footer>
 </div>
 
@@ -317,7 +317,7 @@
 <div class="actionbar" id="actionbar" hidden>
   <div class="ab-summary">
     <strong id="abCount">0</strong>
-    <span>项 · <b id="abBytes">0 B</b></span>
+    <span>项，<b id="abBytes">0 B</b></span>
   </div>
   <div class="ab-actions">
     <button class="btn btn-ghost" id="abReveal" type="button">在 Finder 中显示</button>
