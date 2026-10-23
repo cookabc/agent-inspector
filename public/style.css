@@ -2277,8 +2277,13 @@ html.is-theme-switching *::after {
 }
 .treemap-canvas {
   position: relative;
+  /* width:100% + max-width:100% keeps the canvas inside its column. With
+     aspect-ratio alone, a min-height forces the box wider than the column
+     on a narrow screen and the whole page starts scrolling sideways. */
+  width: 100%;
+  max-width: 100%;
   aspect-ratio: 10 / 3;
-  min-height: 150px;
+  min-height: 0;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--r-md, 10px);
@@ -2362,7 +2367,8 @@ html.is-theme-switching *::after {
   background: var(--c);
 }
 @media (max-width: 720px) {
-  .treemap-canvas { aspect-ratio: 10 / 4; }
+  /* Narrower: taller, so the blocks stay wide enough to read. */
+  .treemap-canvas { aspect-ratio: 10 / 5; }
 }
 
 /* 被选中的分类块：清单正筛着它，所以它自己也要说清楚。 */
