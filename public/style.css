@@ -297,7 +297,9 @@ p { margin: 0; }
 .app-tabs {
   display: flex;
   align-items: center;
-  justify-content: center;
+  /* safe center：放得下时居中，放不下时退回起点对齐 ——
+     纯 center 加溢出会把最左边的标签裁进不可滚动的负区，900px 下「全部」就是这样消失的 */
+  justify-content: safe center;
   gap: 4px;
   flex: 1 1 auto;
   min-width: 0;
