@@ -503,7 +503,7 @@ function renderTreemap() {
     bands.set(c.verdict, entry);
   }
   els.treemapLegend.innerHTML = [...bands.entries()]
-    .sort((a, b) => a[1].bytes - b[1].bytes)
+    .sort((a, b) => b[1].bytes - a[1].bytes)
     .map(([verdict, entry]) => {
       const pct = ((entry.bytes / state.index.totals.bytes) * 100).toFixed(0);
       return `<span class="tm-legend-item" title="${bytesTip(entry.bytes)}"><i class="dot st-${esc(entry.status)}"></i>` +
@@ -1220,7 +1220,7 @@ function renderSplit() {
   // One sentence, not two: the group names already say what the groups
   // are, and the protected-content rule is shown on the blocks themselves.
   els.splitLede.innerHTML = twoEmpty
-    ? `点一块选中整块，再点一下取消。`
+    ? `点整块可勾选这一组。`
     : `按<b>会话是否还在</b>分成三组，点一块选中那一组。`;
 
   /* 每块自己就是一个勾选框：点一下把这一组整个勾上，行也跟着筛到这一组，
@@ -1365,8 +1365,8 @@ function renderRecommend() {
     els.recFigure.textContent = '';
     els.recName.textContent = '';
     els.recSub.innerHTML =
-      `推荐范围里的 <b>${blocked}</b> 个文件都删不掉 —— 它们是软链接（这个工具不跟随、不删除）` +
-      `或受保护内容。没有可清理的东西。`;
+      `推荐范围里的 <b>${blocked}</b> 个文件都删不掉：都是软链接或受保护内容，` +
+      `点条目可看原因。`;
     els.recScope.innerHTML = recChips(all);
     return;
   }
