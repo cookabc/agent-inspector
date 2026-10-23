@@ -448,7 +448,10 @@ function renderTreemap() {
   const canvas = els.treemapCanvas;
   if (!canvas) return;
 
-  const cats = (state.index?.categories || []).filter((c) => c.bytes > 0);
+  const categories = [...(state.index?.categories || [])].sort((a, b) => b.bytes - a.bytes);
+  const index = document.getElementById('spaceIndex');
+  if (index) index.innerHTML = categories.map(cat => `<button type="button" class="space-index-button" data-cat="${esc(cat.id)}" aria-pressed="${state.catFilter === cat.id}"><span class="space-index-name"><i class="dot st-${esc(cat.status)}" aria-hidden="true"></i>${esc(cat.label)}</span><strong>${fmtBytes(cat.bytes)}</strong></button>`).join('');
+  const cats = categories.filter((c) => c.bytes > 0);
   if (!cats.length) {
     canvas.innerHTML = '';
     els.treemapLegend.innerHTML = '';
@@ -486,7 +489,7 @@ function renderTreemap() {
       }" data-cat="${esc(box.id)}"
         style="left:${(box.x / W) * 100}%;top:${(box.y / H) * 100}%;width:${(box.w / W) * 100}%;height:${(box.h / H) * 100}%"
         title="${esc(cat.label)}，${fmtBytes(bytes)}（${bytesTip(bytes)}），${pct}%，${esc(band ? band.label : box.verdict)}"
-        aria-label="${esc(cat.label)}，${fmtBytes(bytes)}，占 ${pct}%，${esc(band ? band.label : box.verdict)}">
+        aria-pressed="${state.catFilter === box.id}" aria-label="${esc(cat.label)}，${fmtBytes(bytes)}，占 ${pct}%，${esc(band ? band.label : box.verdict)}">
         ${label}
       </button>`;
     })
@@ -1219,12 +1222,10 @@ function renderSplit() {
   // 数字全部长在下面几块上，这里只交代"为什么这么分"，不再把同一批数字念一遍
   // One sentence, not two: the group names already say what the groups
   // are, and the protected-content rule is shown on the blocks themselves.
-  els.splitLede.innerHTML = twoEmpty
-    ? `点一块选中整块，再点一下取消。`
-    : `按<b>会话是否还在</b>分成三组，点一块选中那一组。`;
+  els.splitLede.textContent = twoEmpty ? "" : "按会话状态选择文件";
 
   /* 每块自己就是一个勾选框：点一下把这一组整个勾上，行也跟着筛到这一组，
-     在下面的清单里能看见勾。再点一下取消。
+     在下面的清单里能看见勾。再次选择可取消。
      计数用真正"能勾"的条数 —— 受保护的内容（凭据、会话库、配置）与软链接
      都不进勾选，所以「非会话文件」那块的已选数会比它自己的文件数少，这是对的，照实写。 */
   const selectable = (xs) => xs.filter((f) => canPick(f));
@@ -1255,13 +1256,13 @@ function renderSplit() {
     const flag = empty
       ? (filtered && xs.length ? '这一组当前筛选下没有条目' : '这一组没有可勾选的条目')
       : allOn
-        ? `已选 <b>${picked.length.toLocaleString()}</b> 项，<b>${fmtBytes(sum(picked))}</b>，再点一下取消${toggle}`
+        ? `已选 <b>${picked.length.toLocaleString()}</b> 项，<b>${fmtBytes(sum(picked))}</b>，再次选择可取消${toggle}`
         : part
           ? `已选 <b>${picked.length.toLocaleString()}</b> / <b>${can.length.toLocaleString()}</b> 项，` +
-            `<b>${fmtBytes(sum(picked))}</b>　再点一下补全${toggle}`
+            `<b>${fmtBytes(sum(picked))}</b>　再次选择可全选${toggle}`
           : anyPicked
-            ? `点这里换成这一组${toggle}`
-            : `点这里选中这一组${toggle}`;
+            ? `改选本组${toggle}`
+            : `选择本组${toggle}`;
     // 空分组整块退出交互：没有 tabindex、没有 role=checkbox、没有 data-split，
     // 点下去也不会触发任何选择逻辑。
     const cls2 = `split-block ${cls}${allOn ? ' is-on' : ''}${part ? ' is-part' : ''}` +
@@ -1293,10 +1294,7 @@ function renderSplit() {
      但不再假装它是一个可点的分组。 */
   const bothEmpty = orphan.length === 0 && live.length === 0;
   const sessNote = bothEmpty
-    ? `<p class="split-note">${icon('box')}<span>
-         ${esc(state.index.label)} 的文件里没有能对上会话库的条目 —— ` +
-       `所以「会话已不存在 / 会话仍在」这两组都是空的。下面全是与会话无关的文件。
-       </span></p>`
+    ? `<p class="split-note">${icon('box')}<span>未发现可关联到会话库的文件。</span></p>`
     : '';
 
   /* 三块的数字也要跟着筛选走。搜索或状态筛选生效时，下面分类卡只剩几组，
@@ -1444,7 +1442,7 @@ document.addEventListener('click', async (e) => {
   /* 面积图上的一个块：把下面的清单筛到这一类。
      面积图回答"谁占得多"，点一下才知道"它是什么、有哪些文件"。
      再点同一块取消筛选。 */
-  const tmBox = t.closest('.tm-box');
+  const tmBox = t.closest('.tm-box, .space-index-button');
   if (tmBox) {
     const id = tmBox.dataset.cat;
     const cat = (state.index?.categories || []).find((c) => c.id === id);
@@ -1458,6 +1456,7 @@ document.addEventListener('click', async (e) => {
     renderSplit();
     renderTreemap();
     document.getElementById('files')?.scrollIntoView({ block: 'start' });
+    document.getElementById('listTitle')?.focus({ preventScroll: true });
     return;
   }
 

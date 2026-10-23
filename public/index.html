@@ -8,6 +8,8 @@
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="radix.css">
+<link rel="stylesheet" href="workspace.css">
 </head>
 <body>
 
@@ -39,6 +41,7 @@
   </div>
 </header>
 
+<nav class="workspace-nav" aria-label="页面导航"><a href="#overview">空间分析</a><a href="#files">文件清单</a><a href="#tasks">会话管理</a></nav>
 <div class="wrap">
 
   <!-- ── 单工具视图：顶部标签决定这里读谁的数据 ─────────────
@@ -105,7 +108,7 @@
        拆成两张卡反而要人自己把它们接起来。 -->
   <section class="hero" id="overview" aria-labelledby="heroTitle">
     <div class="hero-head">
-      <h2 class="eyebrow" id="heroTitle">磁盘占用</h2>
+      <h1 id="heroTitle">空间分析</h1>
       <p class="hero-figure" id="heroBytes" aria-live="polite">—</p>
       <p class="hero-sub" id="heroSub">正在扫描 <code>~/.zcode</code> …</p>
     </div>
@@ -114,15 +117,16 @@
          这是磁盘审计真正要回答的问题 —— 只给一个总数，读者无从比较。 -->
     <div class="treemap" id="treemap" aria-labelledby="treemapTitle">
       <div class="treemap-head">
-        <span class="treemap-title" id="treemapTitle">按可清理程度分布</span>
-        <span class="treemap-hint">面积 = 占用体积</span>
+        <span class="treemap-title" id="treemapTitle">空间分布</span>
+        <span class="treemap-hint">按占用大小排列</span>
       </div>
-      <div class="treemap-canvas" id="treemapCanvas"></div>
+      <div class="space-explorer"><div class="treemap-canvas" id="treemapCanvas"></div><div id="spaceIndex" class="space-index" aria-label="按分类查看文件"></div></div>
       <p class="treemap-legend" id="treemapLegend"></p>
     </div>
 
+    <details class="cleanup-options"><summary>清理选项</summary>
     <section class="clean" id="clean" aria-labelledby="cleanTitle">
-      <h2 class="section-title" id="cleanTitle">可以清理的</h2>
+      <h2 class="section-title" id="cleanTitle">选择清理范围</h2>
 
       <div class="lanes">
         <!-- 推荐清理。名字不写死"文件与日志"：Cursor 的推荐项是已安装扩展，
@@ -163,17 +167,18 @@
             <button type="button" class="rec-chip st-warning is-on" id="taskSkipPinned" aria-pressed="true">
               <span class="box" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
                 stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span>
-              跳过置顶的
+              保留置顶会话
             </button>
           </div>
 
           <footer class="lane-foot">
-            <button class="btn btn-primary" id="taskQuickBtn" type="button">一键清理</button>
+            <button class="btn btn-primary" id="taskQuickBtn" type="button">预览会话清理</button>
             <p class="lane-cap" id="taskQuickCap"></p>
           </footer>
         </article>
       </div>
     </section>
+    </details>
   </section>
 
   <!-- ── 会话管理 ───────────────────────────────────────── -->
@@ -248,7 +253,7 @@
 
   <!-- ── 逐项清单（文件）────────────────────────────────── -->
   <section class="panel" id="files" aria-labelledby="listTitle">
-    <h2 id="listTitle">文件清单</h2>
+    <h2 id="listTitle" tabindex="-1">文件清单</h2>
     <p class="lede" id="splitLede"></p>
     <div class="split" id="split"></div>
 
