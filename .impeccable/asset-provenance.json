@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "policy": "Original repository raster content preserved. No AI-generated raster assets added. This record documents source identity, not independent rights clearance.",
+  "rasterAssets": [
+    {
+      "path": "docs/images/overview.png",
+      "origin": "git:e9dde14e44614dccc0d9f36116eae1e5adf2bc5c:docs/images/overview.png",
+      "sha256": "6135023fba77667bae0070ab970ab52eecbd552a34d0caa8791e5aa763dc8dcb",
+      "unchangedFromOrigin": true
+    }
+  ],
+  "remoteImages": []
+}
