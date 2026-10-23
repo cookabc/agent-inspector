@@ -110,6 +110,17 @@
       <p class="hero-sub" id="heroSub">正在扫描 <code>~/.zcode</code> …</p>
     </div>
 
+    <!-- 面积图：谁占的空间多，一眼就看见。
+         这是磁盘审计真正要回答的问题 —— 只给一个总数，读者无从比较。 -->
+    <div class="treemap" id="treemap" aria-labelledby="treemapTitle">
+      <div class="treemap-head">
+        <span class="treemap-title" id="treemapTitle">按可清理程度分布</span>
+        <span class="treemap-hint">面积 = 占用体积</span>
+      </div>
+      <div class="treemap-canvas" id="treemapCanvas"></div>
+      <p class="treemap-legend" id="treemapLegend"></p>
+    </div>
+
     <section class="clean" id="clean" aria-labelledby="cleanTitle">
       <h2 class="section-title" id="cleanTitle">可以清理的</h2>
 

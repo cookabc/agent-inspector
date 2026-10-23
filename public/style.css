@@ -433,18 +433,25 @@ p { margin: 0; }
        `62ch` 排的，栏一窄就被压成 4 行，卡的高度反而上去了。
        320px 时实测 4 行、90px；放到 380px 收成 3 行。 */
     grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
-    /* 左栏只有"总量 + 一句出处"，右栏叠着两条清理线 —— 高度差被
+    /* 左栏只有"总量 + 一句出处"，右栏叠着面积图与两条清理线 —— 高度差被
        align-items:start 全丢在左下角，看着像块没填满的版面。
        居中让留白摊到上下两边，读起来是"这栏就这么多内容"，不是"少画了东西"。 */
     align-items: center;
     gap: 0 26px;
   }
-  .hero > .clean {
+  /* 面积图和清理线都住在右栏，共用同一条纵向分隔线。 */
+  .hero > .treemap {
     grid-column: 2;
     margin-top: 0;
-    padding-top: 0;
     padding-inline-start: 26px;
-    border-top: 0;
+    border-inline-start: 1px solid var(--line);
+  }
+  .hero > .clean {
+    grid-column: 2;
+    margin-top: 12px;
+    padding-top: 12px;
+    padding-inline-start: 26px;
+    border-top: 1px solid var(--line);
     border-inline-start: 1px solid var(--line);
   }
 }
@@ -2241,4 +2248,127 @@ html.is-theme-switching *,
 html.is-theme-switching *::before,
 html.is-theme-switching *::after {
   transition: none !important;
+}
+
+/* ── 面积图：谁占的空间多 ─────────────────────────────────
+   一个总数回答不了"谁占得多"——15.7 MB 听着不小，但只有旁边
+   有对比才知道它占两成还是九成。面积是唯一能同时放下十几个
+   类别的编码：条形图会挤成一条缝。 */
+.treemap {
+  margin-top: 12px;
+}
+.treemap-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.treemap-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.treemap-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+.treemap-canvas {
+  position: relative;
+  aspect-ratio: 10 / 3;
+  min-height: 150px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md, 10px);
+  background: var(--surface-2, var(--surface));
+}
+.tm-box {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
+  overflow: hidden;
+  padding: 6px 8px;
+  border: 1px solid var(--surface);
+  border-radius: 4px;
+  background: var(--tint);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    transform 140ms ease,
+    box-shadow 140ms ease,
+    filter 140ms ease;
+}
+.tm-box:hover {
+  z-index: 2;
+  transform: scale(1.02);
+  box-shadow: 0 4px 14px rgb(0 0 0 / .14);
+  filter: saturate(1.12);
+}
+.tm-box:focus-visible {
+  z-index: 3;
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+/* 左边一道状态色，让"这一类删了会怎样"在面积之外还有第二重编码。 */
+.tm-box::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--c);
+}
+.tm-label {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.tm-label--sm { font-size: 11px; }
+.tm-value {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.treemap-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 7px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+.tm-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tm-legend-item b { color: var(--ink); font-weight: 600; }
+.tm-legend-item em { font-style: normal; color: var(--muted); }
+.tm-legend-item .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--c);
+}
+@media (max-width: 720px) {
+  .treemap-canvas { aspect-ratio: 10 / 4; }
+}
+
+/* 被选中的分类块：清单正筛着它，所以它自己也要说清楚。 */
+.tm-box.is-selected {
+  z-index: 3;
+  outline: 2px solid var(--ink);
+  outline-offset: -1px;
+  filter: saturate(1.2);
 }

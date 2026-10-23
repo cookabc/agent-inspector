@@ -12,6 +12,7 @@ const els = {
   single: $('single'),
   skeleton: $('skeleton'),
   heroBytes: $('heroBytes'), heroSub: $('heroSub'),
+  treemap: $('treemap'), treemapCanvas: $('treemapCanvas'), treemapLegend: $('treemapLegend'),
   diagnosis: $('diagnosis'), diagLede: $('diagLede'), diagTitleText: $('diagTitleText'),
   rec: $('rec'), recHead: $('recHead'), recFoot: $('recFoot'),
   recName: $('recName'), recBtn: $('recBtn'), recCap: $('recCap'), recScope: $('recScope'),
@@ -51,6 +52,9 @@ const state = {
   explain: new Set(),    // 展开了"这是什么 / 为什么在这里"的分类
   q: '',
   statuses: new Set(),   // 空 = 全部
+  // 面积图上点了一个分类后，清单只显示这一类。空 = 全部。
+  // 跟 statuses 分开：status 是"档位"，分类是"具体哪一类"。
+  catFilter: null,
   sort: 'size',
   group: null,           // 三块里被勾上的那一组：orphan / live / other；null = 不筛
   recOff: new Set(),     // 被排除在"推荐清理"之外的分类（按 app 各记一份）
@@ -67,6 +71,8 @@ const keyOf = (f, appId) => f.k || `${appId !== undefined ? appId : (f.app ?? st
 
 /* fmtBytes 与 isSelectable 在 logic.js —— 纯函数，node --test 能直接 import 测。 */
 import { fmtBytes, isSelectable } from './logic.js';
+/* 面积图的排布算法也在纯函数里，算法本身可以被单测盯住。 */
+import { verdictTreemap } from './treemap.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -272,6 +278,7 @@ function applyApp() {
   state.group = null;
   state.q = '';
   state.statuses.clear();
+  state.catFilter = null;
   els.search.value = '';
   state.recReady = false;
   if (isAll()) {
@@ -403,6 +410,8 @@ function renderHero() {
       `占 <b>${((runawayBytes / t.bytes) * 100).toFixed(0)}%</b>。` + grand
     : shape + grand;
 
+  renderTreemap();
+
   /* 诊断段。数字全部从这次扫描里现算 —— 写死"4 个文件 / 34 GB"只对写出它的那台机器成立，
      换一台就是撒谎。这里唯一固定的东西是机器无关的成因。 */
   els.diagnosis.hidden = runawayBytes <= 0;
@@ -416,6 +425,90 @@ function renderHero() {
       `<code>${esc(rootShort)}/cli/exec/</code>，而某次只读搜索恰好把搜索范围设成了这个目录本身 —— ` +
       `于是 grep 匹配到自己正在写入的输出，层层嵌套、指数膨胀，最大的一个长到 <b>${fmtBytes(biggest)}</b>。`;
   }
+}
+
+/* 面积图。
+ *
+ * 磁盘审计真正要回答的问题是"谁占的空间多"，而一个总数回答不了 ——
+ * 15.7 MB 听着不小，但只有旁边有对比才知道它占的是两成还是九成。
+ * 面积是唯一能同时放十几个类别的编码：条形图会挤成一条缝。
+ *
+ * 类别按"删了会怎样"分成几条带（先能清的 / 要谨慎的 / 不能碰的），
+ * 带内按体积排。这样颜色和位置说的是同一件事：越靠上的带越安全。
+ */
+const VERDICT_BAND = {
+  junk: { label: '系统垃圾', order: 0 },
+  safe: { label: '可安全清理', order: 1 },
+  review: { label: '谨慎清理', order: 2 },
+  never: { label: '请勿删除', order: 3 },
+};
+
+function renderTreemap() {
+  const canvas = els.treemapCanvas;
+  if (!canvas) return;
+
+  const cats = (state.index?.categories || []).filter((c) => c.bytes > 0);
+  if (!cats.length) {
+    canvas.innerHTML = '';
+    els.treemapLegend.innerHTML = '';
+    return;
+  }
+
+  const W = 1000;
+  const H = 300;
+  const boxes = verdictTreemap(
+    cats.map((c) => ({ id: c.id, label: c.label, value: c.bytes, verdict: c.verdict, status: c.status })),
+    { x: 0, y: 0, w: W, h: H },
+  );
+
+  const byId = new Map(cats.map((c) => [c.id, c]));
+  canvas.innerHTML = boxes
+    .map((box) => {
+      const cat = byId.get(box.id);
+      const band = VERDICT_BAND[box.verdict];
+      /* 面积图算出来的是"值"，分类表里的原字段叫"字节"。别混用 ——
+         混用的后果是标签上印出 "0 B" 和 "NaN%"，而数字看起来像真的。 */
+      const bytes = cat?.bytes ?? box.value ?? 0;
+      const pct = ((bytes / state.index.totals.bytes) * 100).toFixed(1);
+      /* 块太小就放不下字 —— 面积图里最常见的失败是每个块里都塞一行标签，
+         互相压着谁也读不出来。放不下就只留颜色，靠鼠标悬停读名字。 */
+      const roomy = box.w > 92 && box.h > 34;
+      const tight = box.w > 52 && box.h > 22;
+      let label = '';
+      if (roomy) {
+        label = `<span class="tm-label">${esc(box.label)}</span><span class="tm-value">${fmtBytes(bytes)}</span>`;
+      } else if (tight) {
+        label = `<span class="tm-label tm-label--sm">${esc(box.label)}</span>`;
+      }
+      return `<button type="button" class="tm-box st-${esc(box.status)}${
+        state.catFilter === box.id ? ' is-selected' : ''
+      }" data-cat="${esc(box.id)}"
+        style="left:${(box.x / W) * 100}%;top:${(box.y / H) * 100}%;width:${(box.w / W) * 100}%;height:${(box.h / H) * 100}%"
+        title="${esc(cat.label)} · ${fmtBytes(bytes)} · ${pct}% · ${esc(band ? band.label : box.verdict)}"
+        aria-label="${esc(cat.label)}，${fmtBytes(bytes)}，占 ${pct}%，${esc(band ? band.label : box.verdict)}">
+        ${label}
+      </button>`;
+    })
+    .join('');
+
+  /* 图例按带列出，并带上这一带占多大 —— 颜色和体积一起给，
+     不然读者只能一块一块去悬停。 */
+  const bands = new Map();
+  for (const c of cats) {
+    const band = VERDICT_BAND[c.verdict];
+    if (!band) continue;
+    const entry = bands.get(c.verdict) ?? { label: band.label, status: c.status, bytes: 0 };
+    entry.bytes += c.bytes;
+    bands.set(c.verdict, entry);
+  }
+  els.treemapLegend.innerHTML = [...bands.entries()]
+    .sort((a, b) => a[1].bytes - b[1].bytes)
+    .map(([verdict, entry]) => {
+      const pct = ((entry.bytes / state.index.totals.bytes) * 100).toFixed(0);
+      return `<span class="tm-legend-item"><i class="dot st-${esc(entry.status)}"></i>` +
+        `${esc(entry.label)} <b>${fmtBytes(entry.bytes)}</b> <em>${pct}%</em></span>`;
+    })
+    .join('');
 }
 
 /* ── 清单筛选 ───────────────────────────────────────────── */
@@ -432,6 +525,7 @@ function groupOf(f) {
 
 function matches(f) {
   if (state.group && groupOf(f) !== state.group) return false;
+  if (state.catFilter && f.c !== state.catFilter) return false;
   if (state.q && !f.p.toLowerCase().includes(state.q)) return false;
   if (state.statuses.size) {
     const cat = catOfRow(f);
@@ -477,6 +571,10 @@ function renderGroups() {
       why.push(`只看「${esc(names)}」`);
     }
     if (state.group) why.push(`只在这一组里`);
+    if (state.catFilter) {
+      const cat = (state.index?.categories || []).find((c) => c.id === state.catFilter);
+      why.push(`只看「${esc(cat?.label ?? state.catFilter)}」`);
+    }
     els.emptyHint.innerHTML = why.length
       ? `没有匹配的条目 —— ${why.join(' + ')} 一起筛下来是空的。` +
         `<span class="empty-act">按 <kbd>Esc</kbd> 清掉搜索，或点已亮的筛选钮取消它。</span>`
@@ -1333,6 +1431,26 @@ function renderChips() {
 document.addEventListener('click', async (e) => {
   const t = e.target;
 
+  /* 面积图上的一个块：把下面的清单筛到这一类。
+     面积图回答"谁占得多"，点一下才知道"它是什么、有哪些文件"。
+     再点同一块取消筛选。 */
+  const tmBox = t.closest('.tm-box');
+  if (tmBox) {
+    const id = tmBox.dataset.cat;
+    const cat = (state.index?.categories || []).find((c) => c.id === id);
+    if (!cat) return;
+    state.catFilter = state.catFilter === id ? null : id;
+    state.q = '';
+    state.statuses.clear();
+    state.group = null;
+    if (els.search) els.search.value = '';
+    renderGroups();
+    renderSplit();
+    renderTreemap();
+    document.getElementById('files')?.scrollIntoView({ block: 'start' });
+    return;
+  }
+
   // 换 app：分类表、清单、历史会话整条线跟着换
   const tab = t.closest('[data-app]');
   if (tab) {
@@ -1482,7 +1600,8 @@ document.addEventListener('click', async (e) => {
     state.q = '';
     els.search.value = '';
     state.statuses.clear();
-    state.group = null;   // 先清掉筛选，否则勾中的东西会被筛掉、看不见
+    state.group = null;
+    state.catFilter = null;   // 先清掉筛选，否则勾中的东西会被筛掉、看不见
     state.selection.clear();
     for (const c of recommendOn()) {
       // 推荐分类里也可能混着软链接（插件缓存里的 .bin、app-server 的旧版本
@@ -1634,7 +1753,8 @@ document.addEventListener('keydown', (e) => {
       els.search.value = '';
       state.statuses.clear();
       state.group = null;
-      renderChips(); renderSplit(); renderGroups(); renderActionbar();
+      state.catFilter = null;
+      renderChips(); renderSplit(); renderGroups(); renderActionbar(); renderTreemap();
       if (wasSearch) els.search.blur();
     } else if (document.activeElement === els.search) {
       els.search.blur();
