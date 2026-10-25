@@ -20,7 +20,7 @@
  */
 
 import fs from 'node:fs/promises';
-import { spawn } from 'node:child_process';
+import { launch } from './cdp.mjs';
 
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const PORT = 9333;
@@ -153,76 +153,20 @@ const PROBE = String.raw`(async () => {
   return JSON.stringify({ tabs, views: out });
 })()`;
 
-async function cdp() {
-  const proc = spawn(CHROME, [
-    '--headless=new', `--remote-debugging-port=${PORT}`,
-    '--user-data-dir=/tmp/agent-inspector-ui-baseline', '--no-first-run',
-    '--window-size=1440,1000', 'about:blank',
-  ], { stdio: 'ignore' });
-
-  let info = null;
-  for (let i = 0; i < 60; i += 1) {
-    await new Promise((r) => setTimeout(r, 250));
-    try {
-      const res = await fetch(`http://127.0.0.1:${PORT}/json/list`);
-      const list = await res.json();
-      info = list.find((t) => t.type === 'page');
-      if (info) break;
-    } catch { /* 还没起来 */ }
-  }
-  if (!info) { proc.kill(); throw new Error('Chrome 没起来'); }
-
-  const ws = new WebSocket(info.webSocketDebuggerUrl);
-  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
-  let seq = 0;
-  const pending = new Map();
-  ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
-    if (msg.id && pending.has(msg.id)) {
-      const { resolve, reject } = pending.get(msg.id);
-      pending.delete(msg.id);
-      if (msg.error) reject(new Error(JSON.stringify(msg.error)));
-      else resolve(msg.result);
-    }
-  };
-  const send = (method, params = {}) => new Promise((resolve, reject) => {
-    const id = ++seq;
-    pending.set(id, { resolve, reject });
-    ws.send(JSON.stringify({ id, method, params }));
-  });
-  return { proc, ws, send };
-}
-
 const PORT_APP = process.env.APP_PORT || 4199;
 
 async function capture(file) {
-  const { proc, ws, send } = await cdp();
+  const b = await launch({ port: 9333, profile: 'agent-inspector-ui-baseline' });
   try {
-    await send('Page.enable');
-    await send('Page.navigate', { url: `http://127.0.0.1:${PORT_APP}/` });
-    // 等首屏扫描完成：骨架消失 + 有 tab
-    for (let i = 0; i < 60; i += 1) {
-      await new Promise((r) => setTimeout(r, 500));
-      // send() 返回的是 CDP 的 result 对象本身（{result:{type,value}}）
-      const probe = await send('Runtime.evaluate', {
-        expression: `Boolean(document.querySelector('#appTabs [role="tab"]')) && (document.body.getAttribute('aria-busy') !== 'true')`,
-        returnByValue: true,
-      });
-      if (probe.result?.value) break;
-    }
-    const evalResult = await send('Runtime.evaluate', {
-      expression: PROBE, awaitPromise: true, returnByValue: true,
-    });
-    if (evalResult.exceptionDetails) throw new Error(JSON.stringify(evalResult.exceptionDetails).slice(0, 800));
-    const data = JSON.parse(evalResult.result.value);
+    await b.goto(`http://127.0.0.1:${PORT_APP}/`, '#appTabs [role="tab"]');
+    const data = JSON.parse(await b.evaluate(PROBE));
     await fs.writeFile(file, JSON.stringify(data, null, 2));
     console.log(`已写入 ${file}：${data.tabs.length} 个视图`);
     for (const [id, v] of Object.entries(data.views)) {
       console.log(`  ${id.padEnd(8)} shape=${String(v.shape).padStart(6)} geo=${Object.entries(v.geo).filter(([, g]) => g).map(([k, g]) => `${k}:${g.w}x${g.h}`).slice(0, 4).join(' ')}`);
     }
   } finally {
-    ws.close();
-    proc.kill();
+    b.close();
   }
 }
 

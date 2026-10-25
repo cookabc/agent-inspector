@@ -23,6 +23,8 @@ const css = await fs.readFile(path.join(root, 'public/style.css'), 'utf8');
 const shapeSrc = await fs.readFile(path.join(root, 'lib/tasks-shape.mjs'), 'utf8');
 const tasksSrc = await fs.readFile(path.join(root, 'lib/tasks.mjs'), 'utf8');
 const serverSrc = await fs.readFile(path.join(root, 'server.mjs'), 'utf8');
+const sharedSrc = await fs.readFile(path.join(root, 'public/views/shared.js'), 'utf8');
+const allSrc = await fs.readFile(path.join(root, 'public/views/all.js'), 'utf8');
 
 test('工具标签是标准 tablist：roving tabindex + aria-controls + tabpanel', () => {
   assert.match(html, /role="tablist"/);
@@ -176,7 +178,8 @@ test('toast 是个 aria-live 的独立元素，不靠抽屉承载结果', () => 
      "屏幕上每个体积都可以悬停看精确字节数"，toast 里的回收量也算。
      所以两个断言反过来锁：既有精确字节的 title，也确实能悬停。 */
   assert.doesNotMatch(css, /\.toast\s*\{[\s\S]{0,600}?pointer-events:\s*none/);
-  assert.match(app, /const bytesWithExact = \(n\) => `<b title="\$\{n\.toLocaleString\(\)\} 字节">/);
+  // 体积片段现在在 views/shared.js（纯函数，有单测）
+  assert.match(sharedSrc, /export const bytesWithExact = \(n\) => `<b title="\$\{n\.toLocaleString\(\)\} 字节">/);
   // 首屏推荐 lane 收起时要把里面的数字擦掉，别留上一轮的残留
   const rec = app.slice(app.indexOf('function renderRecommend'), app.indexOf('function renderChips'));
   assert.match(rec, /els\.recFigure\.textContent = '—'/);
@@ -429,8 +432,11 @@ test('跨工具的「全部」视图是只读的，且不污染单 app 视图', 
 });
 
 test('0 个会话的工具不给筛选钮（点了必然空）', () => {
-  assert.match(app, /if \(!t\.count\) \{/, '没有会话的工具要给不可点的标签');
-  assert.match(app, /这次汇总里没有它的会话/);
+  // 三种状态的区分在 views/all.js 的 toolFilterChip 里（纯函数，有单测）
+  assert.match(allSrc, /if \(!t\.count\) \{/, '没有会话的工具要给不可点的标签');
+  assert.match(allSrc, /这次汇总里没有它的会话/);
+  // 有会话但带提示时不能显示成红字故障
+  assert.match(allSrc, /if \(t\.error && !t\.count\)/);
 });
 
 test('宽屏与单列的阅读顺序一致：会话管理在前，文件清单在后', () => {

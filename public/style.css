@@ -431,32 +431,37 @@ p { margin: 0; }
 /* 够宽的时候左右并排：数字在左、能清掉什么在右，卡里不留半张空白。
    细线跟着从横向转成纵向，仍然挂在两栏中间。 */
 @media (min-width: 1000px) {
+  /* 两栏：左边是"分母 + 分子"，右边是面积图。
+     以前左边只有总量（122px 内容），右边叠着面积图与清理线（552px），
+     高度差靠 align-items:center 把空白摊到左侧上下 —— 那不是排版，
+     是掩饰：430px 的空白还在，只是变均匀了。
+     现在把清理线移到左栏（它本来就是把总量切出的那一块，紧贴着读是一句话），
+     右栏只留面积图，两栏高度接近，也不需要再居中凑。 */
   .hero {
     display: grid;
-    /* 左栏的下限不能太紧：那句"共 N 个文件…另有 Claude Code …"是按
-       `62ch` 排的，栏一窄就被压成 4 行，卡的高度反而上去了。
-       320px 时实测 4 行、90px；放到 380px 收成 3 行。 */
-    grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
-    /* 左栏只有"总量 + 一句出处"，右栏叠着面积图与两条清理线 —— 高度差被
-       align-items:start 全丢在左下角，看着像块没填满的版面。
-       居中让留白摊到上下两边，读起来是"这栏就这么多内容"，不是"少画了东西"。 */
-    align-items: center;
+    grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-items: start;
     gap: 0 26px;
   }
-  /* 面积图和清理线都住在右栏，共用同一条纵向分隔线。 */
+  .hero > .hero-head { grid-column: 1; grid-row: 1; }
+  /* 清理线进左栏、紧接在总量下面：纵向细线换成横向分隔，
+     与"上面是全部、下面是其中能清的"这个阅读顺序一致。 */
+  .hero > .clean {
+    grid-column: 1;
+    grid-row: 2;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 0.5px solid var(--line);
+  }
+  /* 面积图占右栏整列，跨两行 —— 高度由内容决定，不再被左栏拉长。 */
   .hero > .treemap {
     grid-column: 2;
+    grid-row: 1 / span 2;
     margin-top: 0;
     padding-inline-start: 26px;
     border-inline-start: 0.5px solid var(--line);
-  }
-  .hero > .clean {
-    grid-column: 2;
-    margin-top: 12px;
-    padding-top: 12px;
-    padding-inline-start: 26px;
-    border-top: 0.5px solid var(--line);
-    border-inline-start: 0.5px solid var(--line);
+    align-self: start;
   }
 }
 
@@ -539,7 +544,7 @@ p { margin: 0; }
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px 14px;
+  gap: 8px 14px;
   margin-top: auto;
   /* 不再加一条上边框：这条清理线本来就在 hero 卡里，上面已经有一条
      细线分隔"总量/可清理"，再画一条只是多一层噪音，多占 12px。 */
@@ -548,7 +553,9 @@ p { margin: 0; }
 .lane-foot .btn { padding: 9px 16px; font-size: 14px; }
 /* 说明文字吃掉按钮右边的整片宽度：卡里这么宽的一条底边只放两样东西，
    再限成 34ch 就是白白留一条空带。 */
-.lane-cap { font-size: 12px; color: var(--muted); line-height: 1.5; flex: 1 1 220px; min-width: 0; }
+/* 说明放按钮下方一行：它解释的是那个按钮（"删掉不影响会话…"），
+   与按钮并排时会互相挤 —— 左栏只有 400px，并排就是三行字压在按钮旁边。 */
+.lane-cap { font-size: 12px; color: var(--muted); line-height: 1.5; flex: 1 1 100%; min-width: 0; }
 .lane-cap b { color: var(--ink-2); font-weight: 600; }
 .lane-cap code { font-size: 12px; }
 .rec-off { display: block; margin-top: 2px; }
@@ -2138,12 +2145,45 @@ body.is-busy .topbar::after {
 
 .all-group-head {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
   align-items: baseline;
   gap: 10px;
-  padding: 9px 13px;
+  padding: 9px 13px 9px 7px;
   background: var(--surface-2);
   border-bottom: 0.5px solid var(--line);
+}
+/* 折叠状态下这行是唯一可见的东西，所以它自己就得是一整块可点区域。
+   三角用与分类卡同一个旋转约定（0deg 收起 → 90deg 展开）。 */
+.all-group-toggle {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  align-self: center;
+}
+.all-group-toggle:hover { background: var(--surface-3); color: var(--ink); }
+.all-group-toggle .caret {
+  width: 13px;
+  height: 13px;
+  transition: transform 250ms ease-out;
+}
+.all-group.is-open .all-group-toggle .caret { transform: rotate(90deg); }
+.all-group:not(.is-open) .all-group-head { border-bottom-color: transparent; }
+.all-group:not(.is-open) { border-bottom: 0; }
+/* 折叠时整行可点：三角只有 22px，鼠标在组名上点也该展开 */
+.all-group:not(.is-open) .all-group-head { cursor: pointer; }
+.all-group:not(.is-open) .all-group-head:hover { background: var(--surface-3); }
+.all-more {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 9px 13px 11px 45px;
+  border-top: 0.5px solid color-mix(in oklab, var(--line) 55%, transparent);
 }
 .all-group-name { font-size: 12px; font-weight: 600; }
 .all-group-path {
@@ -2390,6 +2430,20 @@ html.is-theme-switching *::after {
   max-width: 100%;
 }
 .tm-label--sm { font-size: 12px; }
+/* 窄块里的标签允许折成两行。
+   原来它是 nowrap + ellipsis，于是一批"宽 52-92px"的块只能显示半个名字
+   （实测被裁的六个：运行时数据 / 项目记忆 / 数据备份 / 插件数据与市场配置 /
+   配置备份 / 自定义内容）。这些块高度够放两行、宽度不够放一行 ——
+   那就换行，别截断：截断留下的是"运行时…"，读不出是哪一类。 */
+.tm-label--sm {
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.2;
+  word-break: break-word;
+}
 .tm-value {
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 12px;

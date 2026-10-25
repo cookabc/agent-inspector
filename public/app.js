@@ -79,10 +79,15 @@ import { verdictTreemap } from './treemap.js';
    这一层不碰 DOM、不读全局 state，测试能直接喂夹具断言产出的 HTML。 */
 import {
   esc, icon, badge, STATUS_CLASS, STATUS_LABEL,
+  shortPath, fmtDate, fmtDateTime,
+  bytesTip, bytesB, bytesWithExact,
 } from './views/shared.js';
 import {
   rowHtml as fileRowHtml, groupCard, emptyHintHtml, MAX_ROWS,
 } from './views/files.js';
+import {
+  groupSessions, sessionGroup, allLedeHtml, toolFilterChip, DEFAULT_OPEN_GROUPS,
+} from './views/all.js';
 
 /* 推荐清理的范围：rules.mjs 里标了 recommend 的那几类 —— 就是"删了不影响
    会话、配置和凭据"的那些（日志、缓存、系统垃圾）。其中标了 recommendDefaultOff
@@ -958,15 +963,6 @@ function showToast(html, opts = {}) {
   toastTimer = setTimeout(() => { el.hidden = true; }, opts.ms ?? (opts.error ? 6000 : 4000));
 }
 
-/** 带精确字节数的体积片段 —— toast 里所有面积数字都走它。 */
-const bytesWithExact = (n) => `<b title="${n.toLocaleString()} 字节">${fmtBytes(n)}</b>`;
-/** 体积标签的悬停提示：完整字节数。
- *  磁盘审计的数最后要跟 `du` 对得上 —— "1.40 GB" 对不上，
- *  "1,502,341,376 字节" 才对得上。所以凡是拿来核对的体积都挂这个。 */
-const bytesTip = (n) => `${Number(n || 0).toLocaleString()} 字节`;
-/** 正文里的体积：加粗 + 悬停给精确字节数。 */
-const bytesB = (n) => `<b title="${bytesTip(n)}">${fmtBytes(n)}</b>`;
-
 /* ── 提示气泡 ───────────────────────────────────────────── */
 
 function showTip(target, text) {
@@ -997,7 +993,14 @@ function renderAll() {
 
 /* ── 「全部」：跨工具的会话一览 ──────────────────────────── */
 
-const allState = { data: null, q: '', tools: new Set(), loading: false };
+const allState = {
+  data: null, q: '', tools: new Set(), loading: false,
+  /* 折叠状态：open = 用户手动展开的文件夹，collapsed = 手动收起的。
+     两个集合都跨重绘保留 —— 否则每敲一个字筛选，刚展开的那组又收回去。
+     默认展开前 DEFAULT_OPEN_GROUPS 组（见 views/all.js）。 */
+  open: new Set(),
+  collapsed: new Set(),
+};
 
 function renderAllAll() {
   // 常规那几块全部收起：这一屏只回答"我刚才在哪个工具里干活"
@@ -1048,39 +1051,20 @@ function renderAllSessions() {
   const d = allState.data;
   if (!d) return;
 
-  els.allLede.innerHTML =
-    `${d.tools.length} 个工具一共 <b>${d.total.toLocaleString()}</b> 个会话、<b>${fmtBytes(d.bytes)}</b> 正文，` +
-    `分布在 <b>${d.groups.length}</b> 个文件夹里。按最近使用排序。` +
-    `<span class="all-note">这一屏只读 —— 要清理请点进对应的工具。</span>`;
-
-  // 每个工具一个筛选钮，顺带交代"它在这次汇总里贡献了多少"
-  els.allTools.innerHTML = d.tools.map((t) => {
-    if (t.error) {
-      return `<span class="all-tool is-err" title="${esc(t.error)}">${esc(t.label)} 读不到</span>`;
-    }
-    /* 0 个会话的工具不给筛选钮：点了只会得到一个空列表，那是在让人
-       点一个必然没有结果的东西。（Claude Code 在这台机器上就没有会话。）
-       但仍然给它自己的颜色 —— 灰掉一个跟别处不一致的色点，比完全不出现更好认。 */
-    if (!t.count) {
-      return `<span class="all-tool" data-app-tone="${esc(t.app)}"
-        title="${esc(t.label)}：这次汇总里没有它的会话">${esc(t.label)} 0</span>`;
-    }
-    const on = !allState.tools.size || allState.tools.has(t.app);
-    return `<button type="button" class="chip ${on ? 'is-on' : ''}" data-all-tool="${esc(t.app)}"
-      aria-pressed="${on}" title="${esc(t.label)}：${t.count} 个会话">
-      <i></i>${esc(t.label)} <em style="font-style:normal;opacity:.7">${t.count}</em>
-    </button>`;
-  }).join('');
+  // 每个工具一个筛选钮。三种状态（有会话 / 零会话 / 真读不到）由 views/all.js 区分 ——
+  // 后端的 problems 里既有真错误也有说明性提示，混成一句会把正常的工具显示成故障。
+  els.allTools.innerHTML = d.tools
+    .map((t) => toolFilterChip(t, !allState.tools.size || allState.tools.has(t.app)))
+    .join('');
 
   const q = allState.q;
-  const rows = d.tasks.filter((t) => {
-    if (allState.tools.size && !allState.tools.has(t.app)) return false;
-    if (q && !(`${t.title} ${t.workspace}`.toLowerCase().includes(q))) return false;
-    return true;
-  });
+  const { groups, matched } = groupSessions(d.tasks, { tools: allState.tools, q });
 
-  els.allEmpty.hidden = rows.length > 0;
-  if (!rows.length) {
+  // 搜索时把命中数写进那句话 —— 否则"筛出 3 个"要靠自己数
+  els.allLede.innerHTML = allLedeHtml(d, matched);
+
+  els.allEmpty.hidden = groups.length > 0;
+  if (!groups.length) {
     els.allEmpty.innerHTML = q
       ? `没有匹配的会话 —— 搜索「${esc(q)}」筛下来是空的。`
       : '没有匹配的会话。';
@@ -1088,34 +1072,15 @@ function renderAllSessions() {
     return;
   }
 
-  /* 按文件夹分组，组头给完整路径与合计。组内按最近使用降序 ——
-     这一屏的用途就是"找刚才那段"，时间比体积更相关。 */
-  const byWs = new Map();
-  for (const t of rows) {
-    const key = t.workspace || '';
-    let g = byWs.get(key);
-    if (!g) byWs.set(key, g = { ws: key, rows: [], bytes: 0 });
-    g.rows.push(t);
-    g.bytes += t.bytes;
-  }
-
-  els.allList.innerHTML = [...byWs.values()].map((g) => {
-    const named = g.ws ? shortPath(g.ws) : '（还原不出文件夹）';
-    const base = g.ws ? (g.ws.split('/').filter(Boolean).pop() || g.ws) : '（还原不出文件夹）';
-    return `<section class="all-group">
-      <header class="all-group-head">
-        <span class="all-group-name" title="${esc(g.ws || '库里只有工作区 id，还原不出路径')}">${esc(base)}</span>
-        <span class="all-group-path">${esc(named)}</span>
-        <span class="all-group-n" title="${bytesTip(g.bytes)}">${g.rows.length.toLocaleString()} 个，${fmtBytes(g.bytes)}</span>
-      </header>
-      ${g.rows.map((t) => `
-        <div class="all-row">
-          <span class="all-app" data-app-tone="${esc(t.app)}">${esc(t.appLabel)}</span>
-          <span class="all-title" title="${esc(t.title)}">${esc(t.title)}</span>
-          <span class="all-when">${fmtDate(t.updatedAt)}</span>
-          <span class="all-size" title="${bytesTip(t.bytes)}">${fmtBytes(t.bytes)}</span>
-        </div>`).join('')}
-    </section>`;
+  /* 按文件夹折叠：默认只展开最近的 DEFAULT_OPEN_GROUPS 组。
+     实测一个文件夹能装 90 个会话（3340px），全铺开整页六屏（5514px），
+     而用户要找的那段几乎总在最上面。折叠后 12 个文件夹一屏能扫完。
+     手动展开的记在 allState.open、手动收起的记在 collapsed，
+     两者都跨重绘保留 —— 否则每敲一个字筛选，用户就得重新展开一次。 */
+  els.allList.innerHTML = groups.map((g, i) => {
+    const isOpen = allState.open.has(g.ws)
+      || (i < DEFAULT_OPEN_GROUPS && !allState.collapsed.has(g.ws));
+    return sessionGroup(g, isOpen);
   }).join('');
 }
 
@@ -1549,6 +1514,22 @@ document.addEventListener('click', async (e) => {
     return;
   }
 
+  /* 「全部」里展开/收起一个文件夹。
+     与会话管理那屏的 data-ws-toggle 是两套状态（那边按任务列表分组，
+     这边按跨工具汇总分组），所以属性名与状态都分开。 */
+  const allWs = t.closest('[data-all-ws]');
+  if (allWs) {
+    const ws = allWs.dataset.allWs;
+    const groups = [...document.querySelectorAll('#allList .all-group')];
+    const idx = groups.findIndex((g) => g.querySelector('[data-all-ws]')?.dataset.allWs === ws);
+    const isOpen = allState.open.has(ws)
+      || (idx >= 0 && idx < DEFAULT_OPEN_GROUPS && !allState.collapsed.has(ws));
+    if (isOpen) { allState.open.delete(ws); allState.collapsed.add(ws); }
+    else { allState.collapsed.delete(ws); allState.open.add(ws); }
+    renderAllSessions();
+    return;
+  }
+
   /* 「全部」视图里的工具筛选与搜索 */
   const allTool = t.closest('[data-all-tool]');
   if (allTool) {
@@ -1948,21 +1929,6 @@ const stateTone = (t) => t.reason ? REASON_TONE[t.reason] : STATE_TONE[t.state];
 
 const STATE_TONE = { deleted: 'st-serious', archived: 'st-warning', active: 'st-good', untracked: 'st-warning', empty: 'st-serious' };
 
-const shortPath = (p) => (p || '').replace(/^\/Users\/[^/]+/, '~');
-const fmtDate = (ms) => {
-  if (!ms) return '—';
-  const d = new Date(ms);
-  const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-};
-
-/** 详情里给到分钟 —— 同一天里的两条会话，"最后使用"只写日期就分不开了。 */
-const fmtDateTime = (ms) => {
-  if (!ms) return '—';
-  const d = new Date(ms);
-  const p = (n) => String(n).padStart(2, '0');
-  return `${fmtDate(ms)} ${p(d.getHours())}:${p(d.getMinutes())}`;
-};
 
 /**
  * 把会话面板擦回到"还没有任何数据"的样子。

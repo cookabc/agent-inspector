@@ -325,3 +325,131 @@ test('状态字典与档位一一对应，没有漏档', () => {
     assert.match(STATUS_CLASS[k], new RegExp(`^st-${k}$`));
   }
 });
+
+/* ── 「全部」视图：折叠分组与工具状态 ─────────────────────── */
+
+/* 这一组测试对应一次真实的效率测量：119 个会话分布在 12 个文件夹里，
+   其中一个文件夹装了 90 个 —— 全部铺开是 5514px，整页六屏，而用户要找的
+   那一段几乎总在最上面。折叠之后 1850px，两屏。 */
+import {
+  groupSessions, sessionGroup, sessionGroupHead, sessionGroupRows,
+  allLedeHtml, toolFilterChip, DEFAULT_OPEN_GROUPS, ROWS_PER_GROUP,
+} from '../public/views/all.js';
+
+const sess = (over = {}) => ({
+  app: 'zcode', appLabel: 'ZCode', title: '会话', workspace: '/w/a',
+  updatedAt: 1_700_000_000_000, bytes: 1024, ...over,
+});
+
+test('分组：按文件夹归并，组内与组间都按最近使用降序', () => {
+  const { groups } = groupSessions([
+    sess({ title: 'a1', workspace: '/w/a', updatedAt: 100 }),
+    sess({ title: 'b1', workspace: '/w/b', updatedAt: 300 }),
+    sess({ title: 'a2', workspace: '/w/a', updatedAt: 200 }),
+  ]);
+  assert.equal(groups.length, 2);
+  // 组间：/w/b 最近（300）在前
+  assert.equal(groups[0].ws, '/w/b');
+  // 组内：a2(200) 在 a1(100) 之前
+  const a = groups.find((g) => g.ws === '/w/a');
+  assert.deepEqual(a.rows.map((r) => r.title), ['a2', 'a1']);
+});
+
+test('分组：工具筛选与搜索都能收窄，且如实报匹配数', () => {
+  const tasks = [
+    sess({ app: 'zcode', title: '数据库迁移', workspace: '/w/a' }),
+    sess({ app: 'codex', title: '数据库回滚', workspace: '/w/b' }),
+    sess({ app: 'codex', title: '前端样式', workspace: '/w/b' }),
+  ];
+  const byTool = groupSessions(tasks, { tools: new Set(['codex']) });
+  assert.equal(byTool.matched, 2);
+  assert.equal(byTool.total, 3);
+
+  const byQ = groupSessions(tasks, { q: '数据库' });
+  assert.equal(byQ.matched, 2);
+
+  // 两个条件同时生效
+  const both = groupSessions(tasks, { tools: new Set(['codex']), q: '数据库' });
+  assert.equal(both.matched, 1);
+});
+
+test('分组：工作区为空的会话单独成组，组名不用空字符串', () => {
+  const { groups } = groupSessions([sess({ workspace: '' })]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].base, '（还原不出文件夹）');
+  assert.equal(groups[0].path, '（还原不出文件夹）');
+});
+
+test('组头：折叠时它是唯一可见的东西，所以必须带齐名字、路径、条数、体积', () => {
+  const { groups } = groupSessions([
+    sess({ workspace: '/Users/x/proj', bytes: 2048 }),
+    sess({ workspace: '/Users/x/proj', bytes: 2048 }),
+  ]);
+  const head = sessionGroupHead(groups[0], false);
+  assert.match(head, /proj/, '要有文件夹名');
+  assert.match(head, /~\/proj/, '路径要缩成 ~');
+  assert.match(head, /2 个/, '要有条数');
+  assert.match(head, /4 KB|4\.0 KB/, '要有合计体积');
+  assert.match(head, /aria-expanded="false"/);
+  assert.match(head, /：展开 2 个会话/);
+});
+
+test('折叠状态不画行；展开才画 —— 这是六屏变两屏的关键', () => {
+  const { groups } = groupSessions([sess({ title: '很长的标题' })]);
+  const closed = sessionGroup(groups[0], false);
+  assert.ok(!closed.includes('all-row'), '折叠时不该有任何行');
+  assert.ok(!closed.includes('很长的标题'), '折叠时不该有标题文字');
+
+  const open = sessionGroup(groups[0], true);
+  assert.match(open, /all-row/);
+  assert.match(open, /很长的标题/);
+});
+
+test('展开的组也只列 ROWS_PER_GROUP 行，其余交给搜索', () => {
+  const many = Array.from({ length: ROWS_PER_GROUP + 7 }, (_, i) =>
+    sess({ title: `会话${i}`, workspace: '/w/a' }));
+  const { groups } = groupSessions(many);
+  const html = sessionGroupRows(groups[0]);
+  assert.equal((html.match(/all-row/g) || []).length, ROWS_PER_GROUP);
+  assert.match(html, /还有 7 个会话/);
+  assert.match(html, /用上面的搜索框/, '要告诉人下一步怎么做，而不只是说"还有很多"');
+});
+
+test('默认展开的组数是个小常数 —— 展开太多就退回六屏', () => {
+  // 这条钉的是设计意图：折叠的价值全部来自"只开前面几个"
+  assert.ok(DEFAULT_OPEN_GROUPS >= 1 && DEFAULT_OPEN_GROUPS <= 3,
+    `默认展开 ${DEFAULT_OPEN_GROUPS} 组太贪或太少`);
+});
+
+test('汇总句：搜索筛出更少的会话时如实说"当前筛出 N 个"', () => {
+  const d = { tools: [{}, {}], total: 100, bytes: 1024 * 1024, groups: [] };
+  const all = allLedeHtml(d);
+  assert.ok(!all.includes('当前筛出'), '没筛时不提');
+
+  const filtered = allLedeHtml(d, 3);
+  assert.match(filtered, /当前筛出 <b>3<\/b> 个/);
+});
+
+test('工具状态：零会话给灰标签，有提示仍是正常钮，真读不到才红', () => {
+  // 真故障：一条会话都没有，且报了错
+  const fail = toolFilterChip({ app: 'x', label: 'X', count: 0, error: '库打不开' }, true);
+  assert.match(fail, /all-tool is-err/);
+  assert.match(fail, /读不到/);
+
+  // 零会话但没报错：灰标签，说明"没有它的会话"
+  const zero = toolFilterChip({ app: 'x', label: 'X', count: 0 }, true);
+  assert.match(zero, /这次汇总里没有它的会话/);
+  assert.ok(!zero.includes('is-err'));
+
+  // 有 4 个会话 + 一条提示：正常筛选钮，提示进 tooltip
+  const ok = toolFilterChip({ app: 'dsh', label: 'DeepSeek', count: 4, error: '有 2 条没有投影缓存' }, true);
+  assert.match(ok, /data-all-tool="dsh"/);
+  assert.ok(!ok.includes('is-err'), '有会话时不该显示成故障');
+  assert.ok(!/>[^<]*读不到/.test(ok), '有会话时不该在版面上说"读不到"');
+  assert.match(ok, /提示：有 2 条没有投影缓存/, '提示要保留，只是放进 tooltip');
+});
+
+test('工具状态：选中态真的反映在 aria-pressed 上', () => {
+  assert.match(toolFilterChip({ app: 'a', label: 'A', count: 2 }, true), /aria-pressed="true"/);
+  assert.match(toolFilterChip({ app: 'a', label: 'A', count: 2 }, false), /aria-pressed="false"/);
+});

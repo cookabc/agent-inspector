@@ -11,6 +11,10 @@
  * 界面行为其实没变 —— 测试保护的是"上次是怎么写的"。
  */
 
+/* 体积换算只该有一份实现 —— 它在 logic.js 里，带单测。
+   re-export 给外部，本地用 fmtBytesLocal 别名。 */
+import { fmtBytes as fmtBytesLocal } from '../logic.js';
+
 /** HTML 转义。名字短是为了让模板串读起来还像 HTML。 */
 export const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -24,6 +28,42 @@ export const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
  * 复制到这一层会立刻产生第二份实现，之后改一处忘另一处 —— 正是这个重构
  * 要消灭的东西。所以这里只管视图独有的部分。
  */
+
+/* ── 体积的展示形态 ───────────────────────────────────────── */
+
+/* 体积换算只该有一份实现 —— 它在 logic.js 里，带单测。 */
+export { fmtBytes } from '../logic.js';
+
+/** 悬停提示：完整字节数。
+ *  磁盘审计的数最后要跟 `du` 对得上 —— "1.40 GB" 对不上，
+ *  "1,502,341,376 字节" 才对得上。所以凡是拿来核对的体积都挂这个。 */
+export const bytesTip = (n) => `${Number(n || 0).toLocaleString()} 字节`;
+
+/** 正文里的体积：加粗 + 悬停给精确字节数。 */
+export const bytesB = (n) => `<b title="${bytesTip(n)}">${fmtBytesLocal(n)}</b>`;
+
+/** 带精确字节数的体积片段 —— toast 里所有数字都走它。 */
+export const bytesWithExact = (n) => `<b title="${n.toLocaleString()} 字节">${fmtBytesLocal(n)}</b>`;
+
+/* ── 字体排版辅助：路径与日期 ─────────────────────────────── */
+
+/** 把家目录缩成 ~。只缩第一段，其余原样保留。 */
+export const shortPath = (p) => (p || '').replace(/^\/Users\/[^/]+/, '~');
+
+export const fmtDate = (ms) => {
+  if (!ms) return '—';
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+
+/** 详情里给到分钟 —— 同一天里的两条会话，"最后使用"只写日期就分不开了。 */
+export const fmtDateTime = (ms) => {
+  if (!ms) return '—';
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${fmtDate(ms)} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
 
 /* ── 状态 ─────────────────────────────────────────────────── */
 
