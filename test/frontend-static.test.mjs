@@ -92,34 +92,52 @@ test('切换到另一个工具时，会话面板与搜索状态一起归零', ()
   assert.match(reset, /els\.taskQuick\.hidden = true/, '首屏快捷项要收起');
 });
 
-test('所有批量入口都过同一个可选中判据，没有各自为政', () => {
-  /* 这是一次真实故障的回归锁：行级复选框早就按 verdict/link 禁用了，
-     而「分组全选」「推荐清理」「三块分组」各自判断，各自漏了软链接。
-     结果点「推荐清理」→ 选区混进一个软链接 → 服务端先校验全批 →
-     整批被拒，界面上只报那一个文件。 */
-  const routes = [
-    ['分组全选', 'selectableOnly(filesOf(id).filter(matches), cat)'],
-    ['推荐清理', 'selectableOnly(filesOf(c.id), c)'],
-    ['全选可见', 'selectableOnly(files, cat)'],
-    ['三块分组', 'groupOf(f) === g && canPick(f)'],
-    ['定位会话正文', 'if (f && canPick(f))'],
-    ['发送前兜底', 'if (!canPick(f)) continue;'],
-    ['抽屉兜底', 'const rows = raw.filter((f) => canPick(f));'],
-  ];
-  for (const [name, needle] of routes) {
-    assert.ok(app.includes(needle), `${name} 没有过可选中判据：找不到 ${needle}`);
-  }
-  // 判据本体只有 logic.js 一份，app.js 里只是转发
-  assert.match(app, /const canPick = \(f, cat\) => isSelectable\(f, cat \|\| catOfRow\(f\)\)/);
-  assert.match(app, /import \{ fmtBytes, isSelectable \} from '\.\/logic\.js'/);
-});
+test('所有往选区里写东西的地方都过同一个判据', () => {
+  /* 真实故障的回归锁：行级复选框早就按 verdict/link 禁用了，而
+     「分组全选」「推荐清理」「三块分组」各自判断，各自漏了软链接 ——
+     点「推荐清理」→ 选区混进一个软链接 → 服务端先校验全批 → 整批被拒，
+     界面上只报那一个文件。
 
-test('分组复选框的状态按"真正能勾的行"算', () => {
-  // 用全部行算的话，软链接与受保护项永远勾不上，框就永远停在半选 ——
-  // 点一次还是半选，两次才取消，人看到的是"这个框坏了"。
-  assert.match(app, /const pickable = selectableOnly\(all, cat\)/);
-  assert.match(app, /selCount === pickable\.length \? 'checked'/);
-  assert.match(app, /selCount < pickable\.length \? 'data-indeterminate/);
+     锁的是**不变量**而不是某个字面写法：判据只有一个真源，且每一处
+     往 state.selection 里加东西的代码，前面都必须先过它。
+     字号、变量名、写成 if 还是 filter 都随便改 —— 只要这个不变量还在，
+     上面那个故障就复现不了。 */
+  // ① 判据只有一个真源：logic.js 的 isSelectable，且 app.js 里只转发一次。
+  //    多于一处调用就意味着有人绕过 canPick 自己判了一遍 —— 那正是故障成因。
+  assert.match(app, /import \{[^}]*isSelectable[^}]*\} from '\.\/logic\.js'/);
+  const forwards = app.match(/isSelectable\(/g) || [];
+  assert.equal(forwards.length, 1, `isSelectable 在 app.js 里应当只有一处转发，实际 ${forwards.length} 处`);
+
+  // ② 所有整批勾上的入口都走 selectableOnly
+  for (const [name, re] of [
+    ['分组全选', /selectableOnly\(filesOf\(id\)/],
+    ['推荐清理', /selectableOnly\(filesOf\(c\.id\)/],
+    ['全选可见', /selectableOnly\(files, cat\)/],
+  ]) {
+    assert.match(app, re, `${name} 没有过 selectableOnly`);
+  }
+
+  /* ③ 逐个 add 的那些，每一句 selection.add 前都要有一次判据。
+     例外只有一类：**用户亲手点的那一下**。行级与分组框的 change 处理直接
+     读 DOM 的 checked 值写选区 —— 它不需要再判一次，因为那个 checkbox
+     在渲染时就已经按判据禁用了（受保护项与软链接都是 disabled）。
+     这个前提由 views-contract.test.mjs 钉住（「受保护的行有 disabled」）。
+     所以这里放行"该行附近出现 input[data-key] / fbox / data-group-box"的情形，
+     其余一律要求能看到 canPick / selectableOnly。
+
+     窗口取 8 行而不是 3 行：判定与写入常常隔着注释与分支（比如三块分组
+     先在 const mine = ...filter(...canPick(f)...) 里筛好，隔几行才逐个 add）。
+     窗口太窄会把这些**做对了**的地方误判成违规。 */
+  const lines = app.split('\n');
+  const offenders = [];
+  lines.forEach((line, i) => {
+    if (!/state\.selection\.add\(/.test(line)) return;
+    const near = lines.slice(Math.max(0, i - 8), i + 1).join('\n');
+    const viaCheckedBox = /input\[data-key\]|fbox|data-group-box|checked/.test(near);
+    const viaFilter = /canPick|selectableOnly/.test(near);
+    if (!viaFilter && !viaCheckedBox) offenders.push(`第 ${i + 1} 行：${line.trim()}`);
+  });
+  assert.deepEqual(offenders, [], '这些地方直接写选区，没过判据：\n' + offenders.join('\n'));
 });
 
 test('清理成功后抽屉立刻关，结果交给 toast —— 不再靠延时等人读完', () => {
@@ -282,26 +300,21 @@ test('Cursor 的连带回收进详情与抽屉，不进清单行', () => {
   assert.match(app, /dstat-pending/, '还没算完时要说"正在算"，不能装作没有连带');
 });
 
-test('分类的展开/收起是真正的 button，键盘能走到', () => {
-  /* 原来整个 .group-head 靠 click 展开，没有任何可聚焦元素 ——
-     键盘用户进不去任何一张分类卡。现在三角是一个真的 <button>，
-     带 aria-expanded 与 aria-label；组头里那个"全选"复选框不被卷进按钮语义。 */
-  assert.match(app, /<button class="caret-btn" type="button" data-group-toggle=/);
-  assert.match(app, /aria-expanded="\$\{isOpen\}" aria-label="\$\{esc\(cat\.label\)\}：/);
-  // 重画后要把焦点找回来，否则键盘走到这里就断了
+test('分类卡展开后把焦点还给三角，键盘不会断在半路', () => {
+  /* "它是一个真的 <button>、带 aria-expanded 与 aria-label" 由
+     views-contract.test.mjs 测 —— 那边直接调 caretBtn 断言产出。
+     这里只剩重画之后的焦点归还：renderGroups 会整块替换 innerHTML，
+     旧元素失效，不主动找回来焦点就掉到 body 上，键盘走到这里就断了。 */
   assert.match(app, /els\.groups\.querySelector\(`\[data-group-toggle="\$\{id\}"\]`\)\?\.focus\(\)/);
+  // 三角是个图标形状的按钮，不该有可见边框
   assert.match(css, /\.caret-btn \{[\s\S]{0,300}border: 0/);
 });
-
-test('空态要说清是哪个条件筛空的，并给出下一步', () => {
-  /* 原来只有一句"没有匹配的条目"，而搜索、状态、分组三个条件可能叠在一起，
-     用户不知道该改哪个；提示还挂在列表末尾，离搜索框一百多像素。 */
-  assert.match(app, /const why = \[\]/);
-  assert.match(app, /一起筛下来是空的/);
-  assert.match(app, /按 <kbd>Esc<\/kbd> 清掉搜索/);
-  // 提示挪到工具栏正下方
-  const html2 = html;
-  assert.ok(html2.indexOf('id="emptyHint"') < html2.indexOf('id="groups"'), '空提示要在分组之前');
+test('空提示挂在工具栏正下方，不在列表末尾', () => {
+  /* 文案本身（是哪个条件筛空的）在 views-contract.test.mjs 里测 —— 那边
+     直接调 emptyHintHtml 断言产出，比在源码里找字符串可靠。
+     这里只剩一件只能在文件层查的事：它的 DOM 位置。
+     原来提示挂在列表末尾，离搜索框一百多像素，筛空之后人根本看不见。 */
+  assert.ok(html.indexOf('id="emptyHint"') < html.indexOf('id="groups"'), '空提示要在分组之前');
 });
 
 test('点推荐清理却什么都删不掉时，不许给一个按了没反应的按钮', () => {

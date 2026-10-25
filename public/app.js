@@ -75,30 +75,14 @@ const keyOf = (f, appId) => f.k || `${appId !== undefined ? appId : (f.app ?? st
 import { fmtBytes, isSelectable } from './logic.js';
 /* 面积图的排布算法也在纯函数里，算法本身可以被单测盯住。 */
 import { verdictTreemap } from './treemap.js';
-
-const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
-  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-
-const STATUS_CLASS = { good: 'st-good', warning: 'st-warning', serious: 'st-serious', critical: 'st-critical' };
-
-const ICONS = {
-  alert:    '<path d="M12 8v4.5M12 16h.01M10.3 3.9 2.6 17.2A1.9 1.9 0 0 0 4.3 20h15.4a1.9 1.9 0 0 0 1.7-2.8L13.7 3.9a1.9 1.9 0 0 0-3.4 0Z"/>',
-  terminal: '<path d="M4 7l4 5-4 5M12 17h8"/>',
-  box:      '<path d="M3 8.5 12 4l9 4.5v7L12 20l-9-4.5v-7Z"/><path d="M3 8.5 12 13l9-4.5M12 13v7"/>',
-  trash:    '<path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/>',
-  doc:      '<path d="M6 3h7l5 5v13H6z"/><path d="M13 3v5h5"/>',
-  db:       '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/>',
-  key:      '<circle cx="8" cy="14" r="4"/><path d="M11 11l9-9M17 5l2 2M14 8l2 2"/>',
-  gear:     '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/>',
-};
-
-const icon = (name, cls = '') =>
-  `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ICONS.box}</svg>`;
-
-const badge = (cat) =>
-  `<span class="badge ${STATUS_CLASS[cat.status]}">${icon(cat.icon)}${esc(cat.action || STATUS_LABEL[cat.status])}</span>`;
-
-const STATUS_LABEL = { good: '可安全清理', warning: '谨慎清理', serious: '异常，建议清理', critical: '请勿删除' };
+/* 视图层：转义、图标、徽标、状态字典、行/卡片模板。
+   这一层不碰 DOM、不读全局 state，测试能直接喂夹具断言产出的 HTML。 */
+import {
+  esc, icon, badge, STATUS_CLASS, STATUS_LABEL,
+} from './views/shared.js';
+import {
+  rowHtml as fileRowHtml, groupCard, emptyHintHtml, MAX_ROWS,
+} from './views/files.js';
 
 /* 推荐清理的范围：rules.mjs 里标了 recommend 的那几类 —— 就是"删了不影响
    会话、配置和凭据"的那些（日志、缓存、系统垃圾）。其中标了 recommendDefaultOff
@@ -544,7 +528,8 @@ function renderTreemap() {
 
 /* ── 清单筛选 ───────────────────────────────────────────── */
 
-const MAX_ROWS = 400;
+/* MAX_ROWS 从 views/files.js 引入（那里是唯一来源）—— 渲染多少个由它定，
+   勾选与删除仍作用于全部行。 */
 
 /* 每个文件正好落进三组之一，跟上面那三块一一对应。
    读不到会话库时 scan.mjs 不给 f.orphan 赋值 —— 那种情况下按"会话仍在"算，
@@ -591,138 +576,42 @@ function visibleCategories() {
 function renderGroups() {
   const cats = visibleCategories();
 
-  /* 空态要说清是**哪个条件**筛空的。原来是光秃秃一句"没有匹配的条目"，
-     而搜索框、状态钮、分组筛选三个条件叠在一起，用户不知道该改哪个。 */
+  /* 空态要说清是**哪个条件**筛空的 —— 文案本体在 views/files.js（可单测），
+     这里只把这一屏的状态递过去。 */
   els.emptyHint.hidden = cats.length > 0;
   if (!cats.length) {
-    const why = [];
-    if (state.q) why.push(`搜索「${esc(state.q)}」`);
-    if (state.statuses.size) {
-      const names = [...state.statuses].map((s) => STATUS_LABEL[s] || s).join('、');
-      why.push(`只看「${esc(names)}」`);
-    }
-    if (state.group) why.push(`只在这一组里`);
-    if (state.catFilter) {
-      const cat = (state.index?.categories || []).find((c) => c.id === state.catFilter);
-      why.push(`只看「${esc(cat?.label ?? state.catFilter)}」`);
-    }
-    els.emptyHint.innerHTML = why.length
-      ? `没有匹配的条目 —— ${why.join(' + ')} 一起筛下来是空的。` +
-        `<span class="empty-act">按 <kbd>Esc</kbd> 清掉搜索，或点已亮的筛选钮取消它。</span>`
-      : '没有匹配的条目。';
+    const cat = state.catFilter
+      ? (state.index?.categories || []).find((c) => c.id === state.catFilter)
+      : null;
+    els.emptyHint.innerHTML = emptyHintHtml({
+      q: state.q, statuses: state.statuses, group: state.group,
+      catFilter: state.catFilter, catLabel: cat?.label,
+    }).html;
   }
 
-  els.groups.innerHTML = cats.map(({ cat, files }) => {
-    // 一切以"当前看得见的这些行"为准：卡片头上的勾选框、计数、已选数都算这一批。
-    // 没有筛选时它就是这个分类的全部。
-    const all = sortFiles(files);
-    const isOpen = state.open.has(cat.id);
-    const totalHere = filesOf(cat.id).length;
-    /* 卡片头那个框的状态只能按"真正能勾的行"来算。
-       用 all 算的话：软链接、受保护项永远勾不上，于是这个框永远停在
-       "勾了一半"（indeterminate）—— 点一次全选它还是半选，点第二次才取消，
-       人看到的是"这个框坏了"。 */
-    const pickable = selectableOnly(all, cat);
-    const selCount = pickable.filter((f) => state.selection.has(keyOf(f))).length;
-    // 右上角那个数说的是"这张卡里现在装着的东西"，不是这个分类一共有多少 ——
-    // 筛过之后还写整类的体积，就会跟卡里勾着的行对不上（2.84 GB 的卡里躺着 9.2 MB 的勾）。
-    const filtered = all.length !== totalHere;
-    const visBytes = all.reduce((a, f) => a + f.s, 0);
-    // 只有两个数格式化之后真的不一样，才值得把"整类多大"补在后面。
-    // 否则会印出 "2.84 GB / 2.84 GB" 这种 —— 筛没筛、差多少，全靠读者自己猜。
-    const visLabel = fmtBytes(visBytes);
-    const allLabel = fmtBytes(cat.bytes);
-    const showAll = filtered && visLabel !== allLabel;
-
-    const shown = isOpen ? all.slice(0, MAX_ROWS) : [];
-    const rows = shown.map((f) => rowHtml(f, cat)).join('');
-    const more = isOpen && all.length > MAX_ROWS
-      ? `<div class="more">还有 ${(all.length - MAX_ROWS).toLocaleString()} 项，用搜索缩小范围</div>` : '';
-    const none = isOpen && !all.length ? `<div class="more">没有匹配的条目</div>` : '';
-
-    return `<article class="group ${isOpen ? 'is-open' : ''} ${cat.verdict === 'never' ? 'is-locked' : ''}" data-cat="${cat.id}">
-      <header class="group-head">
-        <!-- 展开/收起单独一个 button：组头里还嵌着"全选"复选框，
-             整个 header 套 role=button 会把 checkbox 卷进按钮语义里。 -->
-        <button class="caret-btn" type="button" data-group-toggle="${cat.id}"
-          aria-expanded="${isOpen}" aria-label="${esc(cat.label)}：${isOpen ? '收起' : '展开'}清单">
-          <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
-        </button>
-        <div class="group-title">
-          <h3>${esc(cat.label)}</h3>
-          ${badge(cat)}
-          <span class="count">${
-            all.length === totalHere
-              ? `${totalHere.toLocaleString()} 项`
-              : `筛出 ${all.length.toLocaleString()} / ${totalHere.toLocaleString()} 项`
-          }${selCount ? `，已选 ${selCount.toLocaleString()}` : ''}</span>
-        </div>
-        <div class="group-right">
-          <span class="group-size" title="${bytesTip(visBytes)}${
-            filtered ? `（整个分类 ${cat.bytes.toLocaleString()} 字节）` : ''}">${
-            visLabel}${showAll ? `<em> / ${allLabel}</em>` : ''}</span>
-          <input type="checkbox" data-group-box="${cat.id}"
-            ${cat.verdict === 'never' ? 'disabled aria-label="受保护内容，不可清理"' : ''}
-            ${selCount && selCount === pickable.length ? 'checked' : ''}
-            ${selCount && selCount < pickable.length ? 'data-indeterminate="1"' : ''}
-            aria-label="选择 ${esc(cat.label)} 的全部条目">
-        </div>
-      </header>
-
-      <div class="group-outcome">
-        <span class="outcome-label">删了会怎样</span>
-        <span class="outcome-text">${esc(cat.outcome)}</span>
-        <button class="group-more" data-more="${cat.id}" aria-expanded="${state.explain.has(cat.id)}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
-            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
-          ${state.explain.has(cat.id) ? '收起说明' : '这是什么，为什么在这里'}
-        </button>
-      </div>
-
-      ${state.explain.has(cat.id) ? `<div class="group-explain">
-        <section><h4>这是什么</h4><p>${esc(cat.what)}</p></section>
-        <section><h4>为什么在这里</h4><p>${esc(cat.why)}</p></section>
-      </div>` : ''}
-
-      ${isOpen ? `<div class="group-body">${rows}${none}${more}</div>` : ''}
-    </article>`;
-  }).join('');
+  els.groups.innerHTML = cats.map(({ cat, files }) => groupCard({
+    cat,
+    files: sortFiles(files),
+    totalHere: filesOf(cat.id).length,
+    isOpen: state.open.has(cat.id),
+    explain: state.explain.has(cat.id),
+    selCount: selectableOnly(sortFiles(files), cat).filter((f) => state.selection.has(keyOf(f))).length,
+    pickable: selectableOnly(sortFiles(files), cat).length,
+    rowCtx: { selection: state.selection, multiTarget: multiTarget(), canReveal: canReveal(), targets: state.index.targets || [], appLabel: state.index.label },
+  })).join('');
 
   els.groups.querySelectorAll('[data-indeterminate]').forEach((el) => { el.indeterminate = true; });
 }
 
+/** 单行的模板在 views/files.js（纯函数）；这里补上这一屏的上下文。 */
 function rowHtml(f, cat) {
-  const on = state.selection.has(keyOf(f));
-  // 软链接：扫描时按链接本身记录（不跟随），服务端也一律拒绝删除。
-  // 所以这里既不能勾，也要在行上说明白 —— 画成可勾的条目等于骗人点一下再报错。
-  const isLink = Boolean(f.link);
-  const protectedRow = cat.verdict === 'never' || isLink;
-  const when = new Date(f.m).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
-  const cut = f.p.lastIndexOf('/');
-  const dir = cut < 0 ? '' : f.p.slice(0, cut + 1);
-  const name = cut < 0 ? f.p : f.p.slice(cut + 1);
-  // 一个 app 有多个根（Cursor 的 ~/.cursor 与 App Support）时，相对路径看不出它落在哪一边
-  const tTag = multiTarget()
-    ? `<span class="row-tag" title="位于 ${esc(targetShort(f.t))}">${esc(targetLabel(f.t))}</span>` : '';
-  // 只给可清理的那一种打标。会话 id 是 8 位十六进制，摆在行里没人读得懂，
-  // 也没人能拿它做什么 —— 挪进 tooltip，行里只留"孤儿"这两个字。
-  const sidTag = f.sid && f.orphan
-    ? `<span class="row-tag is-orphan" title="会话 ${esc(f.sid)} 已不在 ${esc(state.index.label)} 的会话库里，文件是残骸">孤儿</span>`
-    : '';
-  const linkTag = isLink
-    ? `<span class="row-tag" title="符号链接：不跟随、不删除，删它等于去改别的目录">软链接</span>` : '';
-  return `<div class="row ${on ? 'is-on' : ''}${isLink ? ' is-link' : ''}">
-    <input type="checkbox" data-key="${esc(keyOf(f))}" ${on ? 'checked' : ''}
-      ${protectedRow ? `disabled aria-label="${isLink ? '符号链接，不可清理' : '受保护内容'}"` : ''}>
-    <span class="row-path" title="${esc(targetShort(f.t)) + '/' + esc(f.p)}">
-      <span class="row-dir">${esc(dir)}</span><b class="row-name">${esc(name)}</b>${tTag}${linkTag}${sidTag}
-    </span>
-    <span class="row-size" title="${bytesTip(f.s)}">${fmtBytes(f.s)}</span>
-    <span class="row-time">${when}</span>
-    ${canReveal() ? `<button class="row-reveal" data-reveal="${esc(keyOf(f))}" title="在 Finder 中显示" aria-label="在 Finder 中显示">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>
-    </button>` : ''}
-  </div>`;
+  return fileRowHtml(f, cat, {
+    selection: state.selection,
+    multiTarget: multiTarget(),
+    canReveal: canReveal(),
+    targets: state.index?.targets || [],
+    appLabel: state.index?.label || '',
+  });
 }
 
 /** 当前 app 有没有第二个扫描目标；有的话行上要标出来。 */
