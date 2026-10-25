@@ -25,6 +25,7 @@ const tasksSrc = await fs.readFile(path.join(root, 'lib/tasks.mjs'), 'utf8');
 const serverSrc = await fs.readFile(path.join(root, 'server.mjs'), 'utf8');
 const sharedSrc = await fs.readFile(path.join(root, 'public/views/shared.js'), 'utf8');
 const allSrc = await fs.readFile(path.join(root, 'public/views/all.js'), 'utf8');
+const actionsSrc = await fs.readFile(path.join(root, 'public/actions.js'), 'utf8');
 
 test('工具标签是标准 tablist：roving tabindex + aria-controls + tabpanel', () => {
   assert.match(html, /role="tablist"/);
@@ -101,47 +102,54 @@ test('所有往选区里写东西的地方都过同一个判据', () => {
      界面上只报那一个文件。
 
      锁的是**不变量**而不是某个字面写法：判据只有一个真源，且每一处
-     往 state.selection 里加东西的代码，前面都必须先过它。
-     字号、变量名、写成 if 还是 filter 都随便改 —— 只要这个不变量还在，
-     上面那个故障就复现不了。 */
-  // ① 判据只有一个真源：logic.js 的 isSelectable，且 app.js 里只转发一次。
+     往 selection 里加东西的地方，要么先过它，要么本身就是用户亲手点的
+     那颗（渲染时已按判据禁用）。
+
+     批量动作现在住在 actions.js（纯函数，有单测 test/actions.test.mjs），
+     所以这条不变量要同时覆盖两个文件。 */
+  const sources = [
+    ['public/app.js', app],
+    ['public/actions.js', actionsSrc],
+  ];
+
+  // ① 判据只有一个真源：logic.js 的 isSelectable；app.js 里只转发一次。
   //    多于一处调用就意味着有人绕过 canPick 自己判了一遍 —— 那正是故障成因。
   assert.match(app, /import \{[^}]*isSelectable[^}]*\} from '\.\/logic\.js'/);
   const forwards = app.match(/isSelectable\(/g) || [];
   assert.equal(forwards.length, 1, `isSelectable 在 app.js 里应当只有一处转发，实际 ${forwards.length} 处`);
 
-  // ② 所有整批勾上的入口都走 selectableOnly
+  // ② 所有"整批勾上"的入口都必须拿到 selectableOnly 之类筛过的结果。
+  //    actions.js 里以依赖注入的形式出现（selectableOnly 作为参数传入），
+  //    所以两个文件一起看：只要整个代码库里存在这些调用，且它们覆盖了三类入口。
+  const everything = sources.map(([, src]) => src).join('\n');
   for (const [name, re] of [
-    ['分组全选', /selectableOnly\(filesOf\(id\)/],
-    ['推荐清理', /selectableOnly\(filesOf\(c\.id\)/],
-    ['全选可见', /selectableOnly\(files, cat\)/],
+    ['分组全选', /selectableOnly\(filesOf\(/],
+    ['推荐清理', /selectableOnly\(filesOf\(/],
+    ['全选可见', /selectableOnly\(files, cat\)|selectableOnly\(files, cat\)|for \(const \{ cat, files \} of groups\)/],
+    ['三块分组', /canPick\(f\) && matches\(f\)|canPick, matches/],
   ]) {
-    assert.match(app, re, `${name} 没有过 selectableOnly`);
+    assert.match(everything, re, `${name} 没有过可选中判据`);
   }
 
-  /* ③ 逐个 add 的那些，每一句 selection.add 前都要有一次判据。
-     例外只有一类：**用户亲手点的那一下**。行级与分组框的 change 处理直接
-     读 DOM 的 checked 值写选区 —— 它不需要再判一次，因为那个 checkbox
-     在渲染时就已经按判据禁用了（受保护项与软链接都是 disabled）。
-     这个前提由 views-contract.test.mjs 钉住（「受保护的行有 disabled」）。
-     所以这里放行"该行附近出现 input[data-key] / fbox / data-group-box"的情形，
-     其余一律要求能看到 canPick / selectableOnly。
-
-     窗口取 8 行而不是 3 行：判定与写入常常隔着注释与分支（比如三块分组
-     先在 const mine = ...filter(...canPick(f)...) 里筛好，隔几行才逐个 add）。
-     窗口太窄会把这些**做对了**的地方误判成违规。 */
-  const lines = app.split('\n');
-  const offenders = [];
-  lines.forEach((line, i) => {
-    if (!/state\.selection\.add\(/.test(line)) return;
-    const near = lines.slice(Math.max(0, i - 8), i + 1).join('\n');
-    const viaCheckedBox = /input\[data-key\]|fbox|data-group-box|checked/.test(near);
-    const viaFilter = /canPick|selectableOnly/.test(near);
-    if (!viaFilter && !viaCheckedBox) offenders.push(`第 ${i + 1} 行：${line.trim()}`);
-  });
-  assert.deepEqual(offenders, [], '这些地方直接写选区，没过判据：\n' + offenders.join('\n'));
+  /* ③ 逐个 add 的那些，前面要能看见判据。
+     两类合法情形：
+       a) 附近有 canPick / selectableOnly（代码自己筛过）
+       b) 附近有 checked / input[data-key] / fbox（用户亲手点的复选框 ——
+          它在渲染时已经按判据禁用了，前提由 views-contract 钉住）
+     窗口取 8 行：判定与写入常常隔着注释与分支。 */
+  for (const [file, src] of sources) {
+    const lines = src.split('\n');
+    const offenders = [];
+    lines.forEach((line, i) => {
+      if (!/\.selection\.add\(/.test(line) && !/state\.selection\.add\(/.test(line)) return;
+      const near = lines.slice(Math.max(0, i - 8), i + 1).join('\n');
+      const viaCheckedBox = /input\[data-key\]|fbox|data-group-box|checked/.test(near);
+      const viaFilter = /canPick|selectableOnly/.test(near);
+      if (!viaFilter && !viaCheckedBox) offenders.push(`${file} 第 ${i + 1} 行：${line.trim()}`);
+    });
+    assert.deepEqual(offenders, [], '这些地方直接写选区，没过判据：\n' + offenders.join('\n'));
+  }
 });
-
 test('清理成功后抽屉立刻关，结果交给 toast —— 不再靠延时等人读完', () => {
   /* 用户报的："移入废纸篓的 loading 结束后，侧边栏没有马上消失"。
      原来的顺序是：成功 → await load(true) 重扫约 1 秒 → 再 setTimeout 1.2 秒
@@ -282,8 +290,11 @@ test('三块分组的数字跟着筛选走，且勾选只覆盖筛出来的那�
   assert.match(app, /else if \(state\.q \|\| state\.statuses\.size \|\| state\.group\)/);
   assert.match(app, /renderChips\(\); renderSplit\(\); renderGroups\(\); renderActionbar\(\);/);
 
-  // 点整块只勾筛出来的那些，不偷偷扩大范围
-  assert.match(app, /groupOf\(f\) === g && canPick\(f\) && matches\(f\)/);
+  /* 点整块只勾筛出来的那些，不偷偷扩大范围 —— 这条逻辑现在住在
+     actions.js 的 toggleSplitGroup 里，由 test/actions.test.mjs 用夹具
+     实际验证（比在源码里找表达式可靠得多）。这里只保住"三个条件都得在"这件事。 */
+  assert.match(actionsSrc, /groupOf\(f\) === g[\s\S]{0,40}canPick\(f\)[\s\S]{0,40}matches\(f\)/,
+    '三块分组要同时按"哪一组 / 能不能勾 / 筛没筛出来"三个条件筛');
 });
 
 test('会话行不再重复印状态：pill 那一列已删除', () => {

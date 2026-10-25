@@ -518,3 +518,63 @@ test('overlapping HTTP write requests cannot both mutate files', async t => {
   const refused = results.findIndex(r => r.status === 409);
   assert.equal((await fs.stat(f.absOf('codex', 'root', paths[refused]))).size, 4 * 1024 * 1024);
 });
+
+/* ── 响应形状 ───────────────────────────────────────────────
+   这一组是补上来的。
+
+   背景：把 server 里四份手写缓存收进 lib/cache.mjs 时，我把
+   `Promise.all(...)` 直接交给了缓存，漏掉外层 `{ apps: [...] }` 包装 ——
+   /api/audit 于是返回裸数组，前端的 `d.apps` 是 undefined，安全审计
+   一整屏空白。**335 条单元测试全绿**，因为测试只覆盖了 createCache
+   本身，没有一条检查路由实际吐出的形状；最后是 UI 基线对比抓到的。
+
+   教训：缓存/中间层这类"原样存取"的抽象，最容易在搬运时丢掉包装。
+   所以每个有形状契约的接口都要有一条断言，锁住顶层字段。 */
+
+test('GET /api/audit 返回 { apps: [...] }，不是裸数组', async t => {
+  const f = await fixture(t);
+  const r = await f.get('/api/audit');
+  assert.equal(r.status, 200);
+  assert.ok(Array.isArray(r.body.apps), `期望 body.apps 是数组，实际 ${typeof r.body.apps}`);
+  // 每个 app 一份，且字段齐全 —— 前端按同一套字段渲染
+  for (const a of r.body.apps) {
+    for (const k of ['app', 'label', 'supported', 'totals', 'hits', 'problems']) {
+      assert.ok(k in a, `audit 的 ${a.app} 缺字段 ${k}`);
+    }
+    assert.deepEqual(Object.keys(a.totals).sort(), ['high', 'info', 'medium']);
+  }
+});
+
+test('GET /api/scan 返回 { apps, grand } 这套骨架', async t => {
+  const f = await fixture(t);
+  const r = await f.get('/api/scan');
+  assert.equal(r.status, 200);
+  assert.ok(Array.isArray(r.body.apps));
+  assert.ok(r.body.grand && typeof r.body.grand.bytes === 'number');
+  // 前端靠这三个开关决定摆不摆"移入废纸篓"/"在 Finder 中显示"
+  assert.equal(typeof r.body.canTrash, 'boolean');
+  assert.equal(typeof r.body.canReveal, 'boolean');
+  // 确认串随扫描下发（lib/confirm-words.mjs 是唯一来源）
+  assert.ok(r.body.confirm && r.body.confirm.FILES && r.body.confirm.SESSION && r.body.confirm.RECOVER);
+});
+
+test('GET /api/tasks 带上能力位与 app 元信息', async t => {
+  const f = await fixture(t);
+  const r = await f.get('/api/tasks?app=zcode');
+  assert.equal(r.status, 200);
+  for (const k of ['tasks', 'totals', 'appId', 'appLabel', 'history', 'fileBased', 'writable', 'readOnly', 'canRecover']) {
+    assert.ok(k in r.body, `缺字段 ${k}`);
+  }
+  assert.equal(r.body.appId, 'zcode');
+  assert.ok(Array.isArray(r.body.tasks));
+});
+
+test('GET /api/tasks/all 明确标只读', async t => {
+  const f = await fixture(t);
+  const r = await f.get('/api/tasks/all');
+  assert.equal(r.status, 200);
+  assert.equal(r.body.readOnly, true, '跨工具视图不许给删除入口');
+  assert.equal(r.body.appId, 'all');
+  assert.ok(Array.isArray(r.body.tasks));
+  assert.ok(Array.isArray(r.body.tools));
+});

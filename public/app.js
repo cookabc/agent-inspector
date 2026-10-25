@@ -88,6 +88,12 @@ import {
 import {
   groupSessions, sessionGroup, allLedeHtml, toolFilterChip, DEFAULT_OPEN_GROUPS,
 } from './views/all.js';
+/* 点击动作的状态变更逻辑（纯函数，有单测）。渲染与副作用仍在这里。 */
+import {
+  toggleSplitGroup, selectAllVisible, clearSelection, selectRecommended,
+  toggleGroupBox, toggleRow, toggleCatFilter, toggleStatus, toggleExplain,
+  toggleCategory, toggleRecommendItem, toggleAllGroup, toggleToolFilter, nextTheme,
+} from './actions.js';
 
 /* 推荐清理的范围：rules.mjs 里标了 recommend 的那几类 —— 就是"删了不影响
    会话、配置和凭据"的那些（日志、缓存、系统垃圾）。其中标了 recommendDefaultOff
@@ -1482,12 +1488,8 @@ document.addEventListener('click', async (e) => {
   const tmBox = t.closest('.tm-box');
   if (tmBox) {
     const id = tmBox.dataset.cat;
-    const cat = (state.index?.categories || []).find((c) => c.id === id);
-    if (!cat) return;
-    state.catFilter = state.catFilter === id ? null : id;
-    state.q = '';
-    state.statuses.clear();
-    state.group = null;
+    const exists = (state.index?.categories || []).some((c) => c.id === id);
+    if (!toggleCatFilter(state, id, exists).changed) return;
     if (els.search) els.search.value = '';
     renderGroups();
     renderSplit();
@@ -1522,10 +1524,7 @@ document.addEventListener('click', async (e) => {
     const ws = allWs.dataset.allWs;
     const groups = [...document.querySelectorAll('#allList .all-group')];
     const idx = groups.findIndex((g) => g.querySelector('[data-all-ws]')?.dataset.allWs === ws);
-    const isOpen = allState.open.has(ws)
-      || (idx >= 0 && idx < DEFAULT_OPEN_GROUPS && !allState.collapsed.has(ws));
-    if (isOpen) { allState.open.delete(ws); allState.collapsed.add(ws); }
-    else { allState.collapsed.delete(ws); allState.open.add(ws); }
+    toggleAllGroup(allState, ws, idx, DEFAULT_OPEN_GROUPS);
     renderAllSessions();
     return;
   }
@@ -1533,8 +1532,7 @@ document.addEventListener('click', async (e) => {
   /* 「全部」视图里的工具筛选与搜索 */
   const allTool = t.closest('[data-all-tool]');
   if (allTool) {
-    const id = allTool.dataset.allTool;
-    allState.tools.has(id) ? allState.tools.delete(id) : allState.tools.add(id);
+    toggleToolFilter(allState, allTool.dataset.allTool);
     renderAllSessions();
     return;
   }
@@ -1542,8 +1540,7 @@ document.addEventListener('click', async (e) => {
   // "这是什么 / 为什么在这里"的展开开关（跟展开文件列表是两回事）
   const more = t.closest('[data-more]');
   if (more) {
-    const id = more.dataset.more;
-    state.explain.has(id) ? state.explain.delete(id) : state.explain.add(id);
+    toggleExplain(state, more.dataset.more);
     renderGroups();
     return;
   }
@@ -1553,7 +1550,7 @@ document.addEventListener('click', async (e) => {
   const gToggle = t.closest('[data-group-toggle]');
   if (gToggle) {
     const id = gToggle.dataset.groupToggle;
-    state.open.has(id) ? state.open.delete(id) : state.open.add(id);
+    toggleCategory(state, id);
     renderGroups();
     // 重画后原按钮已经不在文档里，焦点得按 id 找回来，否则键盘走到这里就断了
     els.groups.querySelector(`[data-group-toggle="${id}"]`)?.focus();
@@ -1563,8 +1560,7 @@ document.addEventListener('click', async (e) => {
   // 分组展开 / 收起（点组头的空白处也仍然有效）
   const head = t.closest('.group-head');
   if (head && !t.matches('input[type="checkbox"]')) {
-    const id = head.closest('.group').dataset.cat;
-    state.open.has(id) ? state.open.delete(id) : state.open.add(id);
+    toggleCategory(state, head.closest('.group').dataset.cat);
     renderGroups();
     return;
   }
@@ -1572,15 +1568,12 @@ document.addEventListener('click', async (e) => {
   // 分组全选
   const gbox = t.closest('[data-group-box]');
   if (gbox) {
-    const id = gbox.dataset.groupBox;
-    const checked = gbox.checked;
-    const cat = state.index.categories.find((c) => c.id === id);
-    // 只动当前看得见的那些行，跟卡片头上那个框自身的勾选状态对得上；
-    // 软链接与受保护项不进选区 —— 服务端会拒绝，选了等于白选。
-    for (const f of selectableOnly(filesOf(id).filter(matches), cat)) {
-      checked ? state.selection.add(keyOf(f)) : state.selection.delete(keyOf(f));
-    }
-    state.open.add(id);
+    /* 只动当前看得见的行，跟卡片头上那个框自身的勾选状态对得上；
+       软链接与受保护项不进选区 —— 服务端会拒绝，选了等于白选。 */
+    toggleGroupBox(state, gbox.dataset.groupBox, gbox.checked, {
+      filesOf, matches, selectableOnly, keyOf,
+      catOf: (id) => state.index.categories.find((c) => c.id === id),
+    });
     renderGroups(); renderActionbar(); renderSplit();
     return;
   }
@@ -1588,7 +1581,7 @@ document.addEventListener('click', async (e) => {
   // 单文件
   const fbox = t.closest('input[data-key]');
   if (fbox) {
-    fbox.checked ? state.selection.add(fbox.dataset.key) : state.selection.delete(fbox.dataset.key);
+    toggleRow(state, fbox.dataset.key, fbox.checked);
     // 三块上的"已选 N"要跟着走 —— 手动取消一项，那块就该显示勾了一半
     renderGroups(); renderActionbar(); renderSplit();
     return;
@@ -1601,8 +1594,7 @@ document.addEventListener('click', async (e) => {
   // 状态筛选
   const chip = t.closest('[data-status]');
   if (chip) {
-    const s = chip.dataset.status;
-    state.statuses.has(s) ? state.statuses.delete(s) : state.statuses.add(s);
+    toggleStatus(state, chip.dataset.status);
     /* renderSplit 也要重画：三块分组上的体积与条数按"当前筛出多少"算，
        不跟着重画就会和下面只剩两组的清单对不上。 */
     renderChips(); renderSplit(); renderGroups();
@@ -1613,21 +1605,11 @@ document.addEventListener('click', async (e) => {
   // 受保护的内容（凭据、会话库、配置）不进勾选 —— 跟「全选」同一条规矩。
   const sp = t.closest('[data-split]');
   if (sp) {
-    const g = sp.dataset.split;
-    /* 受保护内容与软链接都不进勾选 —— 判据只有 isSelectable 一处。
-       而且只勾**当前筛选下看得见的**那些：块上写的是"筛出 N / 一共 M"，
-       点一下却把 M 全勾上，那是在偷偷扩大范围。 */
-    const mine = state.index.files.filter((f) => groupOf(f) === g && canPick(f) && matches(f));
-    const allOn = mine.length > 0 && mine.every((f) => state.selection.has(keyOf(f)));
-    // 三块互斥：它们是把全部文件劈成三份，一组就是一组。
-    // 所以换一组是"换成它"，不是"再加上它" —— 先清干净再勾。
-    state.selection.clear();
-    if (allOn) {
-      state.group = null;                             // 再点一下 = 整组取消
-    } else {
-      for (const f of mine) state.selection.add(keyOf(f));
-      state.group = g;
-    }
+    /* 三条规矩（只勾看得见的 / 跳过受保护与软链 / 三块互斥）都在
+       actions.js 的 toggleSplitGroup 里，那边有单测。 */
+    toggleSplitGroup(state, sp.dataset.split, {
+      files: state.index.files, groupOf, canPick, matches, keyOf,
+    });
     renderSplit();
     renderGroups();
     renderActionbar();
@@ -1649,8 +1631,7 @@ document.addEventListener('click', async (e) => {
   // 开关推荐范围里的某一项，按钮上的数字当场跟着变
   const rc = t.closest('[data-rec]');
   if (rc) {
-    const id = rc.dataset.rec;
-    state.recOff.has(id) ? state.recOff.delete(id) : state.recOff.add(id);
+    toggleRecommendItem(state, rc.dataset.rec);
     saveRecOff();
     renderRecommend();
     return;
@@ -1659,32 +1640,20 @@ document.addEventListener('click', async (e) => {
   // 推荐清理：清掉筛选（免得勾中的东西被滤掉看不见），勾满当前推荐范围，
   // 然后直接把确认清单摊开 —— 到此为止，不执行任何删除。
   if (t.closest('#recBtn')) {
-    state.q = '';
+    selectRecommended(state, recommendOn(), { filesOf, selectableOnly, keyOf });
     els.search.value = '';
-    state.statuses.clear();
-    state.group = null;
-    state.catFilter = null;   // 先清掉筛选，否则勾中的东西会被筛掉、看不见
-    state.selection.clear();
-    for (const c of recommendOn()) {
-      // 推荐分类里也可能混着软链接（插件缓存里的 .bin、app-server 的旧版本
-      // 可执行文件都是）。带上它们 → 服务端拒绝整批 → 一个都删不掉。
-      for (const f of selectableOnly(filesOf(c.id), c)) state.selection.add(keyOf(f));
-    }
     renderChips(); renderSplit(); renderGroups(); renderActionbar();
     openDrawer();
     return;
   }
   if (t.closest('#clearSelBtn')) {
     // 取消勾选就一起把分组筛选撤了 —— 否则清单还筛着，三块却全是没勾的样子
-    state.selection.clear();
-    state.group = null;
+    clearSelection(state);
     renderSplit(); renderGroups(); renderActionbar(); return;
   }
   if (t.closest('#fileSelAll')) {
     // visibleCategories() 已经把筛完的行带出来了，不必再 filter 一遍
-    for (const { cat, files } of visibleCategories()) {
-      for (const f of selectableOnly(files, cat)) state.selection.add(keyOf(f));
-    }
+    selectAllVisible(state, visibleCategories(), { selectableOnly, keyOf });
     renderSplit(); renderGroups(); renderActionbar(); return;
   }
   if (t.closest('#rescanBtn')) {
@@ -1702,8 +1671,7 @@ document.addEventListener('click', async (e) => {
     return;
   }
   if (t.closest('#themeBtn')) {
-    const cur = document.documentElement.getAttribute('data-theme');
-    const next = cur === 'dark' ? 'light' : cur === 'light' ? '' : 'dark';
+    const next = nextTheme(document.documentElement.getAttribute('data-theme'));
 
     /* 切主题时把正在跑的过渡全部取消掉。
        实测：`.app-tab` 这类带 `transition: color .14s` 的元素，在主题变量

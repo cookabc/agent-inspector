@@ -25,6 +25,7 @@ import { execFile } from 'node:child_process';
 import { Worker } from 'node:worker_threads';
 import { createBackupDirectory, copyVerified } from './lib/backup.mjs';
 import { createWriteGuard } from './lib/write-guard.mjs';
+import { createCache } from './lib/cache.mjs';
 import { validateIds, validateDryRun } from './lib/validation.mjs';
 
 /* 自己的模块用动态 import：本地这几个都依赖内置的 node:sqlite，
@@ -153,42 +154,47 @@ try {
   console.error(`\n  ${err.message}\n`);
   process.exit(1);
 }
-/* ── 缓存 ─────────────────────────────────────────────────── */
-let cache = null;          // { index, at }
-let indexInflight = null;  // 并发请求搭同一趟扫描，别让 N 个请求各走一遍目录树
-const CACHE_MS = 15_000;
+/* ── 缓存 ───────────────────────────────────────────────────
+   四份数据各有各的过期时长，但"过期 + 并发合流 + 写代数校验"是同一套。
+   这套逻辑现在只有一份实现（lib/cache.mjs）—— 以前四个地方各抄一遍，
+   漏掉其中一句（比如忘了清 inflight、或忘了校验 epoch）不会报错，
+   只会让界面拿到过期数字。 */
 
-const taskCache = new Map();      // appId -> { index, at }。扫一遍会话库要读几百 MB，缓存久一点
-const taskInflight = new Map();   // 同一时刻每个 app 只允许一次扫描，重复请求搭同一趟车
-const TASK_CACHE_MS = 60_000;
+/* 写代数：每次写操作前后各 +1。缓存条目带着"算出来时的代数"，
+   代数变了就不写缓存 —— 否则"写盘之前算的旧值"会缓存进"写盘之后"。 */
+let cacheEpoch = 0;
+const epoch = () => cacheEpoch;
+
+/* 文件索引：扫一遍目录树。15 秒 —— 它只在"重新扫描"时值得重算。 */
+const indexCache = createCache({ ttlMs: 15_000, epoch });
+
+/* 单 app 的会话列表：扫一遍会话库要读几百 MB，缓存久一点。
+   按 appId 分开，每个 app 自己一趟（Cursor 的库和其他家完全不同）。 */
+const taskCaches = new Map();   // appId -> createCache(...)
+const taskCacheOf = (appId) => {
+  let c = taskCaches.get(appId);
+  if (!c) taskCaches.set(appId, c = createCache({ ttlMs: 60_000, epoch }));
+  return c;
+};
 
 /* Cursor 的独占量分析要把整库内容寻址池解一遍（约 15 秒），
    所以缓存比别处长 —— 它只在"库变了"或者用户手动刷新时才值得重算。 */
-let cursorAnalyzeCache = null;
-let cursorAnalyzeInflight = null;
-const CURSOR_ANALYZE_MS = 10 * 60_000;
+const cursorAnalyzeCache = createCache({ ttlMs: 10 * 60_000, epoch });
 
-/* 安全审计：只读，但要过一遍全部会话正文（本机实测 ~1.2 秒）。
-   结果对"内容变了"敏感，所以跟着 cacheEpoch 一起失效；
-   缓存时长与 Cursor 分析同档 —— 它只被"看"，不被任何写路径依赖。 */
-let auditCache = null;
-let auditInflight = null;
-const AUDIT_MS = 10 * 60_000;
-let cacheEpoch = 0;
+/* 安全审计：只读，但要过一遍全部会话正文（本机实测 ~0.7 秒）。
+   结果对"内容变了"敏感，所以跟着写代数一起失效。 */
+const auditCache = createCache({ ttlMs: 10 * 60_000, epoch });
+
 const withWriteGuard = createWriteGuard();
 const pendingMutations = new Set();
 let shuttingDown = false;
 
 function invalidateCaches() {
   cacheEpoch++;
-  cache = null;
-  taskCache.clear();
-  cursorAnalyzeCache = null;
-  auditCache = null;
-  indexInflight = null;
-  taskInflight.clear();
-  cursorAnalyzeInflight = null;
-  auditInflight = null;
+  indexCache.invalidate();
+  for (const c of taskCaches.values()) c.invalidate();
+  cursorAnalyzeCache.invalidate();
+  auditCache.invalidate();
 }
 
 async function mutate(work) {
@@ -201,32 +207,20 @@ async function mutate(work) {
   try { return await run; } finally { pendingMutations.delete(run); }
 }
 
-function getIndex(force = false) {
-  if (!force && cache && Date.now() - cache.at < CACHE_MS) return Promise.resolve(cache.index);
-  if (indexInflight) return indexInflight;
-
-  const epoch = cacheEpoch;
-  const run = scanApps(plans)
-    .then((index) => { if (epoch === cacheEpoch) cache = { index, at: Date.now() }; return index; })
-    .finally(() => { if (indexInflight === run) indexInflight = null; });
-  indexInflight = run;
-  return run;
+async function getIndex(force = false) {
+  const { data } = await indexCache.get({ force, load: () => scanApps(plans) });
+  return data;
 }
 
-function getTasks(appId, force = false) {
-  const hit = taskCache.get(appId);
-  if (!force && hit && Date.now() - hit.at < TASK_CACHE_MS) return Promise.resolve(hit.index);
-  if (taskInflight.get(appId)) return taskInflight.get(appId);
-
+async function getTasks(appId, force = false) {
   const plan = plans.find((p) => p.app.id === appId);
-  if (!plan) return Promise.reject(httpError(404, `未知 app：${appId}`));
+  if (!plan) throw httpError(404, `未知 app：${appId}`);
 
-  const epoch = cacheEpoch;
-  const run = runDb('scan', appId, plan.targets.map(stripTarget))
-    .then((index) => { if (epoch === cacheEpoch) taskCache.set(appId, { index, at: Date.now() }); return index; })
-    .finally(() => { if (taskInflight.get(appId) === run) taskInflight.delete(appId); });
-  taskInflight.set(appId, run);
-  return run;
+  const { data } = await taskCacheOf(appId).get({
+    force,
+    load: () => runDb('scan', appId, plan.targets.map(stripTarget)),
+  });
+  return data;
 }
 
 /** worker 只要纯数据，别把函数和 app 对象塞过去。 */
@@ -613,22 +607,14 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/tasks/cursor/analyze' && req.method === 'GET') {
       const plan = planFor('cursor');
       const fresh = url.searchParams.get('refresh') === '1';
-      const hit = cursorAnalyzeCache;
-      if (!fresh && hit && Date.now() - hit.at < CURSOR_ANALYZE_MS) {
-        return await sendJSON(req, res, 200, { ...hit.data, cached: true });
-      }
       if (!plan.targets.some((t) => t.exists)) {
         return await sendJSON(req, res, 200, { sessions: [], blobs: 0, blobBytes: 0, orphanBlobs: 0, scanMs: 0, absent: true });
       }
-      const epoch = cacheEpoch;
-      if (!cursorAnalyzeInflight) {
-        const run = runDb('cursor-purge-analyze', 'cursor', plan.targets.map(stripTarget))
-          .finally(() => { if (cursorAnalyzeInflight === run) cursorAnalyzeInflight = null; });
-        cursorAnalyzeInflight = run;
-      }
-      const result = await cursorAnalyzeInflight;
-      if (epoch === cacheEpoch) cursorAnalyzeCache = { data: result, at: Date.now() };
-      return await sendJSON(req, res, 200, result);
+      const { data, cached } = await cursorAnalyzeCache.get({
+        force: fresh,
+        load: () => runDb('cursor-purge-analyze', 'cursor', plan.targets.map(stripTarget)),
+      });
+      return await sendJSON(req, res, 200, cached ? { ...data, cached: true } : data);
     }
 
     /* 安全审计：跨工具的只读线。各家正文在 worker 里过 lib/audit.mjs 的判定，
@@ -636,13 +622,13 @@ const server = http.createServer(async (req, res) => {
        并行各开一个 worker：互不抢锁（全是只读），主线程只收结果。 */
     if (p === '/api/audit' && req.method === 'GET') {
       const fresh = url.searchParams.get('refresh') === '1';
-      const hit = auditCache;
-      if (!fresh && hit && Date.now() - hit.at < AUDIT_MS) {
-        return await sendJSON(req, res, 200, { ...hit.data, cached: true });
-      }
-      const epoch = cacheEpoch;
-      if (!auditInflight) {
-        const run = Promise.all(plans.map(async ({ app, targets }) => {
+      const { data, cached } = await auditCache.get({
+        force: fresh,
+        /* 响应形状是 { apps: [...] }，不是裸数组 —— 前端按 d.apps 取值。
+           缓存层只负责"存什么、还什么"，所以包装放在这一层。
+           （这条在重构时漏过一次：把 Promise.all 直接交给 cache，
+             缓存里存的成了裸数组，audit 视图因此一片空白。） */
+        load: async () => ({ apps: await Promise.all(plans.map(async ({ app, targets }) => {
           if (!targets.some((t) => t.exists)) {
             return { app: app.id, label: app.label, supported: true, absent: true,
               sessionsScanned: 0, bytesScanned: 0, truncatedSessions: 0, hits: [], hitsDropped: 0,
@@ -655,13 +641,9 @@ const server = http.createServer(async (req, res) => {
               sessionsScanned: 0, bytesScanned: 0, truncatedSessions: 0, hits: [], hitsDropped: 0,
               totals: { high: 0, medium: 0, info: 0 }, ms: 0, problems: [err.message || String(err)] };
           }
-        })).then((apps) => ({ apps, at: Date.now() }))
-          .finally(() => { if (auditInflight === run) auditInflight = null; });
-        auditInflight = run;
-      }
-      const data = await auditInflight;
-      if (epoch === cacheEpoch) auditCache = { data, at: Date.now() };
-      return await sendJSON(req, res, 200, data);
+        })) }),
+      });
+      return await sendJSON(req, res, 200, cached ? { ...data, cached: true } : data);
     }
 
     /* Cursor 的两条专用入口：只针对"界面里看不到、.jsonl 还在"的孤儿会话。

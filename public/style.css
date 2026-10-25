@@ -1454,21 +1454,6 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   color: var(--ink-2);
 }
 .recover-foot b { color: var(--ink); }
-.recover-confirm {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  padding: 13px 14px;
-  border: 0.5px solid var(--line-strong);
-  border-radius: 10px;
-  background: var(--surface-2);
-  font-size: 12px;
-  color: var(--ink-2);
-}
-.recover-confirm p { margin: 0; line-height: 1.55; }
-.recover-confirm code { font-size: 12px; word-break: break-all; }
-.recover-confirm-btns { display: flex; justify-content: flex-end; gap: 8px; }
-
 
 /* 状态文字只在 meta 那一行出现一次。
    它原本还有一份是右侧的 .trow-pill 药丸 —— 同一个词在一行里印两遍，
