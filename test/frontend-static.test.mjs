@@ -400,8 +400,13 @@ test('跨工具的「全部」视图是只读的，且不污染单 app 视图', 
      混进一次删除请求里没有统一的闸。 */
   assert.match(app, /const ALL_ID = 'all'/);
   assert.match(app, /const isAll = \(\) => state\.appId === ALL_ID/);
-  // 「全部」不去扫单 app 的会话库
-  assert.match(app, /if \(!isAll\(\)\) loadTasks\(\);/);
+  // 「全部」不去扫单 app 的会话库（安全审计同理：它走 /api/audit）
+  assert.match(app, /if \(!isAll\(\) && !isAudit\(\)\) loadTasks\(\);/);
+  assert.match(app, /const AUDIT_ID = 'audit'/);
+  assert.match(app, /const isAudit = \(\) => state\.appId === AUDIT_ID/);
+  // 两个跨工具视图互斥：切进一个必须收走另一个，否则两块内容会同时挂着
+  assert.match(app, /els\.auditView\.hidden = true/);
+  assert.match(app, /els\.allView\.hidden = true/);
   // 后端那条聚合入口显式标只读（在 server 层，不在 tasks.mjs）
   assert.match(serverSrc, /appId: 'all', readOnly: true/);
   // 聚合要给每行自带归属，否则那一屏分不清哪行是哪个工具

@@ -167,6 +167,13 @@ const TASK_CACHE_MS = 60_000;
 let cursorAnalyzeCache = null;
 let cursorAnalyzeInflight = null;
 const CURSOR_ANALYZE_MS = 10 * 60_000;
+
+/* 安全审计：只读，但要过一遍全部会话正文（本机实测 ~1.2 秒）。
+   结果对"内容变了"敏感，所以跟着 cacheEpoch 一起失效；
+   缓存时长与 Cursor 分析同档 —— 它只被"看"，不被任何写路径依赖。 */
+let auditCache = null;
+let auditInflight = null;
+const AUDIT_MS = 10 * 60_000;
 let cacheEpoch = 0;
 const withWriteGuard = createWriteGuard();
 const pendingMutations = new Set();
@@ -177,9 +184,11 @@ function invalidateCaches() {
   cache = null;
   taskCache.clear();
   cursorAnalyzeCache = null;
+  auditCache = null;
   indexInflight = null;
   taskInflight.clear();
   cursorAnalyzeInflight = null;
+  auditInflight = null;
 }
 
 async function mutate(work) {
@@ -620,6 +629,39 @@ const server = http.createServer(async (req, res) => {
       const result = await cursorAnalyzeInflight;
       if (epoch === cacheEpoch) cursorAnalyzeCache = { data: result, at: Date.now() };
       return await sendJSON(req, res, 200, result);
+    }
+
+    /* 安全审计：跨工具的只读线。各家正文在 worker 里过 lib/audit.mjs 的判定，
+       返回的命中只带脱敏证据 —— 服务端到前端的这一段，凭据原文一个字符都不走。
+       并行各开一个 worker：互不抢锁（全是只读），主线程只收结果。 */
+    if (p === '/api/audit' && req.method === 'GET') {
+      const fresh = url.searchParams.get('refresh') === '1';
+      const hit = auditCache;
+      if (!fresh && hit && Date.now() - hit.at < AUDIT_MS) {
+        return await sendJSON(req, res, 200, { ...hit.data, cached: true });
+      }
+      const epoch = cacheEpoch;
+      if (!auditInflight) {
+        const run = Promise.all(plans.map(async ({ app, targets }) => {
+          if (!targets.some((t) => t.exists)) {
+            return { app: app.id, label: app.label, supported: true, absent: true,
+              sessionsScanned: 0, bytesScanned: 0, truncatedSessions: 0, hits: [], hitsDropped: 0,
+              totals: { high: 0, medium: 0, info: 0 }, ms: 0, problems: [] };
+          }
+          try {
+            return { app: app.id, label: app.label, ...await runDb('audit', app.id, targets.map(stripTarget)) };
+          } catch (err) {
+            return { app: app.id, label: app.label, supported: true,
+              sessionsScanned: 0, bytesScanned: 0, truncatedSessions: 0, hits: [], hitsDropped: 0,
+              totals: { high: 0, medium: 0, info: 0 }, ms: 0, problems: [err.message || String(err)] };
+          }
+        })).then((apps) => ({ apps, at: Date.now() }))
+          .finally(() => { if (auditInflight === run) auditInflight = null; });
+        auditInflight = run;
+      }
+      const data = await auditInflight;
+      if (epoch === cacheEpoch) auditCache = { data, at: Date.now() };
+      return await sendJSON(req, res, 200, data);
     }
 
     /* Cursor 的两条专用入口：只针对"界面里看不到、.jsonl 还在"的孤儿会话。

@@ -2239,6 +2239,60 @@ body.is-busy .topbar::after {
 .all-when { font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .all-size { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
+/* ── 安全审计：凭据外泄扫描 ────────────────────────────────
+   行首的档位色沿用状态体系（st-critical / st-warning 自带 --c 与 --tint），
+   不新造颜色 —— "高危/疑似"在别处已经各有一个颜色，这里再说同一件事
+   就用同一个色。 */
+/* 证据是自由文本（命令、代码），必须能被容器压窄 —— 没这一条，
+   一行长命令会把整张卡撑得比视口还宽，横向滚动条就出现了。 */
+#auditList.all-list { min-width: 0; }
+#auditList .all-group { min-width: 0; }
+#auditList .audit-ev { max-width: 100%; }
+.audit-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 13px;
+  border-bottom: 0.5px solid color-mix(in oklab, var(--line) 55%, transparent);
+}
+.audit-level {
+  flex: none;
+  margin-top: 1px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--tint);
+  color: var(--c);
+}
+.audit-body { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.audit-what { font-size: 13px; color: var(--ink); }
+.audit-val { font-family: var(--font-mono); font-size: 12px; }
+/* 证据一律脱敏后到这里；等宽 + 任意断行，长命令不许把卡片撑破 */
+.audit-ev {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.audit-info {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 8px 13px;
+  border-top: 0.5px solid color-mix(in oklab, var(--line) 55%, transparent);
+}
+/* 工具条上的计数：高危/疑似用状态色，提示用中性 —— 与下面行里的档同色 */
+.all-tool em { font-style: normal; font-weight: 600; margin-left: 4px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.all-tool em.is-high { color: var(--st-critical); }
+.all-tool em.is-med { color: var(--st-warning); }
+.all-tool em.is-high + em, .all-tool em.is-med + em { margin-left: 2px; }
+.all-tool .audit-unit { font-style: normal; font-size: 12px; margin-left: 2px; color: var(--muted); }
+
 @media (max-width: 620px) {
   .all-row { grid-template-columns: auto minmax(0, 1fr) auto; }
   .all-when { display: none; }

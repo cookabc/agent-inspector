@@ -34,6 +34,8 @@ const els = {
   tooltip: $('tooltip'), toast: $('toast'),
   allView: $('allView'), allLede: $('allLede'), allTools: $('allTools'),
   allChips: $('allChips'), allList: $('allList'), allEmpty: $('allEmpty'), allSearch: $('allSearch'),
+  auditView: $('auditView'), auditLede: $('auditLede'), auditTools: $('auditTools'),
+  auditList: $('auditList'), auditEmpty: $('auditEmpty'),
 };
 
 let viewEpoch = 0;
@@ -301,6 +303,21 @@ function applyApp() {
     return;
   }
 
+  if (isAudit()) {
+    /* 安全审计与「全部」同性质：跨工具、只读、没有清理动作。
+       除了收起常规几块，还要把「全部」也收走 —— 两个特殊视图互斥。 */
+    state.byCat = new Map();
+    try { localStorage.setItem(APP_KEY, AUDIT_ID); } catch {}
+    els.rootPath.textContent = '会话正文的安全审计';
+    els.scanNote.textContent = `扫描用时 ${(state.scan.durationMs / 1000).toFixed(1)}s`;
+    renderActionbar();
+    renderTaskFoot();
+    renderAppTabs();
+    renderAuditAll();
+    flashSwitch();
+    return;
+  }
+
   // 从「全部」切回来：把常规那几块放出来，并把会话一览收走
   hideAllView();
 
@@ -351,6 +368,12 @@ let themeSwitchTimer = 0;
 const ALL_ID = 'all';
 const isAll = () => state.appId === ALL_ID;
 
+/** 「安全审计」同上：跨工具、只读，但它连清理入口都没有 —— 它回答的是
+ *  "凭据有没有漏出去过"，不是"哪些能删"。排在标签行末尾，跟在五个工具后面，
+ *  与「全部」一左一右把工具夹在中间。 */
+const AUDIT_ID = 'audit';
+const isAudit = () => state.appId === AUDIT_ID;
+
 function renderAppTabs() {
   /* 「全部」排在最前：它回答的是"我刚才在哪个工具里干活"，
      而这个问题在选中某一个工具时是问不出来的。 */
@@ -359,6 +382,13 @@ function renderAppTabs() {
       aria-controls="single" data-app="${ALL_ID}"
       title="各工具的会话合成一张表，按最近使用排序（只读：要删请点进对应工具）">
       <span class="app-tab-name">全部</span>
+    </button>`;
+
+  const auditTab = `<button type="button" class="app-tab app-tab-audit ${isAudit() ? 'is-on' : ''}"
+      role="tab" id="apptab-${AUDIT_ID}" aria-selected="${isAudit()}" tabindex="${isAudit() ? '0' : '-1'}"
+      aria-controls="single" data-app="${AUDIT_ID}"
+      title="扫描各工具会话正文里的凭据外泄模式（只读，证据脱敏）">
+      <span class="app-tab-name">安全审计</span>
     </button>`;
 
   els.appTabs.innerHTML = allTab + sortedApps().map((a) => {
@@ -376,7 +406,7 @@ function renderAppTabs() {
         empty ? '未安装' : `${fmtBytes(a.totals.bytes)}，${a.totals.files.toLocaleString()} 个文件`}">
       <span class="app-tab-name">${esc(a.label)}</span>
     </button>`;
-  }).join('');
+  }).join('') + auditTab;
   // 内容区（tabpanel）的名字跟着选中项走。写死在 HTML 里会在切换后说错话。
   if (state.appId) els.single.setAttribute('aria-labelledby', `apptab-${state.appId}`);
 }
@@ -1087,12 +1117,14 @@ function renderAllAll() {
     if (el) el.hidden = true;
   }
   els.allView.hidden = false;
+  els.auditView.hidden = true;
   if (!allState.data && !allState.loading) loadAllSessions();
   renderAllSessions();
 }
 
 function hideAllView() {
   els.allView.hidden = true;
+  els.auditView.hidden = true;
   for (const id of ['overview', 'files', 'tasks']) {
     const el = document.getElementById(id);
     if (el) el.hidden = false;
@@ -1194,6 +1226,155 @@ function renderAllSessions() {
           <span class="all-when">${fmtDate(t.updatedAt)}</span>
           <span class="all-size" title="${bytesTip(t.bytes)}">${fmtBytes(t.bytes)}</span>
         </div>`).join('')}
+    </section>`;
+  }).join('');
+}
+
+/* ── 安全审计：凭据外泄扫描 ──────────────────────────────── */
+
+const auditState = { data: null, loading: false };
+let auditRequest = 0;
+
+const AUDIT_LEVEL = {
+  high: { label: '高危', cls: 'st-critical' },
+  medium: { label: '疑似', cls: 'st-warning' },
+};
+/** 样式 → 人话。key 是 lib/audit.mjs 里的 kind/样式名，两边的字典必须一起改。 */
+const AUDIT_STYLE = {
+  'aws-key': 'AWS 访问密钥', github: 'GitHub 令牌', 'api-key': 'API key',
+  stripe: 'Stripe 密钥', slack: 'Slack 令牌', google: 'Google API 密钥',
+  jwt: 'JWT', bearer: 'Bearer 令牌', 'url-creds': 'URL 内嵌的账号密码',
+};
+/** bank 来源是 KV 键名（password / token…），转成"密码 / 令牌"。 */
+const AUDIT_KEY = {
+  password: '密码', passwd: '密码', pwd: '密码', secret: '密钥', token: '令牌',
+  api_key: 'API key', apikey: 'API key', access_key: '访问密钥',
+  secret_key: '私钥', private_key: '私钥', client_secret: '客户端密钥',
+};
+
+const auditStyleName = (f) =>
+  AUDIT_STYLE[f.style] || AUDIT_KEY[f.style] || (f.style ? f.style : '凭据');
+
+function renderAuditAll() {
+  for (const id of ['overview', 'files', 'tasks', 'diagnosis']) {
+    const el = document.getElementById(id);
+    if (el) el.hidden = true;
+  }
+  els.allView.hidden = true;
+  els.auditView.hidden = false;
+  if (!auditState.data && !auditState.loading) loadAudit();
+  renderAudit();
+}
+
+async function loadAudit(refresh = false) {
+  const request = ++auditRequest;
+  const epoch = viewEpoch;
+  auditState.loading = true;
+  els.auditLede.textContent = '正在扫描各工具的会话正文…（只读）';
+  try {
+    const res = await fetch('/api/audit' + (refresh ? '?refresh=1' : ''));
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    if (!isAudit() || request !== auditRequest || epoch !== viewEpoch) return;
+    auditState.data = data;
+  } catch (err) {
+    if (!isAudit() || request !== auditRequest || epoch !== viewEpoch) return;
+    auditState.data = null;
+    els.auditLede.innerHTML = `<b>扫描失败：</b>${esc(err.message)}`;
+  } finally {
+    if (request === auditRequest && epoch === viewEpoch) {
+      auditState.loading = false;
+      if (isAudit()) renderAudit();
+    }
+  }
+}
+
+const auditCount = (s, level) => s.findings.filter((f) => f.level === level).length;
+
+function renderAudit() {
+  const d = auditState.data;
+  if (!d) return;
+
+  const tot = d.apps.reduce((a, x) => ({
+    h: a.h + (x.totals?.high || 0), m: a.m + (x.totals?.medium || 0), i: a.i + (x.totals?.info || 0),
+  }), { h: 0, m: 0, i: 0 });
+  const scanned = d.apps.reduce((s, a) => s + (a.sessionsScanned || 0), 0);
+  const bytes = d.apps.reduce((s, a) => s + (a.bytesScanned || 0), 0);
+  const problems = d.apps.flatMap((a) => (a.problems || []).map((p) => `${a.label}：${p}`));
+
+  els.auditLede.innerHTML =
+    `把 <b>${scanned.toLocaleString()}</b> 个会话的正文（约 ${fmtBytes(bytes)}）过了一遍：` +
+    `<b>${tot.h}</b> 处高危（读到又外发）、<b>${tot.m}</b> 处疑似（外发内嵌）、` +
+    `<b>${tot.i}</b> 次敏感文件读取。` +
+    `<span class="all-note">证据已脱敏；这一屏只读，要处理去对应工具。</span>` +
+    (problems.length ? `<span class="all-note">${esc(problems[0])}${problems.length > 1 ? ` 等 ${problems.length} 条` : ''}</span>` : '');
+
+  els.auditTools.innerHTML = d.apps.map((a) => {
+    const tone = `data-app-tone="${esc(a.app)}"`;
+    if (!a.supported) {
+      return `<span class="all-tool" ${tone} title="${esc(a.reason || '')}">${esc(a.label)} 暂不支持</span>`;
+    }
+    if (a.absent) {
+      return `<span class="all-tool" ${tone} title="${esc(a.label)}：这台机器上没有">${esc(a.label)} 未安装</span>`;
+    }
+    const t = a.totals;
+    /* 高危/疑似各带色显示，第三个数字是"读过敏感文件"——它中性、无标签，
+       容易被读成"还有 40 处问题"。所以给它加个小字后缀，把三档说清楚。 */
+    const many = [];
+    if (t.high) many.push(`<em class="is-high">${t.high}</em>`);
+    if (t.medium) many.push(`<em class="is-med">${t.medium}</em>`);
+    if (t.info) many.push(`<em>${t.info}</em><i class="audit-unit">次读取</i>`);
+    return `<span class="all-tool" ${tone} title="${esc(a.label)}：扫了 ${a.sessionsScanned} 个会话，用时 ${a.ms} ms${
+      a.truncatedSessions ? `，${a.truncatedSessions} 个超长被截断` : ''}${
+      a.hitsDropped ? `，另有 ${a.hitsDropped} 个命中会话没列出` : ''}">
+      ${esc(a.label)} ${many.join('')}
+    </span>`;
+  }).join('');
+
+  // 有高危/疑似的会话才成组；只有"读过敏感文件"的会话进不了列表 ——
+  // 那是背景知识，全摆出来会把真问题淹了。
+  const groups = d.apps
+    .flatMap((a) => (a.hits || []).map((h) => ({ app: a, h })))
+    .filter(({ h }) => auditCount(h, 'high') + auditCount(h, 'medium') > 0)
+    .sort((x, y) =>
+      (auditCount(y.h, 'high') - auditCount(x.h, 'high')) ||
+      (auditCount(y.h, 'medium') - auditCount(x.h, 'medium')));
+
+  els.auditEmpty.hidden = groups.length > 0;
+  if (!groups.length) {
+    els.auditEmpty.innerHTML = scanned
+      ? '没有扫到外发命中。敏感文件的读取只算提示，不在这里展开。'
+      : '没有可扫描的会话。';
+    els.auditList.innerHTML = '';
+    return;
+  }
+
+  els.auditList.innerHTML = groups.map(({ app, h }) => {
+    const rows = h.findings
+      .filter((f) => f.level !== 'info')
+      .map((f) => {
+        const lv = AUDIT_LEVEL[f.level];
+        const what = f.kind === 'secret-out'
+          ? `读到的${auditStyleName(f)}又出现在外发命令里${f.from && f.from !== '命令输出' ? `（读取来源 ${esc(shortPath(f.from))}）` : ''}`
+          : `外发命令里内嵌了${auditStyleName(f)}`;
+        return `<div class="audit-row">
+          <span class="audit-level ${lv.cls}">${lv.label}</span>
+          <div class="audit-body">
+            <p class="audit-what">${what} <code class="audit-val">${esc(f.valueMasked)}</code></p>
+            ${f.evidence ? `<code class="audit-ev">${esc(f.evidence)}</code>` : ''}
+          </div>
+        </div>`;
+      }).join('');
+    const info = h.sensitiveReadCount
+      ? `<p class="audit-info">另读过 ${h.sensitiveReadCount} 个敏感文件${h.sensitiveReads?.length ? `：${h.sensitiveReads.slice(0, 4).map((p) => esc(p.split('/').pop())).join('、')}${h.sensitiveReadCount > 4 ? ' 等' : ''}` : ''}${h.truncated ? '；会话超长，只扫了前 32 MB' : ''}</p>`
+      : (h.truncated ? '<p class="audit-info">会话超长，只扫了前 32 MB</p>' : '');
+    return `<section class="all-group">
+      <header class="all-group-head">
+        <span class="all-app" data-app-tone="${esc(app.app)}">${esc(app.label)}</span>
+        <span class="all-title" title="${esc(h.title)}">${esc(h.title)}</span>
+        <span class="all-group-n">${h.bodyRel ? esc(h.bodyRel) : ''}</span>
+      </header>
+      ${rows}${info}
     </section>`;
   }).join('');
 }
@@ -1468,9 +1649,10 @@ document.addEventListener('click', async (e) => {
     if (tab.dataset.app === state.appId) return;
     state.appId = tab.dataset.app;
     applyApp();
-    /* 「全部」没有单 app 的会话面板要读 —— 它自己走 /api/tasks/all。
-       还去调 loadTasks() 会拿一个不存在的 app 去扫，白等一次。 */
-    if (!isAll()) loadTasks();
+    /* 「全部」与「安全审计」都没有单 app 的会话面板要读 —— 前者自己走
+       /api/tasks/all，后者走 /api/audit。还去调 loadTasks() 会拿一个不存在
+       的 app 去扫，白等一次。 */
+    if (!isAll() && !isAudit()) loadTasks();
     // 只有已经滚下去了才回页首 —— 磁盘占用现在就在首屏，
     // 站在顶部还硬滚一次等于白抖一下。也不做平滑滚动，
     // 内容正淡入时再滑一屏会晕。

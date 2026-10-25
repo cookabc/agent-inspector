@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Agent Inspector —— Coding Agent 磁盘审计</title>
-<meta name="description" content="把 ZCode / Codex / Claude Code / Cursor 的落盘目录摊开看清楚：每一类占多少、删了会怎样，然后决定清掉哪些。">
+<meta name="description" content="把 ZCode / Codex / Claude Code / Cursor / DeepSeek Harness 的落盘目录摊开看清楚：每一类占多少、删了会怎样，然后决定清掉哪些。还能只读地扫一遍会话正文，看凭据有没有外泄过。">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
@@ -98,6 +98,20 @@
     </div>
     <div class="all-list" id="allList"></div>
     <p class="empty" id="allEmpty" hidden>没有匹配的会话。</p>
+  </section>
+
+  <!-- ── 安全审计：跨工具的凭据外泄扫描 ────────────────────
+       只读，证据一律脱敏。它回答的问题和清理线完全不同："我的凭据有没有
+       从会话里漏出去过"——所以不提供任何删除入口，命中的会话要处理就去
+       对应工具。内容全部由 renderAuditAll() 填。 -->
+  <section class="panel all-view audit-view" id="auditView" aria-labelledby="auditTitle" hidden>
+    <header class="all-head">
+      <h2 id="auditTitle">安全审计</h2>
+      <p class="all-lede" id="auditLede"></p>
+    </header>
+    <div class="all-tools" id="auditTools"></div>
+    <div class="all-list" id="auditList"></div>
+    <p class="empty" id="auditEmpty" hidden></p>
   </section>
 
   <!-- ── 总览：先说总量，再说这里面能清掉什么 ───────────────
@@ -308,7 +322,7 @@
   </div><!-- /#single -->
 
   <footer class="foot">
-    <p>文件清单只读大小与时间，不读内容；会话库也是只读连接。</p>
+    <p>文件清单只读大小与时间，不读内容；会话库也是只读连接。例外有两处，都是为了回答你问的问题：会话管理读元数据，「安全审计」按需读会话正文——命中的证据一律脱敏，凭据原文不出现在页面上。</p>
     <p>体积按 <b>1024</b> 进制。悬停任意体积可看精确字节数。</p>
   </footer>
 </div>
