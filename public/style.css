@@ -166,15 +166,20 @@ h1, h2, h3 { text-wrap: balance; margin: 0; }
 p { margin: 0; }
 
 .wrap {
-  /* 1220 在大屏上两边各空掉近 200px，而页面里全是需要横向空间的表格式内容
-     （文件清单三列、会话行的路径 + 体积）。放宽到 1560，窄屏仍由 padding 兜住。 */
-  max-width: 1560px;
-  margin: 0 auto;
-  padding-block: 22px 140px;
-  padding-inline: clamp(16px, 3.2vw, 40px);
+  /* 内容里全是需要横向空间的表格式东西（文件清单三列、会话行的路径 + 体积），
+     所以不留大边距：padding 上限从 40px 收到 20px，max-width 从 1560 放到 1720。
+     实测 1440 屏下左右空白各 39px → 各 20px，多出 38px 给内容。
+     窄屏仍由下限 12px 兜住。 */
+  /* 不再用 margin: 0 auto 居中 —— 侧栏已经吃掉了 200px，剩下的就是内容区，
+     居中只会在两侧再造出空白（实测 1440 屏下各 59px）。
+     max-width 只在超宽屏（>1920）时才起作用，那时居中是对的。 */
+  max-width: 1720px;
+  margin-inline: 0;
+  padding-block: 20px 120px;
+  padding-inline: clamp(12px, 1.4vw, 20px);
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
 }
 
 /* 会话管理在左、文件清单在右：两块都是"一长串可筛可勾的条目"，
@@ -522,6 +527,10 @@ p { margin: 0; }
 .btn-sm { padding: 5px 10px; font-size: 12px; }
 .btn-icon { padding: 6px; }
 .btn-icon svg { width: 16px; height: 16px; }
+/* 工具栏里的图标按钮：与旁边的文字按钮同高（26px）。
+   单独的 .btn-icon 是 6px padding + 16px = 30px，混在 btn-sm 里会高出一截，
+   那一行按钮的下边缘就对不齐了。 */
+.btn-sm.btn-icon { padding: 4px; width: 26px; height: 26px; justify-content: center; }
 
 .btn-ghost { border-color: var(--line); background: var(--surface); }
 .btn-ghost:hover { background: var(--surface-2); border-color: var(--line-strong); }
@@ -597,6 +606,12 @@ p { margin: 0; }
 
 /* 够宽的时候左右并排：数字在左、能清掉什么在右，卡里不留半张空白。
    细线跟着从横向转成纵向，仍然挂在两栏中间。 */
+@media (min-width: 1920px) {
+  /* 只有超宽屏才需要居中：那时内容区本身就到顶了，剩下的空白平分到两边
+     比全堆在右侧好。 */
+  .wrap { margin-inline: auto; }
+}
+
 @media (min-width: 1000px) {
   /* 两栏：左边是"分母 + 分子"，右边是面积图。
      以前左边只有总量（122px 内容），右边叠着面积图与清理线（552px），
@@ -1016,6 +1031,11 @@ pre code { background: none; padding: 0; }
 }
 .btn-pair .btn + .btn { border-inline-start: 0.5px solid var(--line); }
 .btn-pair .btn:hover { background: var(--surface-2); }
+/* 整组要和工具栏里的下拉、开关同高（31px）。
+   图标钮单独设的 26px 在这一行里矮了 5px —— 分段控件的外框会露出
+   高度差，看起来像没对齐。 */
+.btn-pair { align-items: stretch; }
+.btn-pair .btn-icon { width: 31px; height: auto; min-height: 31px; padding: 0 6px; }
 
 .toolbar {
   display: flex;

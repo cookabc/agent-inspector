@@ -1,10 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <!-- 与 header 里 .brand-mark 同一个图标：一个立着的数据库。
-       底色用墨色块，这样在浅色与深色标签栏上都立得住。 -->
+  <!-- 与侧栏 .brand-mark 同一个图形：放大镜里一个实心点。
+       名字是 Agent Inspector —— Inspector 是放大镜，"那个点"是被检查的 Agent。
+       镜片里不再放四根短线：在 17px 的实际渲染尺寸下它们会糊成一个 "+"。 -->
   <rect width="24" height="24" rx="5" fill="#1a1a1a"/>
-  <g fill="none" stroke="#fafafa" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-    <ellipse cx="12" cy="6.5" rx="6" ry="2.2"/>
-    <path d="M6 6.5v11c0 1.22 2.69 2.2 6 2.2s6-.98 6-2.2v-11"/>
-    <path d="M6 12c0 1.22 2.69 2.2 6 2.2s6-.98 6-2.2"/>
+  <g fill="none" stroke="#fafafa" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="10.5" cy="10.5" r="6"/>
+    <path d="M15 15l4.5 4.5"/>
+    <circle cx="10.5" cy="10.5" r="2.1" fill="#fafafa" stroke="none"/>
   </g>
 </svg>

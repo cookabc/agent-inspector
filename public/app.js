@@ -1330,32 +1330,25 @@ function renderRecommend() {
      ZCode/Codex/Claude 下成立；Cursor 的推荐项是「已安装扩展」，
      那句"删掉不影响会话、配置和凭据"对它就是假话。 */
   els.recName.textContent = all.length <= 2 ? all.map((c) => c.label).join('、') : '文件与日志';
-  /* 这一行只留"共几项"和例外说明。
-     "删了会怎样"挪到按钮旁边那行去说 —— 两处都在讲后果时，留位置更靠下的
-     那个：读到它紧接着就能决定按不按按钮，不用再往上找。 */
-  els.recSub.innerHTML =
-    `共 <b>${count.toLocaleString()}</b> 项。` +
-    // 范围里有删不掉的（软链接、受保护）就照实说，别让"共 N 项"显得比实际多
-    (blocked > 0
-      ? `<span class="rec-off">另有 ${blocked.toLocaleString()} 项删不掉（软链接或受保护内容），已排除。</span>`
-      : '');
+  /* 这一行只说"共几项"。删不掉的（软链接、受保护）数量并进按钮 tooltip ——
+     它在版面上占一整行，而看到它的人已经打算清理了，那时更该看到的是数字。 */
+  els.recSub.innerHTML = `共 <b>${count.toLocaleString()}</b> 项`
+    + (blocked > 0 ? `（另有 ${blocked.toLocaleString()} 项不可清）` : '');
 
   els.recBtn.disabled = !count;
-  els.recBtn.innerHTML = count
-    ? `推荐清理 <span class="rec-size" title="${bytesTip(bytes)}">${fmtBytes(bytes)}</span>`
-    : '推荐清理';
+  /* 按钮上不再重复体积：右边那个大数字就是它，同一行里说两遍只是噪音。
+     按钮回到纯动作（图标 + 短文字）。 */
+  els.recBtn.innerHTML = count ? `${icon('trash')}推荐清理` : '推荐清理';
   els.recBtn.title = count
     ? `${count.toLocaleString()} 项，共 ${fmtBytes(bytes)}（${cats.map((c) => c.label).join('、')}）`
     : '已经一项都不剩了，把上面的条目勾回来';
 
-  els.recCap.innerHTML =
-    (cats.every((c) => c.verdict === 'safe' || c.verdict === 'junk')
-      ? `删掉不影响会话、配置和凭据。`
-      : `<b>删了有代价</b> —— 每一类下面都写了具体会怎样。`) +
-    ` 勾选后摊开确认清单，<b>不会立刻删除任何东西</b>。` +
-    (off.length
-      ? `<span class="rec-off">已排除 <code>${off.map((c) => esc(c.label)).join('、')}</code> — 点上面的条目可以放回来。</span>`
-      : '');
+  /* 说明压成一句：原来那句"勾选后摊开确认清单，不会立刻删除任何东西"
+     在三条路径上都出现过，而抽屉里的确认串已经把这层保险说得很清楚。
+     这里只留"删了会怎样"这一件版面上别处没有的信息。 */
+  els.recCap.innerHTML = cats.every((c) => c.verdict === 'safe' || c.verdict === 'junk')
+    ? '不影响会话、配置与凭据'
+    : '<b>有代价</b> —— 每一类下面写了具体会怎样';
 
   els.recScope.innerHTML = recChips(all);
 }
