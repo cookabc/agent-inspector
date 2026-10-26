@@ -285,12 +285,6 @@ test('空态：状态筛选里出现字典外的值时，原样显示而不是�
   assert.match(html, /unknown-tier/);
 });
 
-test('空态：分类筛选用标签名而不是内部 id', () => {
-  const html = emptyHintHtml({ catFilter: 'sessionMedia', catLabel: '会话媒体' }).html;
-  assert.match(html, /会话媒体/);
-  assert.ok(!html.includes('sessionMedia'), '别把内部 id 印给用户看');
-});
-
 test('空态：什么条件都没设时只给一句实话，不编理由', () => {
   const none = emptyHintHtml({});
   assert.equal(none.html, '没有匹配的条目。');

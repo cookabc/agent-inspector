@@ -90,7 +90,6 @@ export function selectRecommended(state, cats, deps) {
   state.q = '';
   state.statuses.clear();
   state.group = null;
-  state.catFilter = null;
   state.selection.clear();
   for (const c of cats) {
     for (const f of selectableOnly(filesOf(c.id), c)) state.selection.add(keyOf(f));
@@ -134,16 +133,6 @@ export function toggleRow(state, key, checked) {
 }
 
 /* ── 筛选 ─────────────────────────────────────────────────── */
-
-/** 点面积图上的一个块：把清单筛到这一类，再点同一块取消。 */
-export function toggleCatFilter(state, catId, exists) {
-  if (!exists) return { changed: false };
-  state.catFilter = state.catFilter === catId ? null : catId;
-  state.q = '';
-  state.statuses.clear();
-  state.group = null;
-  return { changed: true };
-}
 
 /** 切一个状态档位的筛选（多选）。 */
 export function toggleStatus(state, s) {

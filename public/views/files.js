@@ -196,7 +196,7 @@ export function groupCard(p) {
  * 原来只有一句"没有匹配的条目"，而搜索框、状态钮、分组筛选三个条件可能
  * 叠在一起，用户不知道该改哪个；提示还挂在列表末尾，离搜索框一百多像素。
  */
-export function emptyHintHtml({ q, statuses, group, catFilter, catLabel }) {
+export function emptyHintHtml({ q, statuses, group }) {
   const why = [];
   if (q) why.push(`搜索「${esc(q)}」`);
   if (statuses && statuses.size) {
@@ -204,7 +204,6 @@ export function emptyHintHtml({ q, statuses, group, catFilter, catLabel }) {
     why.push(`只看「${esc(names)}」`);
   }
   if (group) why.push('只在这一组里');
-  if (catFilter) why.push(`只看「${esc(catLabel ?? catFilter)}」`);
   if (!why.length) return { hidden: false, html: '没有匹配的条目。' };
   return {
     hidden: false,

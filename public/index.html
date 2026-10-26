@@ -128,25 +128,21 @@
     <p class="empty" id="auditEmpty" hidden></p>
   </section>
 
-  <!-- ── 总览：先说总量，再说这里面能清掉什么 ───────────────
-       这两件事本来就是一句话的两半 —— 上面那个数是分母，下面两条清理线是分子。
-       拆成两张卡反而要人自己把它们接起来。 -->
+  <!-- ── 总览：一行读数条 ─────────────────────────────────
+       原来这里是一张 380px 高的卡：左边总量、右边面积图 + 清理线。
+       面积图被判定"用途不大"并且确实如此 —— 它给的信息（各分类占多少、
+       三档占比）在别处都有：分类体积在文件清单每张卡的头上，三档体积在
+       状态筛选钮上。它唯一独有的"按面积对比"在这个数据上读不出来：
+       最大块与最小块差几十倍，中间的块小到看不见标签。
+
+       所以压成一行：左边分母（这台机器上这个工具占多少），
+       右边分子（其中能清掉多少）+ 动作。两句本来就是一句话的两半。
+       高度从 380px 降到约 90px，会话管理与文件清单直接上到首屏。 -->
   <section class="hero" id="overview" aria-labelledby="heroTitle">
     <div class="hero-head">
       <h2 class="eyebrow" id="heroTitle">磁盘占用</h2>
       <p class="hero-figure" id="heroBytes" aria-live="polite">—</p>
       <p class="hero-sub" id="heroSub">正在扫描 <code>~/.zcode</code> …</p>
-    </div>
-
-    <!-- 面积图：谁占的空间多，一眼就看见。
-         这是磁盘审计真正要回答的问题 —— 只给一个总数，读者无从比较。 -->
-    <div class="treemap" id="treemap" aria-labelledby="treemapTitle">
-      <div class="treemap-head">
-        <span class="treemap-title" id="treemapTitle">按可清理程度分布</span>
-        <span class="treemap-hint">面积 = 占用体积</span>
-      </div>
-      <div class="treemap-canvas" id="treemapCanvas"></div>
-      <p class="treemap-legend" id="treemapLegend"></p>
     </div>
 
     <section class="clean" id="clean" aria-labelledby="cleanTitle">

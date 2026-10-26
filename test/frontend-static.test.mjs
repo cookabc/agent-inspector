@@ -598,3 +598,29 @@ test('「未安装」的降级不牺牲可读性', () => {
   // 图标可以降透明度（图形只要求 3:1，空间更宽）
   assert.match(css, /\.app-tab\.is-empty \.app-tab-icon \{ opacity:/, '图标仍可降透明度');
 });
+
+test('app.js 从各模块 import 的名字，模块里确实导出了', async () => {
+  /* 实测踩过：删掉 actions.js 里的 toggleCatFilter 之后，app.js 还 import 着它 ——
+     浏览器直接抛 "does not provide an export named"，整个页面白屏，
+     而 338 条单测全绿（前端模块没被任何单测 import 过，语法检查也查不出
+     跨文件的导出名）。这类错误只会在浏览器里炸，所以在这里静态查一遍。 */
+  const modules = {
+    './actions.js': actionsSrc,
+    './views/shared.js': sharedSrc,
+    './views/files.js': await fs.readFile(path.join(root, 'public/views/files.js'), 'utf8'),
+    './views/all.js': allSrc,
+    './logic.js': await fs.readFile(path.join(root, 'public/logic.js'), 'utf8'),
+  };
+
+  for (const [spec, src] of Object.entries(modules)) {
+    const re = new RegExp(`import\\s*\\{([^}]+)\\}\\s*from\\s*'${spec.replace(/[./]/g, (m) => '\\' + m)}'`);
+    const m = re.exec(app);
+    if (!m) continue;   // 没有从它 import，跳过
+    const names = m[1].split(',').map((x) => x.trim().split(/\s+as\s+/)[0]).filter(Boolean);
+    for (const name of names) {
+      const exported = new RegExp(`export\\s+(const|let|function|async function|class)\\s+${name}\\b`).test(src)
+        || new RegExp(`export\\s*\\{[^}]*\\b${name}\\b`).test(src);
+      assert.ok(exported, `${spec} 没有导出 ${name}，但 app.js 在 import 它（会在浏览器里白屏）`);
+    }
+  }
+});

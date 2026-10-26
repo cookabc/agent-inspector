@@ -15,7 +15,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   toggleSplitGroup, selectAllVisible, clearSelection, selectRecommended,
-  toggleGroupBox, toggleRow, toggleCatFilter, toggleStatus, toggleExplain,
+  toggleGroupBox, toggleRow, toggleStatus, toggleExplain,
   toggleCategory, toggleRecommendItem, toggleAllGroup, toggleToolFilter, nextTheme,
 } from '../public/actions.js';
 
@@ -29,7 +29,6 @@ const mkState = (over = {}) => ({
   statuses: new Set(),
   recOff: new Set(),
   q: '',
-  catFilter: null,
   ...over,
 });
 
@@ -147,7 +146,7 @@ test('取消：本来就是空的，返回 changed=false（避免白重画）', 
 
 test('推荐清理：先把筛选清干净，再勾满推荐范围', () => {
   const st = mkState({
-    q: 'abc', statuses: new Set(['good']), group: 'orphan', catFilter: 'cache',
+    q: 'abc', statuses: new Set(['good']), group: 'orphan',
     selection: new Set(['leftover']),
   });
   const cats = [{ id: 'cache', verdict: 'safe' }, { id: 'logs', verdict: 'safe' }];
@@ -159,7 +158,6 @@ test('推荐清理：先把筛选清干净，再勾满推荐范围', () => {
   assert.equal(st.q, '', '搜索词要清掉');
   assert.equal(st.statuses.size, 0);
   assert.equal(st.group, null);
-  assert.equal(st.catFilter, null);
   assert.ok(!st.selection.has('leftover'), '旧选区要清掉');
   assert.deepEqual([...st.selection].sort(), ['k:c1', 'k:c2', 'k:l1']);
   assert.equal(r.count, 3);
@@ -210,25 +208,6 @@ test('单行：加/删一个 key', () => {
 });
 
 /* ── 筛选 ─────────────────────────────────────────────────── */
-
-test('面积图筛选：点一次筛上，再点取消，且位置筛选要一起清', () => {
-  const st = mkState({ q: 'abc', statuses: new Set(['good']), group: 'orphan' });
-  toggleCatFilter(st, 'cache', true);
-  assert.equal(st.catFilter, 'cache');
-  assert.equal(st.q, '', '换筛选维度时旧的搜索词要清 —— 否则两个条件叠着，用户只看到空');
-  assert.equal(st.statuses.size, 0);
-  assert.equal(st.group, null);
-
-  toggleCatFilter(st, 'cache', true);
-  assert.equal(st.catFilter, null, '再点同一块取消');
-});
-
-test('面积图筛选：分类不存在时什么也不改', () => {
-  const st = mkState({ catFilter: 'keep' });
-  const r = toggleCatFilter(st, 'ghost', false);
-  assert.equal(st.catFilter, 'keep');
-  assert.equal(r.changed, false);
-});
 
 test('状态筛选：多选切换', () => {
   const st = mkState();
