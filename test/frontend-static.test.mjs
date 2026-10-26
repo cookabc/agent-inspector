@@ -624,3 +624,22 @@ test('app.js 从各模块 import 的名字，模块里确实导出了', async ()
     }
   }
 });
+
+test('侧栏底部在窄屏下真的竖排（按钮住在一个横向容器里）', () => {
+  /* 实测踩过两次：
+     ① 「扫描用时」和两个按钮挤一行 → 那句话在词中间断成"扫描用 / 时 3.5s"
+     ② 改成两行后，窄屏媒体查询只在 .sidebar-foot 上设 column，
+        而按钮住在 .sidebar-actions 里 —— 按钮仍横向并排，总宽 82px，
+        在 56px 的侧栏里向左溢出 13px。
+
+     判据：按钮必须装在一个横向容器里（宽屏并排），且窄屏媒体查询里
+     改的是**那个容器**的方向。 */
+  assert.match(html, /class="sidebar-actions"/, '按钮要有自己的横向容器');
+  assert.match(css, /\.sidebar-actions\s*\{[\s\S]{0,160}display:\s*flex/, '容器是 flex');
+  // 窄屏块里必须出现 .sidebar-actions 的竖排
+  const narrow = css.slice(css.indexOf('@media (max-width: 1080px)'), css.indexOf('/* ── 按钮 ──'));
+  assert.match(narrow, /\.sidebar-actions\s*\{[\s\S]{0,160}flex-direction:\s*column/,
+    '窄屏要把按钮容器改成竖排，否则会横向溢出');
+  // 扫描用时不许折行（它是时间读数，断成两截读起来像两个数）
+  assert.match(css, /\.scan-note\s*\{[\s\S]{0,200}white-space:\s*nowrap/);
+});

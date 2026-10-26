@@ -305,18 +305,51 @@ p { margin: 0; }
 
 /* 侧栏底部：扫描用时 + 两个动作。放在最下面 —— 它们是"维护这台工具"
    的动作，与"选哪个工具"不是同一类事，分开摆。 */
+/* 侧栏底部：两行。
+   第一版把「扫描用时」和两个按钮排成一行 —— 200px 的侧栏减掉 padding
+   只剩 175px，三样东西挤不下，那句话被折成"扫描用 / 时 3.5s"，
+   在词中间硬断。放大三倍看非常难看。
+
+   现在：用时独占第一行（整行宽度，绝不会折），按钮在第二行。
+   两行加起来 48px，与原来挤成一行的高度一样 —— 没有付出额外空间。 */
 .sidebar-foot {
   margin-top: auto;
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
   padding-top: 10px;
   border-top: 0.5px solid var(--line);
 }
-/* 两个动作并排、不拉满：它们是维护动作，不该比导航更抢眼 */
-.sidebar-foot .btn { flex: none; font-size: 12px; padding: 6px 10px; }
-.sidebar-foot .scan-note { flex: 1 1 auto; text-align: end; }
-.scan-note { font-size: 12px; color: var(--muted); padding: 0 4px; }
+.scan-note {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 0 2px;
+  /* 绝不在词中间断行：这是时间读数，断成两截读起来像两个数 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 两个动作并排。它们必须装在一个横向容器里 ——
+   直接在 flex-direction: column 的父级上给 flex:1 会沿**纵轴**生效，
+   按钮会被拉成整行宽（实测 175px）。 */
+.sidebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sidebar-actions .btn {
+  font-size: 12px;
+  padding: 6px 8px;
+  justify-content: center;
+}
+/* 两个按钮都按内容宽度，不拉满：
+   「重新扫描」拉成 137px 之后，与旁边 32px 的主题钮比例失衡，
+   而且它在视觉上比导航项还重 —— 这是个维护动作，不该抢。
+   让它们靠左排，右边留白。 */
+.sidebar-actions { justify-content: flex-start; }
+.sidebar-actions .btn { flex: 0 0 auto; }
+.sidebar-actions .btn-icon { width: 32px; padding: 6px 0; }
 
 /* ── 工具切换 ───────────────────────────────────────────── */
 
@@ -443,14 +476,28 @@ p { margin: 0; }
     white-space: nowrap;
   }
   .app-tab-sep { width: 24px; margin: 6px 0; }
-  /* 56px 宽放不下并排：改竖排，两个动作各占一行 */
-  .sidebar-foot { flex-direction: column; align-items: center; gap: 8px; }
+  /* 56px 宽放不下并排：两个动作竖着叠。
+     注意按钮住在 .sidebar-actions 里，所以要改的是**那个**容器的方向 ——
+     只在 .sidebar-foot 上设 column 不管用（实测按钮横向并排后总宽 82px，
+     在 56px 的侧栏里向左溢出 13px）。 */
+  .sidebar-foot { align-items: center; gap: 8px; }
   .scan-note { display: none; }
-  .sidebar-foot .btn { width: 38px; padding-inline: 0; justify-content: center; }
-  .sidebar-foot .btn#rescanBtn { font-size: 0; }
-  .sidebar-foot .btn#rescanBtn::before {
+  .sidebar-actions {
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .sidebar-actions .btn {
+    width: 38px;
+    padding-inline: 0;
+    justify-content: center;
+  }
+  /* 「重新扫描」在 38px 里放不下四个字，换成图标；文字仍留给读屏 */
+  .sidebar-actions #rescanBtn { font-size: 0; position: relative; }
+  .sidebar-actions #rescanBtn::before {
     content: "↻";
     font-size: 15px;
+    line-height: 1;
   }
 }
 
