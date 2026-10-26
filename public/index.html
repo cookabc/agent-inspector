@@ -11,7 +11,20 @@
 </head>
 <body>
 
-<header class="topbar">
+<div class="shell">
+
+<!-- ── 左侧栏：工具导航 ─────────────────────────────────────
+     改用侧栏的原因不是审美，是实测的拥挤：七个标签顶在 108px 最小宽
+     下，横排需要 780px；1280 视口里标签区只有 749px —— 「安全审计」
+     被推出可视区，1000px 下看不见三个。而标签区是可横滚的，
+     滚出来的列表新手根本不知道要滚。
+
+     竖排之后宽度需求从 780px 降到 200px，且纵向空间几乎无限 ——
+     以后每加一个工具只是多一行，不用重排。
+
+     窄屏（<1080px）自动收成 56px 纯图标：主内容区保住宽度，
+     布局只变一次，不回到横条。 -->
+<aside class="sidebar" aria-label="工具导航">
   <div class="brand">
     <span class="brand-mark" aria-hidden="true">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
@@ -26,8 +39,9 @@
     </span>
   </div>
 
-  <div class="app-tabs" id="appTabs" role="tablist" aria-label="选择要审计的工具"></div>
-  <div class="topbar-actions">
+  <div class="app-tabs" id="appTabs" role="tablist" aria-label="选择要审计的工具" aria-orientation="vertical"></div>
+
+  <div class="sidebar-foot">
     <span class="scan-note" id="scanNote"></span>
     <button class="btn btn-ghost" id="rescanBtn" type="button">重新扫描</button>
     <button class="btn btn-ghost btn-icon" id="themeBtn" type="button" aria-label="切换主题" title="切换主题">
@@ -37,7 +51,7 @@
       </svg>
     </button>
   </div>
-</header>
+</aside>
 
 <div class="wrap">
 
@@ -325,7 +339,9 @@
     <p>文件清单只读大小与时间，不读内容；会话库也是只读连接。例外有两处，都是为了回答你问的问题：会话管理读元数据，「安全审计」按需读会话正文——命中的证据一律脱敏，凭据原文不出现在页面上。</p>
     <p>体积按 <b>1024</b> 进制。悬停任意体积可看精确字节数。</p>
   </footer>
-</div>
+</div><!-- /.wrap -->
+
+</div><!-- /.shell -->
 
 <!-- ── 文件清理：底部操作条 + 确认抽屉 ─────────────────── -->
 <div class="actionbar" id="actionbar" hidden>

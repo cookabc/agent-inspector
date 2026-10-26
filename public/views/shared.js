@@ -94,6 +94,34 @@ export const ICONS = {
 export const icon = (name, cls = '') =>
   `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ICONS.box}</svg>`;
 
+/* ── 侧栏导航图标 ───────────────────────────────────────────
+ * 窄屏（< 1080px）侧栏收成 56px 纯图标，那时**图标是唯一的识别线索**。
+ * 所以不能只靠一个色点：七个圆点除了颜色没有任何区别，而颜色对色盲
+ * 用户不可靠（六色里有两对在常见色盲下接近）。
+ *
+ * 每个工具给一个形状，与它"存什么"对应：
+ *   zcode  方块 + 分层线      → 会话/索引/缓存分层存
+ *   codex  三层堆叠           → state / history / logs 三个库
+ *   claude 折角页             → 正文就是 jsonl 文件
+ *   cursor 光标箭头           → 它是编辑器
+ *   dsh    立体箱             → 正文是压缩的
+ *   all    四格               → 汇总
+ *   audit  盾牌               → 安全检查
+ */
+export const NAV_ICONS = {
+  all: '<rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/>',
+  zcode: '<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M8 9.5h8M8 14.5h5"/>',
+  codex: '<path d="M12 3 21 7.5 12 12 3 7.5 12 3Z"/><path d="M3 12l9 4.5L21 12"/><path d="M3 16.5 12 21l9-4.5"/>',
+  claude: '<path d="M6.5 3.5h7l4.5 4.5v12.5H6.5z"/><path d="M13.5 3.5V8h4.5"/>',
+  cursor: '<path d="M5.5 3.5 18.5 12l-5.6 1.4-2.4 5.2z"/>',
+  dsh: '<path d="M3.5 7.5 12 11.5l8.5-4"/><path d="M12 11.5V21"/><path d="M4 7.5v9L12 21l8-4.5v-9L12 3z"/>',
+  audit: '<path d="M12 3 20 6v6c0 4.4-3.3 7.6-8 9-4.7-1.4-8-4.6-8-9V6l8-3Z"/><path d="M9 12l2.2 2.2L15.5 10"/>',
+};
+
+/** 导航图标：按 app id 取形状，不认识的回落到四格。 */
+export const navIcon = (id, cls = 'app-tab-icon') =>
+  `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_ICONS[id] || NAV_ICONS.all}</svg>`;
+
 /**
  * 分类徽标：档位决定颜色，规则表决定文字与图标。
  *

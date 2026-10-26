@@ -243,41 +243,57 @@ p { margin: 0; }
 .trow:focus-visible,
 .trow-caret:focus-visible { outline-offset: -2px; }
 
-/* ── 顶栏 ───────────────────────────────────────────────── */
+/* ── 侧栏 ─────────────────────────────────────────────────
+   从顶栏改成常驻左栏，理由是实测的拥挤而不是审美：
+   七个标签横排需要 780px（每个最小 108px），1280 视口里标签区只有
+   749px —— 「安全审计」被推出可视区；1000px 下看不见三个。
+   而标签区是可横滚的，滚出来的列表新手根本不知道要滚。
 
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 40;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding-block: 10px;
-  padding-inline: clamp(16px, 4vw, 40px);
-  background: color-mix(in oklab, var(--bg) 82%, transparent);
-  backdrop-filter: saturate(180%) blur(16px);
-  -webkit-backdrop-filter: saturate(180%) blur(16px);
-  border-bottom: 0.5px solid var(--line);
+   竖排之后宽度需求从 780px 降到 200px，纵向几乎无限 ——
+   以后每加一个工具只是多一行，不用重排，也不会再出现"看不见"。
+
+   窄屏（< 1080px）收成 56px 纯图标：主内容区保住宽度，布局只变一次。 */
+
+.shell {
+  display: grid;
+  /* 侧栏固定 200px，主内容吃剩下的。*/
+  grid-template-columns: 200px minmax(0, 1fr);
+  align-items: start;
+  min-height: 100vh;
 }
 
-/* 品牌区宽度固定：下面的路径文字随工具变长变短（Cursor 要列两个目录），
-   若让它参与伸缩，切换工具时中间的标签会整体左右挪。 */
-.brand { display: flex; align-items: center; gap: 11px; min-width: 0; flex: 0 0 clamp(168px, 17vw, 220px); }
+.sidebar {
+  /* 侧栏自己滚，页面滚不动它 —— 工具列表是导航，不该随内容滑走。 */
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px 10px 16px;
+  overflow-y: auto;
+  scrollbar-width: none;
+  background: var(--surface);
+  border-inline-end: 0.5px solid var(--line);
+}
+.sidebar::-webkit-scrollbar { display: none; }
+
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 0 4px; }
 
 .brand-mark {
   display: grid;
   place-items: center;
-  width: 32px; height: 32px;
+  width: 30px; height: 30px;
   flex: none;
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--ink);
   color: var(--bg);
 }
-.brand-mark svg { width: 18px; height: 18px; }
+.brand-mark svg { width: 17px; height: 17px; }
 
-.brand-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
-.brand-text strong { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
+.brand-text { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.brand-text strong { font-size: 13px; font-weight: 600; letter-spacing: -.01em; white-space: nowrap; }
 .brand-text code {
   font-size: 12px;
   color: var(--muted);
@@ -286,53 +302,127 @@ p { margin: 0; }
   text-overflow: ellipsis;
 }
 
-.topbar-actions { display: flex; align-items: center; gap: 8px; flex: none; }
-.scan-note { font-size: 12px; color: var(--muted); }
+/* 侧栏底部：扫描用时 + 两个动作。放在最下面 —— 它们是"维护这台工具"
+   的动作，与"选哪个工具"不是同一类事，分开摆。 */
+.sidebar-foot {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 0.5px solid var(--line);
+}
+/* 两个动作并排、不拉满：它们是维护动作，不该比导航更抢眼 */
+.sidebar-foot .btn { flex: none; font-size: 12px; padding: 6px 10px; }
+.sidebar-foot .scan-note { flex: 1 1 auto; text-align: end; }
+.scan-note { font-size: 12px; color: var(--muted); padding: 0 4px; }
 
 /* ── 工具切换 ───────────────────────────────────────────── */
 
-/* 各工具并排，装了没、各占多少一眼看完。
-   没装的那一个压暗但仍然可点 —— 有时人就是想进去确认它真的没落盘。
-   标签住在 header 里：切工具是换这一页在读谁，不是页面内的一个段落。 */
+/* 竖排列表。每一项是一整行（图标 + 名字），点了就切 ——
+   比横排药丸更容易扫读，也不会因为工具名长短不一而宽度跳。 */
 .app-tabs {
   display: flex;
-  align-items: center;
-  /* safe center：放得下时居中，放不下时退回起点对齐 ——
-     纯 center 加溢出会把最左边的标签裁进不可滚动的负区，900px 下「全部」就是这样消失的 */
-  justify-content: safe center;
-  gap: 4px;
-  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
 }
-.app-tabs::-webkit-scrollbar { display: none; }
 
 .app-tab {
   font: inherit;
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 6px 12px;
-  min-width: 108px;
-  flex: none;
+  gap: 9px;
+  /* 整行可点：44px 高，比原来的药丸（30px）更容易命中 */
+  padding: 9px 10px;
+  min-height: 38px;
+  width: 100%;
   border: 0.5px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--r-md);
   background: none;
-  color: var(--muted);
+  color: var(--ink-2);
   cursor: pointer;
+  text-align: start;
   white-space: nowrap;
   transition: border-color var(--dur) var(--ease-out), background var(--dur) var(--ease-out), color var(--dur) var(--ease-out);
 }
-.app-tab:hover { border-color: var(--line); color: var(--ink); background: var(--surface); }
+.app-tab:hover { background: var(--surface-2); color: var(--ink); }
 .app-tab.is-on {
-  background: var(--surface);
-  border-color: var(--line-strong);
+  background: color-mix(in oklab, var(--tc, var(--ink)) 10%, var(--surface));
+  border-color: color-mix(in oklab, var(--tc, var(--line-strong)) 32%, var(--line));
   color: var(--ink);
 }
 .app-tab.is-empty { opacity: .55; }
 
-.app-tab-name { font-size: 12px; font-weight: 600; letter-spacing: -.01em; }
+/* 每个标签吃自己那个工具的颜色 —— 与「全部」视图里的色签同一套变量，
+   不新造颜色（判据仍在 test/frontend-static 的 ΔE≥30 那条）。
+   「全部」「安全审计」用中性灰：它们不是某一个工具的落盘。 */
+.app-tab[data-app-tone="zcode"]  { --tc: var(--tool-zcode);  }
+.app-tab[data-app-tone="codex"]  { --tc: var(--tool-codex);  }
+.app-tab[data-app-tone="claude"] { --tc: var(--tool-claude); }
+.app-tab[data-app-tone="cursor"] { --tc: var(--tool-cursor); }
+.app-tab[data-app-tone="dsh"]    { --tc: var(--tool-dsh);    }
+.app-tab--meta { --tc: var(--muted); }
+
+/* 每个工具一个**形状**，不是色点。
+   窄屏时侧栏只剩 56px，图标是唯一的识别线索 —— 七个圆点除了颜色
+   没有任何区别，而颜色对色盲用户不可靠（六色里有两对在常见色盲下接近）。
+   形状 + 颜色两重编码，任一失效都还能认出。 */
+.app-tab-icon {
+  width: 16px; height: 16px;
+  flex: none;
+  color: var(--tc, var(--muted));
+  opacity: .8;
+}
+.app-tab:hover .app-tab-icon,
+.app-tab.is-on .app-tab-icon { opacity: 1; }
+
+.app-tab-name { font-size: 13px; font-weight: 500; letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; }
+
+/* 「全部」与「安全审计」不是具体工具，用中性色；中间用一条细线隔开 ——
+   它们回答的是跨工具的问题，与"某个工具的落盘"不是一类。 */
+.app-tab--meta { --tc: var(--muted); }
+/* 分组靠留白，不靠线 —— 两条细分隔线把七项切成三段，看起来像三个
+   不同的列表。真正的分组信息是顺序（跨工具的在两头），线只是噪音。 */
+.app-tab-sep {
+  height: 0;
+  margin: 5px 10px;
+}
+
+/* ── 窄屏：侧栏收成纯图标 ─────────────────────────────────
+   1080px 以下主内容区的两栏（会话 709 + 文件 633）开始不够用，
+   与其让它挤成单列，不如把 200px 还给内容。
+   只变这一次，不回到横条 —— 那样又要处理一套横向溢出。 */
+@media (max-width: 1080px) {
+  .shell { grid-template-columns: 56px minmax(0, 1fr); }
+  .sidebar { padding: 14px 6px 16px; align-items: center; }
+  .brand { justify-content: center; padding: 0; }
+  .brand-text { display: none; }
+  .app-tab {
+    justify-content: center;
+    padding: 9px 0;
+    width: 38px;
+  }
+  .app-tab-icon { width: 19px; height: 19px; }
+  .app-tab-name {
+    /* 视觉上收起，但保留给读屏 —— 纯图标时 tooltip 与 aria-label 是唯一的说明 */
+    position: absolute;
+    width: 1px; height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .app-tab-sep { width: 24px; margin: 6px 0; }
+  /* 56px 宽放不下并排：改竖排，两个动作各占一行 */
+  .sidebar-foot { flex-direction: column; align-items: center; gap: 8px; }
+  .scan-note { display: none; }
+  .sidebar-foot .btn { width: 38px; padding-inline: 0; justify-content: center; }
+  .sidebar-foot .btn#rescanBtn { font-size: 0; }
+  .sidebar-foot .btn#rescanBtn::before {
+    content: "↻";
+    font-size: 15px;
+  }
+}
 
 /* ── 按钮 ───────────────────────────────────────────────── */
 
@@ -1963,29 +2053,32 @@ input[type="radio"]:disabled { opacity: .35; cursor: not-allowed; }
   animation: spin .7s linear infinite;
 }
 
-/* ── 顶栏的全局忙碌条 ───────────────────────────────────── */
-/* 扫描/读取期间在 header 底下拉一条不确定进度的细线：
-   页面其余部分还可以看，但"后台在忙"这件事一直可见。 */
-.topbar { position: sticky; top: 0; z-index: 40; }
-.topbar::after {
+/* ── 全局忙碌条 ─────────────────────────────────────────── */
+/* 扫描/读取期间在侧栏右缘拉一条不确定进度的细线：
+   页面其余部分还可以看，但"后台在忙"这件事一直可见。
+   （原来挂在顶栏底边，改成侧栏之后跟着挪 —— 它该待的地方是
+     "导航区与内容区的交界"，不是某一条固定的边。） */
+.sidebar { position: sticky; }   /* 已经 sticky，这里显式重申取定位上下文 */
+.sidebar::after {
   content: "";
   position: absolute;
-  inset-inline: 0;
-  bottom: -1px;
-  height: 2px;
+  inset-block: 0;
+  inset-inline-end: -1px;
+  width: 2px;
   opacity: 0;
-  background: linear-gradient(90deg, transparent, var(--accent), transparent);
-  background-size: 40% 100%;
+  background: linear-gradient(180deg, transparent, var(--accent), transparent);
+  background-size: 100% 40%;
   background-repeat: no-repeat;
   transition: opacity var(--dur) var(--ease-out);
+  pointer-events: none;
 }
-body.is-busy .topbar::after {
+body.is-busy .sidebar::after {
   opacity: 1;
   animation: busy-slide 1.05s ease-in-out infinite;
 }
 @keyframes busy-slide {
-  from { background-position: -40% 0; }
-  to   { background-position: 140% 0; }
+  from { background-position: 0 -40%; }
+  to   { background-position: 0 140%; }
 }
 
 /* ── 按钮的加载态 ───────────────────────────────────────── */
@@ -2050,7 +2143,7 @@ body.is-busy .topbar::after {
   .sk-hero::after { animation: none; opacity: .8; }
   .skeleton.is-done { animation: none; }
   .single > section, .single > .note { animation: none; }
-  body.is-busy .topbar::after { animation: none; opacity: 1; background: var(--accent); }
+  body.is-busy .sidebar::after { animation: none; opacity: 1; background: var(--accent); }
   .btn.is-busy::after { animation-duration: 2s; }
   .row::before { transition: none; }
   .split-block.is-clickable:hover { transform: none; }
@@ -2063,10 +2156,6 @@ body.is-busy .topbar::after {
 }
 
 @media (max-width: 620px) {
-  .topbar { flex-wrap: wrap; }
-  .scan-note { display: none; }
-  /* header 放不下时标签单独占一行，横向可滑，不换行堆两排。 */
-  .app-tabs { order: 3; flex-basis: 100%; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
   .group-head { grid-template-columns: auto minmax(0, 1fr); }
   .group-right { grid-column: 1 / -1; justify-content: space-between; }
   /* 窄屏隐藏了时间列，剩 4 个子元素 */

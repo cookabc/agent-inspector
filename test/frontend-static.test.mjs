@@ -27,24 +27,42 @@ const sharedSrc = await fs.readFile(path.join(root, 'public/views/shared.js'), '
 const allSrc = await fs.readFile(path.join(root, 'public/views/all.js'), 'utf8');
 const actionsSrc = await fs.readFile(path.join(root, 'public/actions.js'), 'utf8');
 
-test('工具标签是标准 tablist：roving tabindex + aria-controls + tabpanel', () => {
+test('导航是竖排 tablist：aria-orientation + roving tabindex + aria-controls', () => {
   assert.match(html, /role="tablist"/);
   assert.match(html, /role="tabpanel"/);
-  // 标签渲染时按选中与否给 tabindex，而不是恒为 0 —— 四个 0 会让
-  // 键盘用户每过一个工具按一次 Tab，而它们本是同一件事的四个选项。
+  /* 竖排的 tablist 必须声明方向 —— ARIA 规范里 aria-orientation 默认是
+     horizontal，读屏会告诉用户"用左右键"，而这里是上下走。 */
+  assert.match(html, /aria-orientation="vertical"/);
+
+  // roving tabindex：只有选中项是 0，其余 -1。
+  // 七个都是 0 的话，键盘用户每过一个工具按一次 Tab。
   assert.match(app, /tabindex="\$\{on \? '0' : '-1'\}"/);
   assert.match(app, /aria-controls="single"/);
-  // 面板的可访问名要跟着选中项走
+  // 面板的可访问名跟着选中项走
   assert.match(app, /setAttribute\('aria-labelledby', `apptab-\$\{state\.appId\}`\)/);
 });
 
-test('tablist 接上了左右方向键与 Home/End', () => {
-  assert.match(app, /e\.key === 'ArrowRight'/);
-  assert.match(app, /e\.key === 'ArrowLeft'/);
+test('竖排导航接上上下方向键，左右仍然兼容，Home/End 到两头', () => {
+  /* 标签从顶栏搬到左侧栏后变成竖排，所以主用的是上下。
+     左右仍要接受 —— ARIA 里竖排 tablist 的左右键是"可选支持"，
+     而已经习惯左右的人不该突然按了没反应。 */
+  assert.match(app, /e\.key === 'ArrowDown'/, '竖排必须有下键');
+  assert.match(app, /e\.key === 'ArrowUp'/, '竖排必须有上键');
+  assert.match(app, /ArrowDown' \|\| e\.key === 'ArrowRight'|e\.key === 'ArrowRight'/, '左右应仍兼容');
   assert.match(app, /e\.key === 'Home'/);
   assert.match(app, /e\.key === 'End'/);
-  // 切换会重画整排，旧元素失效 —— 必须按 id 重新取一次，否则焦点掉到 body
+  // 切换会重画整列，旧元素失效 —— 必须按 id 重新取一次，否则焦点掉到 body
   assert.match(app, /document\.getElementById\(id\)\?\.focus\(\)/);
+});
+
+test('窄屏只留图标时，每一项仍有可读的名字', () => {
+  /* 1080px 以下侧栏收成 56px，名称文字被 clip-path 视觉收起。
+     那时 tooltip（title）与 aria 名字是唯一的说明 —— 少了任何一个，
+     用户面对的是一列没有标签的图形。 */
+  assert.match(app, /title="\$\{esc\(title\)\}"/, '每一项都要有 title');
+  assert.match(css, /\.app-tab-name \{[\s\S]{0,220}clip-path: inset\(50%\)/, '名称要视觉收起但仍给读屏');
+  // 图标必须是形状，不能只是色点（七个圆点除了颜色没区别）
+  assert.match(app, /navIcon\(id\)/, '需要按 app 取形状图标');
 });
 
 test('两个抽屉都有焦点陷阱，并且开合时管焦点', () => {

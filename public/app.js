@@ -78,7 +78,7 @@ import { verdictTreemap } from './treemap.js';
 /* 视图层：转义、图标、徽标、状态字典、行/卡片模板。
    这一层不碰 DOM、不读全局 state，测试能直接喂夹具断言产出的 HTML。 */
 import {
-  esc, icon, badge, STATUS_CLASS, STATUS_LABEL,
+  esc, icon, badge, navIcon, STATUS_CLASS, STATUS_LABEL,
   shortPath, fmtDate, fmtDateTime,
   bytesTip, bytesB, bytesWithExact,
 } from './views/shared.js';
@@ -370,38 +370,53 @@ const AUDIT_ID = 'audit';
 const isAudit = () => state.appId === AUDIT_ID;
 
 function renderAppTabs() {
-  /* 「全部」排在最前：它回答的是"我刚才在哪个工具里干活"，
-     而这个问题在选中某一个工具时是问不出来的。 */
-  const allTab = `<button type="button" class="app-tab app-tab-all ${isAll() ? 'is-on' : ''}"
-      role="tab" id="apptab-${ALL_ID}" aria-selected="${isAll()}" tabindex="${isAll() ? '0' : '-1'}"
-      aria-controls="single" data-app="${ALL_ID}"
-      title="各工具的会话合成一张表，按最近使用排序（只读：要删请点进对应工具）">
-      <span class="app-tab-name">全部</span>
+  /* 导航从顶栏搬到左侧栏（理由见 style.css 里那段：七个标签横排要 780px，
+     1280 视口下「安全审计」被推出可视区）。竖排之后每个工具是一整行，
+     加工具只是多一行，不会再挤。
+
+     结构：三个跨工具视图里，「全部」在最上，「安全审计」单独用一条细线
+     隔在最下 —— 它们回答的是"跨工具"的问题，与中间那几个"某个工具的
+     落盘"不是一类。顺序上「全部」在前是因为它最常用。 */
+
+  /* roving tabindex：整列只占一个 Tab 位，进了组之后用上下箭头换。
+     七个都 tabindex=0 的话，键盘用户每过一个工具就得按一次 Tab。 */
+  const tab = ({ id, label, on, dot, cls, title }) => `<button type="button"
+      class="app-tab ${cls} ${on ? 'is-on' : ''}"
+      role="tab" id="apptab-${id}" aria-selected="${on}" tabindex="${on ? '0' : '-1'}"
+      aria-controls="single" data-app="${esc(id)}" data-app-tone="${esc(id)}"
+      title="${esc(title)}">
+      ${dot ? navIcon(id) : ''}
+      <span class="app-tab-name">${esc(label)}</span>
     </button>`;
 
-  const auditTab = `<button type="button" class="app-tab app-tab-audit ${isAudit() ? 'is-on' : ''}"
-      role="tab" id="apptab-${AUDIT_ID}" aria-selected="${isAudit()}" tabindex="${isAudit() ? '0' : '-1'}"
-      aria-controls="single" data-app="${AUDIT_ID}"
-      title="扫描各工具会话正文里的凭据外泄模式（只读，证据脱敏）">
-      <span class="app-tab-name">安全审计</span>
-    </button>`;
+  const allTab = tab({
+    id: ALL_ID, label: '全部', on: isAll(), cls: 'app-tab--meta',
+    dot: true, title: '各工具的会话合成一张表，按最近使用排序（只读：要删请点进对应工具）',
+  });
 
-  els.appTabs.innerHTML = allTab + sortedApps().map((a) => {
+  const appTabs = sortedApps().map((a) => {
     const on = a.app === state.appId;
     const empty = a.totals.files === 0;
-    // 标签上只写名字：体积字数不一样，塞进来会让相邻的名字跟着左右挪。
-    // 数值放进 title，鼠标停上去仍然看得到。
-    /* tablist 的标准键盘模型是 roving tabindex：整排只占一个 Tab 位，
-       进了组之后用左右箭头换标签。四个都是 tabindex=0 的话，键盘用户
-       每过一个工具就得按一次 Tab，而这四个本来是一件事的四个选项。 */
-    return `<button type="button" class="app-tab ${on ? 'is-on' : ''}${empty ? ' is-empty' : ''}"
-      role="tab" id="apptab-${esc(a.app)}" aria-selected="${on}" tabindex="${on ? '0' : '-1'}"
-      aria-controls="single" data-app="${esc(a.app)}"
-      title="${esc(a.targets.map((t) => `${t.short}${t.exists ? '' : '（没有）'}`).join('、'))}，${
-        empty ? '未安装' : `${fmtBytes(a.totals.bytes)}，${a.totals.files.toLocaleString()} 个文件`}">
-      <span class="app-tab-name">${esc(a.label)}</span>
-    </button>`;
-  }).join('') + auditTab;
+    return tab({
+      id: a.app, label: a.label, on, dot: true,
+      cls: empty ? 'is-empty' : '',
+      // 体积与文件数进 title：写在行里会让各行的名字对不齐
+      title: `${a.targets.map((t) => `${t.short}${t.exists ? '' : '（没有）'}`).join('、')}，`
+        + (empty ? '未安装' : `${fmtBytes(a.totals.bytes)}，${a.totals.files.toLocaleString()} 个文件`),
+    });
+  }).join('');
+
+  const auditTab = tab({
+    id: AUDIT_ID, label: '安全审计', on: isAudit(), cls: 'app-tab--meta',
+    dot: true, title: '扫描各工具会话正文里的凭据外泄模式（只读，证据脱敏）',
+  });
+
+  els.appTabs.innerHTML = allTab
+    + '<div class="app-tab-sep" role="presentation"></div>'
+    + appTabs
+    + '<div class="app-tab-sep" role="presentation"></div>'
+    + auditTab;
+
   // 内容区（tabpanel）的名字跟着选中项走。写死在 HTML 里会在切换后说错话。
   if (state.appId) els.single.setAttribute('aria-labelledby', `apptab-${state.appId}`);
 }
@@ -1803,16 +1818,19 @@ document.addEventListener('keydown', (e) => {
     e.target.click();
   }
 
-  /* tablist 的键盘模型：左右箭头在标签之间走，Home/End 到两头。
-     走的同时就切换（这是"自动激活"模式，各家工具切换没有副作用，
-     不需要用户再按一次回车确认）。roving tabindex 让 Tab 只停在
-     当前选中的那一个上。 */
+  /* tablist 的键盘模型：上下箭头在标签之间走，Home/End 到两头。
+     走的同时就切换（这是"自动激活"模式，工具切换没有副作用，
+     不需要再按一次回车确认）。roving tabindex 让 Tab 只停在当前那一项上。
+
+     方向键跟着**导航的排布**走：标签从顶栏搬到左侧栏后变成竖排，
+     所以主用的是上下。左右仍然接受 —— ARIA 规范里竖排 tablist 的
+     左右键是"可选支持"，而已经习惯左右的人不该突然按了没反应。 */
   if (e.target.matches?.('#appTabs [role="tab"]')) {
     const tabs = [...els.appTabs.querySelectorAll('[role="tab"]')];
     const i = tabs.indexOf(e.target);
     let next = null;
-    if (e.key === 'ArrowRight') next = tabs[(i + 1) % tabs.length];
-    else if (e.key === 'ArrowLeft') next = tabs[(i - 1 + tabs.length) % tabs.length];
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') next = tabs[(i + 1) % tabs.length];
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') next = tabs[(i - 1 + tabs.length) % tabs.length];
     else if (e.key === 'Home') next = tabs[0];
     else if (e.key === 'End') next = tabs[tabs.length - 1];
     if (next) {
