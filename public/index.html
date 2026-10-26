@@ -44,7 +44,11 @@
   <div class="sidebar-foot">
     <span class="scan-note" id="scanNote"></span>
     <div class="sidebar-actions">
-      <button class="btn btn-ghost" id="rescanBtn" type="button">重新扫描</button>
+      <button class="btn btn-ghost btn-icon" id="rescanBtn" type="button" aria-label="重新扫描" title="重新扫描">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>
+        </svg>
+      </button>
       <button class="btn btn-ghost btn-icon" id="themeBtn" type="button" aria-label="切换主题" title="切换主题">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
           <circle cx="12" cy="12" r="4"/>
@@ -151,31 +155,30 @@
       <h2 class="section-title" id="cleanTitle">可以清理的</h2>
 
       <div class="lanes">
-        <!-- 推荐清理。名字不写死"文件与日志"：Cursor 的推荐项是已安装扩展，
-             写死会让标题和下面的范围对不上。由 renderRecommend 按实际范围填。 -->
+        <!-- 每条清理线两行：
+             第一行 名称 + 大数字 + 计数/警示 + 按钮（原来分四行 —— 名字一行、
+             数字一行、"共 N 项"一行、按钮再一行，而它们是同一句话的几半）；
+             第二行 范围（推荐线是分类 chip，会话线是"跳过最近/跳过置顶"两个开关）。
+             名字不写死"文件与日志"：Cursor 的推荐项是已安装扩展，写死会让
+             标题和下面的范围对不上。由 renderRecommend 按实际范围填。 -->
         <article class="lane" id="rec">
-          <header class="lane-head" id="recHead">
+          <div class="lane-line">
             <span class="lane-name" id="recName">推荐清理</span>
             <span class="lane-figure" id="recFigure">—</span>
-          </header>
-          <p class="lane-sub" id="recSub"></p>
-
-          <div class="lane-scope" id="recScope" role="group" aria-label="推荐清理包含哪些"></div>
-
-          <footer class="lane-foot" id="recFoot">
+            <p class="lane-sub" id="recSub"></p>
             <button class="btn btn-primary" id="recBtn" type="button">推荐清理</button>
-            <p class="lane-cap" id="recCap"></p>
-          </footer>
+          </div>
+          <div class="lane-scope" id="recScope" role="group" aria-label="推荐清理包含哪些"></div>
         </article>
 
         <!-- 历史会话 -->
         <article class="lane" id="taskQuick" hidden>
-          <header class="lane-head">
+          <div class="lane-line">
             <span class="lane-name">历史会话</span>
             <span class="lane-figure" id="tqFigure">—</span>
-          </header>
-          <p class="lane-sub" id="tqSub"></p>
-
+            <p class="lane-sub" id="tqSub"></p>
+            <button class="btn btn-primary" id="taskQuickBtn" type="button">一键清理</button>
+          </div>
           <div class="lane-scope">
             <label class="mini-sel">
               <span>跳过最近</span>
@@ -192,11 +195,6 @@
               跳过置顶的
             </button>
           </div>
-
-          <footer class="lane-foot">
-            <button class="btn btn-primary" id="taskQuickBtn" type="button">一键清理</button>
-            <p class="lane-cap" id="taskQuickCap"></p>
-          </footer>
         </article>
       </div>
     </section>

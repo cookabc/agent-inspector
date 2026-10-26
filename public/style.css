@@ -335,26 +335,17 @@ p { margin: 0; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 两个动作并排。它们必须装在一个横向容器里 ——
-   直接在 flex-direction: column 的父级上给 flex:1 会沿**纵轴**生效，
-   按钮会被拉成整行宽（实测 175px）。 */
+/* 底栏两个动作并排，都是图标钮。
+   容器必须是横向的 —— 直接在 flex-direction:column 的父级上给按钮
+   flex:1 会沿**纵轴**生效，把按钮拉成整行宽（实测 175px）。
+   靠左排、不等分：它们是维护动作，不该比导航项更抢眼。 */
 .sidebar-actions {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 6px;
 }
-.sidebar-actions .btn {
-  font-size: 12px;
-  padding: 6px 8px;
-  justify-content: center;
-}
-/* 两个按钮都按内容宽度，不拉满：
-   「重新扫描」拉成 137px 之后，与旁边 32px 的主题钮比例失衡，
-   而且它在视觉上比导航项还重 —— 这是个维护动作，不该抢。
-   让它们靠左排，右边留白。 */
-.sidebar-actions { justify-content: flex-start; }
-.sidebar-actions .btn { flex: 0 0 auto; }
-.sidebar-actions .btn-icon { width: 32px; padding: 6px 0; }
+.sidebar-actions .btn-icon { flex: 0 0 auto; width: 32px; padding: 6px 0; }
 
 /* ── 工具切换 ───────────────────────────────────────────── */
 
@@ -497,13 +488,9 @@ p { margin: 0; }
     padding-inline: 0;
     justify-content: center;
   }
-  /* 「重新扫描」在 38px 里放不下四个字，换成图标；文字仍留给读屏 */
-  .sidebar-actions #rescanBtn { font-size: 0; position: relative; }
-  .sidebar-actions #rescanBtn::before {
-    content: "↻";
-    font-size: 15px;
-    line-height: 1;
-  }
+  /* 重新扫描本来就是图标钮（宽屏窄屏都一样）——
+     以前这里用 font-size:0 藏文字、::before 塞一个 ↻ 字符，
+     那是"图标没做出来"的临时障眼法；现在两个尺寸用的是同一个图标。 */
 }
 
 /* ── 按钮 ───────────────────────────────────────────────── */
@@ -644,9 +631,7 @@ p { margin: 0; }
     justify-content: flex-start;
     gap: 7px;
   }
-  /* 右栏有 600px+ 宽，说明文字可以回到按钮右侧 —— 省下一整行 22px。
-     窄屏（单列）时仍按全局规则落在按钮下方。 */
-  .hero .lane-cap { flex: 1 1 240px; }
+
 }
 
 /* 跟 .panel > h2 保持同一档字号 —— 三块标题在页面上是平级的，不该一个像标签一个像标题 */
@@ -695,15 +680,15 @@ p { margin: 0; }
   }
 }
 
-/* 名称与数字并排：竖着排时这一块占 49px，横过来只占一行。
-   用 flex-start 而不是 space-between —— 右栏在宽屏有 700px+，
-   两端对齐会把数字甩到最右边，和上面那句说明之间留出一条空带，
-   看起来像两个不相干的东西。名称、数字、口径说明依次读下来才对。 */
-.lane-head {
+/* 一行装下"名称 + 大数字 + 计数/警示 + 按钮"。原来这是四行
+   （名字、数字、"共 N 项"、按钮各一行），而它们是同一句话的几半。
+   按钮用 margin-inline-start:auto 推到最右，中间的说明弹性占位；
+   窄屏放不下时整行换行（flex-wrap）。baseline 对齐让大小字共用基线。 */
+.lane-line {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
-  gap: 2px 10px;
+  gap: 4px 12px;
   min-width: 0;
 }
 .lane-name {
@@ -719,31 +704,14 @@ p { margin: 0; }
   letter-spacing: -.035em;
   line-height: 1.15;
 }
-.lane-sub { font-size: 12px; color: var(--ink-2); line-height: 1.5; }
+.lane-sub { font-size: 12px; color: var(--ink-2); line-height: 1.4; flex: 1 1 8ch; min-width: 0; }
 .lane-sub b { color: var(--ink); font-weight: 600; }
 
 .lane-scope { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 
-.lane-foot {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-  margin-top: auto;
-  /* 不再加一条上边框：这条清理线本来就在 hero 卡里，上面已经有一条
-     细线分隔"总量/可清理"，再画一条只是多一层噪音，多占 12px。 */
-  padding-top: 0;
-}
-.lane-foot .btn { padding: 9px 16px; font-size: 14px; }
-/* 说明文字吃掉按钮右边的整片宽度：卡里这么宽的一条底边只放两样东西，
-   再限成 34ch 就是白白留一条空带。 */
-/* 说明放按钮下方一行：它解释的是那个按钮（"删掉不影响会话…"），
-   与按钮并排时会互相挤 —— 左栏只有 400px，并排就是三行字压在按钮旁边。 */
-.lane-cap { font-size: 12px; color: var(--muted); line-height: 1.5; flex: 1 1 100%; min-width: 0; }
-.lane-cap b { color: var(--ink-2); font-weight: 600; }
-.lane-cap code { font-size: 12px; }
-.rec-off { display: block; margin-top: 2px; }
-.rec-size { font-variant-numeric: tabular-nums; font-weight: 500; opacity: .82; }
+/* 按钮排在同行最右。它是这一行的动作，紧跟在它作用的数字后面读。 */
+.lane-line .btn { margin-inline-start: auto; padding: 8px 15px; font-size: 14px; }
+.rec-off { color: var(--muted); }
 
 .mini-sel {
   display: inline-flex;
@@ -2250,8 +2218,9 @@ body.is-busy .sidebar::after {
 
 
 @media (max-width: 860px) {
-  .lane-foot .btn { flex: 1 1 auto; justify-content: center; }
-  .lane-cap { flex-basis: 100%; max-width: none; }
+  /* 窄到一行放不下时，按钮独占第二行、拉满宽（更好点）；说明回到正常流 */
+  .lane-line .btn { margin-inline-start: 0; flex: 1 1 100%; justify-content: center; }
+  .lane-sub { flex-basis: 100%; }
 }
 
 @media (max-width: 620px) {

@@ -259,14 +259,24 @@ test('会话行契约的字段确实在 tasks-shape 里，前端不该凭空取'
   }
 });
 
-test('推荐项全被排除时不立空壳：标题、0 B、禁用按钮都收起来', () => {
+test('推荐项全被排除时不立空壳：藏掉数字与按钮，只留说明', () => {
   /* 实测：Cursor 只有一类推荐项（已安装扩展），用户把它关掉之后整块变成
      "标题 + 0 B + 按不动的按钮"，占着 hero 右栏 230px 什么也不提供。
-     那不是"没有推荐"，那是三个元素各自说了一遍"没东西"。 */
+     那不是"没有推荐"，那是三个元素各自说了一遍"没东西"。
+
+     现在是一行结构，特殊态不能藏整行（说明文字就在行里）—— 要藏的是
+     "名称 / 数字 / 按钮"三样，留说明。锁的是这个不变量：三样得一起处理，
+     漏一个就是"数字回来了但按钮还藏着"那种半拉子状态。 */
   const rec = app.slice(app.indexOf('function renderRecommend'), app.indexOf('function renderChips'));
   assert.match(rec, /const nothingOn = !on\.length/, '要按"选中的推荐项"判断，不是"存在的推荐项"');
-  assert.match(rec, /els\.recHead\.hidden = nothingOn/);
-  assert.match(rec, /els\.recFoot\.hidden = nothingOn/);
+  assert.match(rec, /if \(nothingOn \|\| nothingPickable\) \{/, '两种空态走同一条处理');
+  assert.match(rec, /recLineParts\(true\)/, '空态要收掉名称/数字/按钮');
+  // 收/放必须成对：正常态也要复位，否则上一轮藏过、这一轮就少一半
+  assert.match(rec, /recLineParts\(false\)/);
+  const helper = app.slice(app.indexOf('function recLineParts'));
+  for (const part of ['recName', 'recFigure', 'recBtn']) {
+    assert.match(helper, new RegExp(`${part}\\.hidden`), `复位没覆盖 ${part}`);
+  }
   // chip 必须留在那儿 —— 那是把分类放回来的唯一入口
   assert.match(rec, /els\.recScope\.innerHTML = recChips\(all\)/);
 });

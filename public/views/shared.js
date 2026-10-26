@@ -14,6 +14,9 @@
 /* 体积换算只该有一份实现 —— 它在 logic.js 里，带单测。
    re-export 给外部，本地用 fmtBytesLocal 别名。 */
 import { fmtBytes as fmtBytesLocal } from '../logic.js';
+/* 各家 Agent 的品牌标识（simple-icons，CC0）。单独一个文件：
+   那五段 path 加起来 5KB 多，混在原语里会把真正在用的代码挤下去。 */
+import { BRAND_ICONS } from './brand-icons.js';
 
 /** HTML 转义。名字短是为了让模板串读起来还像 HTML。 */
 export const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
@@ -85,6 +88,7 @@ export const ICONS = {
   terminal: '<path d="M4 7l4 5-4 5M12 17h8"/>',
   box: '<path d="M3 8.5 12 4l9 4.5v7L12 20l-9-4.5v-7Z"/><path d="M3 8.5 12 13l9-4.5M12 13v7"/>',
   trash: '<path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/>',
+  refresh: '<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
   doc: '<path d="M6 3h7l5 5v13H6z"/><path d="M13 3v5h5"/>',
   db: '<ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/>',
   key: '<circle cx="8" cy="14" r="4"/><path d="M11 11l9-9M17 5l2 2M14 8l2 2"/>',
@@ -99,28 +103,32 @@ export const icon = (name, cls = '') =>
  * 所以不能只靠一个色点：七个圆点除了颜色没有任何区别，而颜色对色盲
  * 用户不可靠（六色里有两对在常见色盲下接近）。
  *
- * 每个工具给一个形状，与它"存什么"对应：
- *   zcode  方块 + 分层线      → 会话/索引/缓存分层存
- *   codex  三层堆叠           → state / history / logs 三个库
- *   claude 折角页             → 正文就是 jsonl 文件
- *   cursor 光标箭头           → 它是编辑器
- *   dsh    立体箱             → 正文是压缩的
- *   all    四格               → 汇总
- *   audit  盾牌               → 安全检查
+ * 五个工具用**各自的品牌 logo**（见 brand-icons.js，取自 simple-icons，CC0）：
+ * 用户本来就认识这些图形，比手画的近似形状认得出。它们都是实心 fill 路径。
+ *
+ * 两个跨工具视图（all / audit）不是某个工具、没有品牌，用手画线稿：
+ *   all    四格      → 汇总
+ *   audit  盾牌       → 安全检查
  */
-export const NAV_ICONS = {
+export const NAV_LINE_ICONS = {
   all: '<rect x="3" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.6"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.6"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="1.6"/>',
-  zcode: '<rect x="3.5" y="3.5" width="17" height="17" rx="4"/><path d="M8 9.5h8M8 14.5h5"/>',
-  codex: '<path d="M12 3 21 7.5 12 12 3 7.5 12 3Z"/><path d="M3 12l9 4.5L21 12"/><path d="M3 16.5 12 21l9-4.5"/>',
-  claude: '<path d="M6.5 3.5h7l4.5 4.5v12.5H6.5z"/><path d="M13.5 3.5V8h4.5"/>',
-  cursor: '<path d="M5.5 3.5 18.5 12l-5.6 1.4-2.4 5.2z"/>',
-  dsh: '<path d="M3.5 7.5 12 11.5l8.5-4"/><path d="M12 11.5V21"/><path d="M4 7.5v9L12 21l8-4.5v-9L12 3z"/>',
   audit: '<path d="M12 3 20 6v6c0 4.4-3.3 7.6-8 9-4.7-1.4-8-4.6-8-9V6l8-3Z"/><path d="M9 12l2.2 2.2L15.5 10"/>',
 };
 
-/** 导航图标：按 app id 取形状，不认识的回落到四格。 */
-export const navIcon = (id, cls = 'app-tab-icon') =>
-  `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_ICONS[id] || NAV_ICONS.all}</svg>`;
+/**
+ * 导航图标：品牌 logo 用实心 fill，跨工具视图用线稿 stroke。
+ * 两者的 paint 属性不同（fill=currentColor vs fill=none stroke=…），
+ * 所以必须分开 —— 把实心路径套上 fill=none 会画出一个空轮廓。
+ * 颜色都由各自的 --tool-* / --muted 经 currentColor 决定。
+ */
+export const navIcon = (id, cls = 'app-tab-icon') => {
+  const brand = BRAND_ICONS[id];
+  if (brand) {
+    return `<svg class="${cls}" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="${brand}"/></svg>`;
+  }
+  const line = NAV_LINE_ICONS[id] || NAV_LINE_ICONS.all;
+  return `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${line}</svg>`;
+};
 
 /**
  * 分类徽标：档位决定颜色，规则表决定文字与图标。

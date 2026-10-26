@@ -13,11 +13,11 @@ const els = {
   skeleton: $('skeleton'),
   heroBytes: $('heroBytes'), heroSub: $('heroSub'),
   diagnosis: $('diagnosis'), diagLede: $('diagLede'), diagTitleText: $('diagTitleText'),
-  rec: $('rec'), recHead: $('recHead'), recFoot: $('recFoot'),
-  recName: $('recName'), recBtn: $('recBtn'), recCap: $('recCap'), recScope: $('recScope'),
+  rec: $('rec'),
+  recName: $('recName'), recBtn: $('recBtn'), recScope: $('recScope'),
   recFigure: $('recFigure'), recSub: $('recSub'),
   taskQuick: $('taskQuick'), tqFigure: $('tqFigure'), tqSub: $('tqSub'),
-  taskQuickBtn: $('taskQuickBtn'), taskQuickCap: $('taskQuickCap'),
+  taskQuickBtn: $('taskQuickBtn'),
   taskAge: $('taskAge'), taskSkipPinned: $('taskSkipPinned'),
   split: $('split'), splitLede: $('splitLede'), fileSelAll: $('fileSelAll'),
   search: $('search'), statusChips: $('statusChips'), sortSel: $('sortSel'),
@@ -1263,7 +1263,10 @@ function renderSplit() {
 }
 
 /* 按钮上直接写出这批有多大，点之前就知道会发生什么。
-   下面的条目可以逐项开关，按钮数字跟着变。 */
+   下面的条目可以逐项开关，按钮数字跟着变。
+
+   一行结构（原来是名字 / 数字 / "共 N 项" / 按钮+说明 四行）：
+   lane-line 里放 名称 + 大数字 + 计数与后果 + 按钮，lane-scope 放分类 chip。 */
 function renderRecommend() {
   // 一个字节都没有的推荐项不立空壳 —— 跟分类卡片同一条规矩
   const all = recommendAll().filter((c) => c.bytes > 0);
@@ -1278,14 +1281,13 @@ function renderRecommend() {
     els.recScope.innerHTML = '';
     els.recBtn.disabled = true;
     els.recBtn.textContent = '推荐清理';
-    els.recCap.innerHTML = '';
+    recLineParts(false);
     return;
   }
   els.rec.hidden = false;
 
   const on = all.filter((c) => !state.recOff.has(c.id));
   const { cats, bytes, count, blocked } = sumCats(on);
-  const off = all.filter((c) => state.recOff.has(c.id));
 
   /* 范围里全是软链接 / 受保护项时，一个也删不掉。
      Codex 现在就是这样：缓存与临时目录里那三个文件全是软链接，界面原本
@@ -1295,33 +1297,21 @@ function renderRecommend() {
 
   /* 全被排除时不该还立着"标题 + 0 B + 禁用的按钮"这个空壳。
      Cursor 只有一类推荐项（已安装扩展），用户把它关掉之后整块就变成
-     一个看得见但按不动的胖子，占着 hero 右栏。收成一个提示行：
-     说清"为什么没东西可清"，并把分类 chip 留在那儿（那是放回来的入口）。 */
+     一个看得见但按不动的胖子，占着 hero 右栏。 */
   const nothingOn = !on.length;
 
-  els.recHead.hidden = nothingOn || nothingPickable;
-  els.recFoot.hidden = nothingOn || nothingPickable;
-  els.rec.hidden = false;
-  if (nothingOn) {
-    els.recFigure.textContent = '';
-    els.recName.textContent = '';
-    els.recSub.innerHTML =
-      `推荐里的 <b>${all.length}</b> 类都被排除了（${all.map((c) => esc(c.label)).join('、')}）—— ` +
-      `点下面的条目可以放回来。`;
+  /* 特殊态：藏掉"名称 + 数字 + 按钮"，只留说明文字在同一行 —— 而不是把
+     整行藏掉再另起一行说（那正是原来四行结构的来源）。chip 留着，那是
+     把排除掉的分类放回来的唯一入口。 */
+  if (nothingOn || nothingPickable) {
+    recLineParts(true);
+    els.recSub.innerHTML = nothingOn
+      ? `推荐里的 <b>${all.length}</b> 类都被排除了（${all.map((c) => esc(c.label)).join('、')}）—— 点下面的条目可以放回来。`
+      : `推荐范围里的 <b>${blocked}</b> 个文件都删不掉：都是软链接或受保护内容，点条目可看原因。`;
     els.recScope.innerHTML = recChips(all);
     return;
   }
-  if (nothingPickable) {
-    els.recFigure.textContent = '';
-    els.recName.textContent = '';
-    els.recSub.innerHTML =
-      `推荐范围里的 <b>${blocked}</b> 个文件都删不掉：都是软链接或受保护内容，` +
-      `点条目可看原因。`;
-    els.recScope.innerHTML = recChips(all);
-    return;
-  }
-  els.recHead.hidden = false;
-  els.recFoot.hidden = false;
+  recLineParts(false);
 
   els.recFigure.textContent = fmtBytes(bytes);
   els.recFigure.title = bytesTip(bytes);
@@ -1330,27 +1320,40 @@ function renderRecommend() {
      ZCode/Codex/Claude 下成立；Cursor 的推荐项是「已安装扩展」，
      那句"删掉不影响会话、配置和凭据"对它就是假话。 */
   els.recName.textContent = all.length <= 2 ? all.map((c) => c.label).join('、') : '文件与日志';
-  /* 这一行只说"共几项"。删不掉的（软链接、受保护）数量并进按钮 tooltip ——
-     它在版面上占一整行，而看到它的人已经打算清理了，那时更该看到的是数字。 */
-  els.recSub.innerHTML = `共 <b>${count.toLocaleString()}</b> 项`
-    + (blocked > 0 ? `（另有 ${blocked.toLocaleString()} 项不可清）` : '');
+
+  /* 一行之内把"共几项 / 删不掉的例外 / 后果"依次说清。原来这三件各占一行。
+     "勾选后摊开确认清单、不会立刻删除"不再写在这 —— 抽屉里的确认串已经把
+     这层保险说得更清楚，重复三遍只是噪音。 */
+  els.recSub.innerHTML =
+    `共 <b>${count.toLocaleString()}</b> 项`
+    + (blocked > 0 ? `（另有 ${blocked.toLocaleString()} 项不可清）` : '')
+    + ' · '
+    + (cats.every((c) => c.verdict === 'safe' || c.verdict === 'junk')
+      ? '不影响会话、配置与凭据'
+      : '<b>有代价</b> —— 每一类下面写了具体会怎样');
 
   els.recBtn.disabled = !count;
-  /* 按钮上不再重复体积：右边那个大数字就是它，同一行里说两遍只是噪音。
-     按钮回到纯动作（图标 + 短文字）。 */
+  /* 按钮不重复体积（大数字就是它），也不重复"共几项"—— 计数在左边那句里。
+     完整的构成（哪几类、多少项）放进 tooltip，读细节的人才悬停。 */
   els.recBtn.innerHTML = count ? `${icon('trash')}推荐清理` : '推荐清理';
   els.recBtn.title = count
     ? `${count.toLocaleString()} 项，共 ${fmtBytes(bytes)}（${cats.map((c) => c.label).join('、')}）`
     : '已经一项都不剩了，把上面的条目勾回来';
 
-  /* 说明压成一句：原来那句"勾选后摊开确认清单，不会立刻删除任何东西"
-     在三条路径上都出现过，而抽屉里的确认串已经把这层保险说得很清楚。
-     这里只留"删了会怎样"这一件版面上别处没有的信息。 */
-  els.recCap.innerHTML = cats.every((c) => c.verdict === 'safe' || c.verdict === 'junk')
-    ? '不影响会话、配置与凭据'
-    : '<b>有代价</b> —— 每一类下面写了具体会怎样';
-
   els.recScope.innerHTML = recChips(all);
+}
+
+/**
+ * 推荐行里"名称 / 数字 / 按钮"三样的显隐。
+ *
+ * 单独抽出来是因为两个方向都要用到：特殊态藏起来、上一轮藏过这一轮正常又得
+ * 全部放回。漏放任何一样，就会出现"数字回来了但按钮还藏着"这种半拉子状态。
+ * （说明文字 recSub 不在这三样里 —— 它特殊态要显示、正常态也要显示。）
+ */
+function recLineParts(hidden) {
+  els.recName.hidden = hidden;
+  els.recFigure.hidden = hidden;
+  els.recBtn.hidden = hidden;
 }
 
 /** 推荐范围里的分类开关。全排除那一条也要用它，所以单独提出来。 */
@@ -1815,7 +1818,6 @@ function resetTaskPanel() {
   els.tqSub.innerHTML = '';
   els.taskQuickBtn.disabled = true;
   els.taskQuickBtn.textContent = '一键清理';
-  els.taskQuickCap.innerHTML = '';
 }
 
 async function loadTasks(refresh = false) {
@@ -2709,10 +2711,19 @@ function renderTaskQuick() {
 
   const s = taskQuickSet();
   els.tqFigure.textContent = fmtBytes(s.bytes);
-  els.tqFigure.title = bytesTip(s.bytes);
+  /* 一行说清"勾了多少 / 从哪来"：这条线勾的是界面上删过的会话，
+     它的"删除"只是打标记、正文仍占空间 —— 这句解释挪进大数字的 tooltip
+     （第一次见这个状态的人才需要，且悬停够了），行里只留当前能操作的量。
+     跳过计数折进行内 —— 它说的就是"上面那两个开关挡掉了什么"。 */
+  const skips = [];
+  if (s.skippedRecent) skips.push(`${s.skippedRecent} 个近期还在用的`);
+  if (tq.skipPinned && s.skippedPinned) skips.push(`${s.skippedPinned} 个置顶的`);
   els.tqSub.innerHTML =
-    `${esc(d.appLabel)} 界面上你删过的 <b>${del.count}</b> 个会话。它的"删除"只是打个标记 —— ` +
-    `正文一行没少，${fmtBytes(del.bytes)} 还躺在会话库里。`;
+    `勾选 <b>${s.tasks.length}</b> 个，共 ${fmtBytes(s.bytes)}`
+    + (skips.length ? ` <span class="rec-off">（已跳过 ${skips.join('、')}）</span>` : '');
+  els.tqFigure.title =
+    `${fmtBytes(s.bytes)}（${bytesTip(s.bytes)}）—— ${d.appLabel} 里"已删除"会话的正文总量。`
+    + `它的删除只是打标记，正文一行没少，所以这里清的是仍占着的空间。`;
 
   els.taskAge.value = String(tq.ageDays);
 
@@ -2722,17 +2733,12 @@ function renderTaskQuick() {
   els.taskSkipPinned.classList.toggle('is-on', tq.skipPinned);
   els.taskSkipPinned.setAttribute('aria-pressed', String(tq.skipPinned));
 
+  // 按钮不重复体积（大数字就是它）；"勾选后先出确认清单、不会立刻删除"进 tooltip
   els.taskQuickBtn.disabled = !s.tasks.length;
-  els.taskQuickBtn.innerHTML = s.tasks.length
-    ? `一键清理 <span class="rec-size" title="${bytesTip(s.bytes)}">${fmtBytes(s.bytes)}</span>`
-    : '一键清理';
-
-  const skips = [];
-  if (s.skippedRecent) skips.push(`${s.skippedRecent} 个近期还在用的`);
-  if (tq.skipPinned && s.skippedPinned) skips.push(`${s.skippedPinned} 个置顶的`);
-  els.taskQuickCap.innerHTML =
-    `勾选 ${s.tasks.length} 个会话并摊开确认清单，<b>不会立刻删除</b>。` +
-    (skips.length ? `<span class="rec-off">已跳过 ${skips.join('、')}。</span>` : '');
+  els.taskQuickBtn.textContent = '一键清理';
+  els.taskQuickBtn.title = s.tasks.length
+    ? `勾选 ${s.tasks.length} 个会话，先摊开确认清单，不会立刻删除`
+    : '按上面的范围一个都不剩，放宽"跳过最近"再试';
 }
 
 /* ── 会话清理抽屉 ───────────────────────────────────────── */
