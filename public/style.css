@@ -271,7 +271,8 @@ p { margin: 0; }
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 14px 10px 16px;
+  /* 左右各 12px：焦点环是 2px 线 + 2px offset，10px 时它会顶到侧栏边缘 */
+  padding: 14px 12px 16px;
   overflow-y: auto;
   scrollbar-width: none;
   background: var(--surface);
@@ -348,11 +349,40 @@ p { margin: 0; }
 }
 .app-tab:hover { background: var(--surface-2); color: var(--ink); }
 .app-tab.is-on {
-  background: color-mix(in oklab, var(--tc, var(--ink)) 10%, var(--surface));
-  border-color: color-mix(in oklab, var(--tc, var(--line-strong)) 32%, var(--line));
+  background: color-mix(in oklab, var(--tc, var(--ink)) 16%, var(--surface));
+  border-color: color-mix(in oklab, var(--tc, var(--line-strong)) 45%, var(--line));
   color: var(--ink);
 }
-.app-tab.is-empty { opacity: .55; }
+/* 选中态靠**左边一条竖条**表明，不靠底色深浅。
+   原因是实测：ZCode 的工具色本身是近中性灰（--tool-zcode: #65636d），
+   它 16% 混合出来的底色与悬停的 --surface-2 几乎一样 ——
+   截图里"选中"和"鼠标停在这里"分不出来。
+   竖条与颜色无关：任何工具色下都成立，且与"悬停"这种瞬态在形状上就不同。
+   左边留出空间，竖条不挤压文字。 */
+.app-tab { position: relative; }
+.app-tab.is-on::before {
+  content: "";
+  position: absolute;
+  inset-block: 7px;
+  inset-inline-start: 0;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  /* 用 --ink 不用工具色：ZCode 的工具色本身是近中性灰（#65636d），
+     竖条用它会与边框糊成一片，等于没画。--ink 在两种主题下都足够深/亮，
+     而"选中项的文字一定是最深的"这件事本来就成立。 */
+  background: var(--ink);
+}
+/* 选中项悬停时底色略深，但竖条始终在 —— 两者的区别不依赖颜色 */
+.app-tab.is-on:hover { background: color-mix(in oklab, var(--tc, var(--ink)) 20%, var(--surface)); }
+/* 「未安装」的降级不用整体透明度。
+   实测 opacity: .55 把未选中项的 5.93:1 直接压到 2.33:1（浅色）——
+   远远低于 4.5。而这个状态要传达的信息是"这台机器上没装它"，
+   不是"这段文字不重要到可以不看清"。
+   改成：颜色压到 --muted（浅色下 5.85:1，深色 6.38:1 都达标），
+   图标降透明度（图形只要求 3:1，空间更宽）。 */
+.app-tab.is-empty { color: var(--muted); }
+.app-tab.is-empty .app-tab-icon { opacity: .5; }
+.app-tab.is-empty:hover { color: var(--ink-2); }
 
 /* 每个标签吃自己那个工具的颜色 —— 与「全部」视图里的色签同一套变量，
    不新造颜色（判据仍在 test/frontend-static 的 ΔE≥30 那条）。

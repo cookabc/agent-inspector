@@ -585,3 +585,16 @@ test('三块分组不借状态色说反话', () => {
   assert.match(css, /\.split-block\.is-live\s*\{\s*--c:\s*var\(--ink-2\)/);
   assert.doesNotMatch(css, /\.split-block\.is-live\s*\{\s*--c:\s*var\(--st-good\)/);
 });
+
+test('「未安装」的降级不牺牲可读性', () => {
+  /* 实测：未选中项的文字本色是 5.93:1（刚过 4.5），
+     整体 opacity: .55 会把它压到 2.33:1 —— 远低于正文要求。
+     而这个状态要传达的是"这台机器上没装它"，不是"这段字可以不看清"。
+
+     判据：.app-tab.is-empty 不许用 opacity 降级（那会把已经达标的
+     对比度乘掉）；要降级就降颜色，且颜色本身仍须达标。 */
+  const block = css.slice(css.indexOf('.app-tab.is-empty'), css.indexOf('.app-tab.is-empty') + 400);
+  assert.doesNotMatch(block.split('}')[0], /opacity:\s*0?\.\d+/, '整体透明度会压掉已达标的前景对比度');
+  // 图标可以降透明度（图形只要求 3:1，空间更宽）
+  assert.match(css, /\.app-tab\.is-empty \.app-tab-icon \{ opacity:/, '图标仍可降透明度');
+});
