@@ -179,6 +179,37 @@ p { margin: 0; }
   gap: 16px;
 }
 
+/* ≥1024px 时 .wrap 转成应用式框架：总览一行在顶，两栏并排占满视口剩余高度，
+   各自的清单在面板内部滚 —— 面板底边永远不超过屏幕。为此：
+   - 外层 .shell 已经是 min-height:100vh 的 grid，这里给 .wrap 高度 100vh，
+     让它和侧栏同高；页面级滚动就此消失（列表全在面板里滚）。
+   - padding-bottom 120px 是给底部操作条（fixed）预留的，但框架化后
+     面板本身不出屏，操作条盖不到内容，收回到 20px 与顶对称。
+   - 窄屏（<1024）回到普通文档流，120px 预留照旧。 */
+@media (min-width: 1024px) {
+  .wrap {
+    height: 100vh;
+    padding-block: 20px 20px;
+    /* flex 子项默认不收缩内容，两栏想等高分必须放开 */
+    min-height: 0;
+    overflow: visible;
+  }
+  /* 勾选了文件 → 底部操作条（fixed）弹出。框架式布局里 .wrap 高度钉死
+     100vh，操作条会直接盖住两栏最底一行；给 .wrap 同步收掉这一段高度。 */
+  body.has-bar .wrap {
+    height: calc(100vh - 60px);
+    padding-bottom: 20px;
+  }
+  /* 「全部」与「安全审计」是只读长列表，没有两栏框架，内容天然比一屏长。
+     100vh 钉死会把它们裁掉还不能滚 —— 这两个视图回到普通文档流，
+     页面照常出滚动条。JS 切视图时给 body 挂 .mode-flow。 */
+  body.mode-flow .wrap {
+    height: auto;
+    min-height: 100vh;
+    padding-bottom: 120px;
+  }
+}
+
 /* 会话管理在左、文件清单在右：两块都是"一长串可筛可勾的条目"，
    纵向摞在一起会让人滚两遍长列表。够宽时并排，窄屏自动落回单列。
    单列时的顺序由 DOM 决定 —— HTML 里会话管理也在前，所以两种布局的
@@ -195,12 +226,17 @@ p { margin: 0; }
     /* 会话管理在左，文件清单在右。
        宽度仍按"内容有多少"分，不按左右：文件清单是长的那一栏
        （几百上千行），会话通常只有个位数到几十条，给窄的一边反而让它
-       在左侧拖出一大片空白。1 : 1.22 让长的那一栏拿到更多横向空间。 */
+       在左侧拖出一大片空白。1 : 1.12 让长的那一栏拿到更多横向空间。 */
     grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr);
     grid-template-areas:
       "hero  hero"
       "tasks files"
       "diag  diag";
+    /* 占满 .wrap 的高度，多出来的塞给 tasks/files 两行 */
+    flex: 1;
+    min-height: 0;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    align-items: stretch;
   }
   .single > .hero    { grid-area: hero; }
   .single > #files   { grid-area: files; }
@@ -211,16 +247,66 @@ p { margin: 0; }
      所以它自然落在第一行，不需要再写 grid-row。 */
   .single > .all-view { grid-column: 1 / -1; }
 
-  /* 两栏都很长，各自滚到底要滚两遍。让**右栏**跟着滚：
-     左边那串会话是主内容（标题长、行多），往下翻它时右侧的文件分类与筛选
-     始终在手边 —— 翻到一半看见"这个文件能删"，不用滚回页面顶部去找勾选。 */
+  /* 两栏都是"一屏一滚区"：面板高度被 grid 行钉住（不超过屏幕），
+     面板内部 flex 布局里只有清单可滚，其余（标题/说明/工具栏）钉住不动。
+     之前 #files 的 sticky + max-height 只约束自己，tasks 列照样伸出屏幕。
+     #files 的头部（三张选择卡 + 工具栏）在 ≤1500px 窄两栏里可能超过
+     面板高度 —— overflow:auto 让整块面板内部滚，底边仍然不出屏；
+     #tasks 的头部都是小块，钉死不滚，只有会话列表滚。 */
+  .single > #tasks {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
   .single > #files {
-    position: sticky;
-    top: 16px;
-    max-height: calc(100vh - 32px);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
   }
+  /* 面板里的滚动子项：文件清单的分组列表、会话管理的会话列表。
+     列表自己拿走全部剩余高度并出滚动条；面板其余部分纹丝不动。 */
+  .single > #files > .groups,
+  .single > #tasks > .task-list {
+    flex: 1;
+    min-height: 120px;
+    max-height: none;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  /* 会话列表原先的 520px 上限撤掉：任务列表区现在钉在视口内，
+     高度由"屏幕底部到工具栏底"决定，比旧上限高得多 —— 会话一屏看得更多。 */
+  .single > #tasks > .task-list { max-height: none; }
+
+  /* 右栏的"头部三件"（标题+说明、三张选择卡、工具栏）在面板 flex 里
+     默认可收缩 —— 清单一多它们被压到 120px 下限，选择卡被裁一半。
+     头部是筛选与勾选的入口，宁可整块滚动也不能压。 */
+  .single > #files > :not(.groups) { flex: none; }
+  /* 左栏同理：警示条 / 说明 / 构成图 / 工具栏全部钉住，只有会话列表滚。 */
+  .single > #tasks > :not(.task-list) { flex: none; }
+  /* Codex 的说明文案两三行就够，但某些工具能写到六行以上（外加构成图），
+     全钉住会把列表挤回一小条。给这两块一个滚动上限：
+     内容多时自己滚，不侵占列表高度。 */
+  .single > #tasks .app-warn,
+  .single > #tasks .tcomp {
+    max-height: 26vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  /* 1440 窄两栏实测：警示条 + 说明长文案把清单挤到 120px 下限。
+     这两块长文案参与滚动（max-height 钳制），别的仍钉住。
+     （.split 的窄屏分档不在这里 —— 它会被文件后面的基础 .split 规则
+     按源码顺序盖掉，媒体查询不加特异性；放在基础规则之后才生效。） */
+  @media (max-width: 1500px) {
+    .single > #tasks .app-warn,
+    .single > #tasks > .lede { max-height: 9em; overflow-y: auto; overscroll-behavior: contain; }
+  }
+
+  /* 总览卡在框架顶部，不参与滚动 */
+  .single > .hero { flex: none; }
 }
 
 /* 布局落回单列时不许吸顶：那时它是一整块，吸住会把页面盖住。 */
@@ -888,6 +974,16 @@ pre code { background: none; padding: 0; }
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
   gap: 12px;
+}
+
+/* 窄两栏（≤1500px 视口）时右栏只有 ~430–504px：250px 下限加上 gap 后
+   auto-fit 只装得下一列，三张选择卡竖着摞成 393px，把清单顶出面板。
+   固定三列让它们始终保持一行（430px 的右栏也放得下）；选择卡内容
+   （标题+体积+两行说明）在 130px 里只是换行更多，仍可读。
+   规则必须写在这里 —— 放去文件前面的嵌套媒体块里会被本条按源码顺序
+   覆盖，媒体查询不加特异性。 */
+@media (max-width: 1500px) {
+  .split { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 .split-block {

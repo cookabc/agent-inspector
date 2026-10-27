@@ -274,6 +274,9 @@ function applyApp() {
   viewEpoch++;
   allState.loading = false;
   setPanelBusy(false);
+  // 「全部」与「安全审计」是长只读列表，走文档流滚动；单工具视图走
+  // 100vh 框架（面板不出屏、列表在面板里滚）。CSS 看 body.mode-flow 分档。
+  document.body.classList.toggle('mode-flow', isAll() || isAudit());
   state.index = isAll() ? null : (state.apps.find((a) => a.app === state.appId) || null);
   state.selection.clear();
   // 换 app，筛选也从头开始。搜索词与状态筛选同样是"这一屏的读法"，
@@ -592,6 +595,9 @@ const canReveal = () => state.scan?.canReveal !== false;
 function renderActionbar() {
   const n = state.selection.size;
   els.actionbar.hidden = n === 0;
+  // 操作条是 fixed 的：框架式布局里面板底边贴着视口底，不留这条 class
+  // 出来的余量，操作条会盖住列表最后一行。
+  document.body.classList.toggle('has-bar', n > 0);
   els.abCount.textContent = n.toLocaleString();
   els.abBytes.textContent = fmtBytes(selectedBytes());
   els.abBytes.title = bytesTip(selectedBytes());
