@@ -4,14 +4,22 @@
  *
  *   node server.mjs [--port 4173] [--app zcode] [--root ~/.zcode] [--no-open]
  *
- * 只做四件事：
- *   GET  /api/scan     扫描全部 app 并返回索引（gzip）
- *   POST /api/trash    移入废纸篓（可恢复）
- *   POST /api/purge    彻底删除（需显式确认串）
- *   POST /api/reveal   在 Finder 中显示
+ * 路由一览：
+ *   GET  /api/scan        扫描全部 app 的文件索引（gzip）
+ *   GET  /api/tasks       单 app 的历史会话（读库，走 worker）
+ *   GET  /api/tasks/all   跨工具会话聚合（只读）
+ *   GET  /api/audit       凭据外泄审计（只读，证据脱敏）
+ *   GET  /api/tasks/cursor/analyze   Cursor 独占 blob 分析（只读）
+ *   GET  /api/tasks/cursor/orphans   Cursor 孤儿会话（只读）
+ *   POST /api/trash       文件移入废纸篓（macOS）
+ *   POST /api/purge       文件彻底删除（需确认串，先备份）
+ *   POST /api/reveal      在 Finder 中显示（macOS）
+ *   POST /api/tasks/purge       按行清理会话（确认串 + 进程闸 + 备份 + 事务）
+ *   POST /api/tasks/cursor/recover   Cursor 孤儿会话回灌（受控写入）
  *
- * 路径都是 {app, target, path} 三元组：app 决定用哪张分类表，target 决定落在哪个根目录。
- * 所有写操作都先把路径解析到该根目录之内，越界一律拒绝。
+ * 文件路径都是 {app, target, path} 三元组：app 决定用哪张分类表，
+ * target 决定落在哪个根目录。所有写操作都先把路径解析到该根目录之内，
+ * 越界一律拒绝；数据库写入必须先确认对应应用已退出。
  */
 
 import http from 'node:http';
@@ -51,7 +59,10 @@ try {
   process.exit(1);
 }
 
-/** 把一次数据库操作丢进 worker 线程，主线程不被同步 SQLite 卡住。 */
+/** 把一次数据库操作丢进 worker 线程，主线程不被同步 SQLite 卡住。
+ *  每次操作新建一个 worker 而不是复用池：node:sqlite 是同步 API，
+ *  worker 内一个崩掉的句柄不该污染下一次操作，而这里的调用频率
+ *  （扫库、审计各一次，间隔以秒计）撑得起线程创建的开销。 */
 function runDb(op, appId, targets, args = []) {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./lib/db-worker.mjs', import.meta.url), {
@@ -155,9 +166,8 @@ try {
   process.exit(1);
 }
 /* ── 缓存 ───────────────────────────────────────────────────
-   四份数据各有各的过期时长，但"过期 + 并发合流 + 写代数校验"是同一套。
-   这套逻辑现在只有一份实现（lib/cache.mjs）—— 以前四个地方各抄一遍，
-   漏掉其中一句（比如忘了清 inflight、或忘了校验 epoch）不会报错，
+   四份数据各有各的过期时长，但"过期 + 并发合流 + 写代数校验"是同一套，
+   只有一份实现（lib/cache.mjs）—— 这类逻辑散抄的话，漏掉一句不会报错，
    只会让界面拿到过期数字。 */
 
 /* 写代数：每次写操作前后各 +1。缓存条目带着"算出来时的代数"，
@@ -227,8 +237,6 @@ async function getTasks(appId, force = false) {
 function stripTarget(t) {
   return { key: t.key, kind: t.kind, path: t.path, short: t.short, label: t.label, exists: t.exists };
 }
-
-/* ── 全域聚合 ───────────────────────────────────────────────── */
 
 /* ── 安全 ─────────────────────────────────────────────────── */
 
@@ -439,9 +447,9 @@ function isProtected(plan, target, rel, directory = false, abs = null) {
     const refined = app.refineCategory(rel, abs, cat);
     if (refined) cat = refined;
   }
-  /* 分类查不到时**不放行**。原来写的是 Boolean(...?.locked)，规则表产出一个
-     CATEGORIES 里没有的 id 时结果是 false —— 判不出来反而当可删。
-     加一条规则忘了补分类，就会静默打开一个删除口子。宁可拒绝并要求先补分类。 */
+  /* 分类查不到时**不放行**。若按 Boolean(...?.locked) 处理，规则表产出一个
+     CATEGORIES 里没有的 id 时结果是 false —— 判不出来反而当可删，加一条规则
+     忘了补分类就静默打开一个删除口子。宁可拒绝并要求先补分类。 */
   const meta = app.CATEGORIES[cat];
   if (!meta) {
     throw httpError(500,
@@ -494,8 +502,7 @@ async function sendJSON(req, res, status, obj) {
   });
   if (raw.length > 1024 && gzipAllowed) {
     let gz = null;
-    try { gz = await gzipAsync(raw); } catch { gz = null; }
-    if (gz) {
+    try { gz = await gzipAsync(raw); } catch { gz = null; }    if (gz) {
       return send(res, status, gz, {
         'Content-Type': 'application/json; charset=utf-8',
         'Content-Encoding': 'gzip',
@@ -544,7 +551,10 @@ function readBody(req) {
 async function serveStatic(req, res, urlPath) {
   const rel = urlPath === '/' ? '/index.html' : urlPath;
   const abs = path.join(PUBLIC_DIR, path.normalize(rel).replace(/^(\.\.[/\\])+/, ''));
-  if (!abs.startsWith(PUBLIC_DIR)) return send(res, 403, 'forbidden');
+  /* 前缀比较必须带上路径分隔符：不带的话，一个名字以 public 开头的兄弟目录
+     也会通过这道检查。URL 解析器已经把点段归一化掉、且 pathname 不做百分号
+     解码，所以这一层是防御纵深，不是唯一防线。 */
+  if (abs !== PUBLIC_DIR && !abs.startsWith(PUBLIC_DIR + path.sep)) return send(res, 403, 'forbidden');
   try {
     const buf = await fsp.readFile(abs);
     send(res, 200, buf, { 'Content-Type': MIME[path.extname(abs)] || 'application/octet-stream' });
@@ -625,9 +635,8 @@ const server = http.createServer(async (req, res) => {
       const { data, cached } = await auditCache.get({
         force: fresh,
         /* 响应形状是 { apps: [...] }，不是裸数组 —— 前端按 d.apps 取值。
-           缓存层只负责"存什么、还什么"，所以包装放在这一层。
-           （这条在重构时漏过一次：把 Promise.all 直接交给 cache，
-             缓存里存的成了裸数组，audit 视图因此一片空白。） */
+           缓存层只负责"存什么、还什么"，所以包装必须放在这一层，
+           交给缓存的是带包装的 Promise，不是裸数组。 */
         load: async () => ({ apps: await Promise.all(plans.map(async ({ app, targets }) => {
           if (!targets.some((t) => t.exists)) {
             return { app: app.id, label: app.label, supported: true, absent: true,
@@ -729,7 +738,11 @@ const server = http.createServer(async (req, res) => {
       if (!MACOS) throw httpError(400, '在 Finder 中显示仅支持 macOS');
       const { app, target, path: rel } = await readBody(req);
       const abs = safeResolve(String(app || ''), target, rel);
-      execFile('open', ['-R', abs], () => {});
+      execFile('open', ['-R', abs], (err) => {
+        // Finder 打不开多半是 abs 已在这瞬间消失 —— 接口已返回 ok，
+        // 至少在服务端日志里留下原因，别让失败完全无声。
+        if (err) console.error(`[reveal] open -R ${abs} 失败：${err.message}`);
+      });
       return await sendJSON(req, res, 200, { ok: true, path: abs });
     }
 

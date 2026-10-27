@@ -75,10 +75,10 @@ test('missing main database and unreadable sidecar both reject backups', async t
   const root = await fixture(t), file = path.join(root, 'data.sqlite');
   await assert.rejects(backupDatabases([file], path.join(root, 'b'), 'test'), /备份失败/);
   seed(file);
-  // An existing invalid sidecar must not be treated like an absent sidecar.
+  // 存在但异常的侧文件，不能当成"不存在的侧文件"跳过。
   await fs.mkdir(file + '-wal');
   await fs.writeFile(path.join(file + '-wal', 'special'), 'not a WAL');
-  // Invalid source types are refused before any database mutation.
+  // 非法源文件类型在任何库改动之前就被拒绝。
   await assert.rejects(backupDatabases([file], path.join(root, 'b'), 'test'), /备份失败/);
   await fs.rm(file + '-wal', { recursive: true });
   assert.equal(count(file), 1);
@@ -87,7 +87,7 @@ test('missing main database and unreadable sidecar both reject backups', async t
 test('an error in the second database rolls back writes to the first', async t => {
   const root = await fixture(t), paths = ['a.sqlite', 'b.sqlite'].map(x => path.join(root, x));
   paths.forEach(seed);
-  await assert.rejects(writeDatabases(paths, { backupDir: path.join(root, 'b'), label: 'test' }, ([a, b]) => {
+  await assert.rejects(writeDatabases(paths, { backupDir: path.join(root, 'b'), label: 'test', root }, ([a, b]) => {
     a.exec('DELETE FROM items');
     b.exec('DELETE FROM missing_table');
   }), /未提交的更改已回滚/);
@@ -100,7 +100,7 @@ test('a held lock in any database prevents all changes', async t => {
   const lock = new DatabaseSync(paths[1]); lock.exec('BEGIN IMMEDIATE');
   let entered = false;
   try {
-    await assert.rejects(writeDatabases(paths, { backupDir: path.join(root, 'b'), label: 'test' }, () => { entered = true; }));
+    await assert.rejects(writeDatabases(paths, { backupDir: path.join(root, 'b'), label: 'test', root }, () => { entered = true; }));
   } finally { lock.exec('ROLLBACK'); lock.close(); }
   assert.equal(entered, false);
   assert.deepEqual(paths.map(count), [1, 1]);
@@ -167,4 +167,13 @@ test('database mutations refuse ancestor symlinks outside the approved root', as
   await assert.rejects(writeDatabases([path.join(approved, 'linked/data.sqlite')],
     { backupDir: path.join(root, 'b'), label: 'test', root: approved }, ([db]) => db.exec('DELETE FROM items')), /符号链接/);
   assert.equal(count(file), 1);
+});
+
+test('数据库写入必须声明目标根目录 —— 少它就不写', async t => {
+  const root = await fixture(t), file = path.join(root, 'data.sqlite');
+  seed(file);
+  await assert.rejects(
+    writeDatabases([file], { backupDir: path.join(root, 'b'), label: 'test' }, ([db]) => db.exec('DELETE FROM items')),
+    /未指定写入根目录/);
+  assert.equal(count(file), 1, '拒绝之后源库不得有任何改动');
 });

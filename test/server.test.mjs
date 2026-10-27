@@ -101,7 +101,7 @@ async function fixture(t) {
     await fs.writeFile(file, value);
     return file;
   };
-  // A raw client preserves Host / Fetch Metadata headers for boundary tests.
+  // 裸客户端保留 Host / Fetch Metadata 头，用来测边界。
   const post = (route, body, headers = {}) => new Promise((resolve, reject) => {
     const request = http.request(base + route, {
       method: 'POST', headers: { 'Content-Type': 'application/json', ...headers },
@@ -348,7 +348,7 @@ for (const route of ['/api/purge', '/api/trash']) {
  * 按行清理的能力是静态的：不能因为目标恰好在跑就报 409"先退出应用"，
  * 那会让人以为退出了就能删 —— 真正没有写路径的只有 Claude Code（正文是文件）。
  *
- * Cursor 以前也在这张表里（只读）。现在它有写路径了：按会话删 + 连带删掉
+ * Cursor 不在只读表里：它有写路径 —— 按会话删 + 连带删掉
  * 只被这些会话引用的 blob（lib/cursor-purge.mjs）。所以它落在这里的行为
  * 变成"确认串不对" —— 说明静态闸门已经放行，走到了后面的校验。
  */
@@ -577,4 +577,44 @@ test('GET /api/tasks/all 明确标只读', async t => {
   assert.equal(r.body.appId, 'all');
   assert.ok(Array.isArray(r.body.tasks));
   assert.ok(Array.isArray(r.body.tools));
+});
+
+/* ── 静态文件 ───────────────────────────────────────────────
+   前缀检查的判据必须带上路径分隔符。URL 解析器已经把点段归一化掉、
+   且 pathname 不做百分号解码，所以这里锁的是最终行为：任何写法都
+   读不到 public/ 之外的源码文件。 */
+
+function rawGet(base, route) {
+  return new Promise((resolve, reject) => {
+    http.get(base + route, response => {
+      let raw = '';
+      response.on('data', c => { raw += c; });
+      response.on('end', () => resolve({ status: response.statusCode, text: raw, type: response.headers['content-type'] }));
+      response.on('error', reject);
+    }).on('error', reject);
+  });
+}
+
+test('静态文件：页面资源正常返回，源码从任何路径写法都读不到', async t => {
+  const f = await fixture(t);
+
+  const index = await rawGet(f.base, '/');
+  assert.equal(index.status, 200);
+  assert.match(index.type, /text\/html/);
+  assert.match(index.text, /<html/);
+
+  const css = await rawGet(f.base, '/style.css');
+  assert.equal(css.status, 200);
+  assert.match(css.type, /text\/css/);
+
+  // 百分号编码的点段不解码，按字面文件名 404 —— 不是把源码吐出去
+  for (const route of ['/%2e%2e/server.mjs', '/..%2fserver.mjs', '/%2e%2e%2fserver.mjs']) {
+    const r = await rawGet(f.base, route);
+    assert.equal(r.status, 404, `${route} 应当 404`);
+    assert.ok(!r.text.includes('createWriteGuard'), `${route} 不该读到源码内容`);
+  }
+  // 客户端会把点段归一化成 /server.mjs —— 同样 404（public/ 下没有它）
+  const normalized = await rawGet(f.base, '/../../server.mjs');
+  assert.equal(normalized.status, 404);
+  assert.ok(!normalized.text.includes('createWriteGuard'));
 });
