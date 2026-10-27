@@ -497,7 +497,7 @@ test('每个 app 的会话行与 byState 遵循同一份契约', async (t) => {
     }
 
     // byState：每条恰好三个键、键取自 state（不是 reason）、只留真实存在的桶。
-    // 拿 reason 当键的钮点了永远筛不出东西：Claude 曾经就是 'wsMissing' 不在状态表里，
+    // 拿 reason 当键的钮点了永远筛不出东西：'wsMissing' 不在状态表里，
     // 界面上渲染成字面量 undefined。
     for (const g of body.totals.byState) {
       assert.deepEqual(Object.keys(g).sort(), ['bytes', 'count', 'state'], `${app} 的 byState 条目形状不对`);
@@ -527,8 +527,7 @@ test('缺库时每个 app 都返回完整信封，不静默', async (t) => {
 
 test('能力位由后端单源给出：各家都可写，可回灌只有 Cursor', async (t) => {
   const f = await fixture(t);
-  /* Cursor 曾经是 readOnly:true —— 理由是"库由 IDE 独占写入、没有外键可依"。
-     后半句仍然成立，但它只说明"不能靠外键删"，不等于"不能删"。
+  /* "库由 IDE 独占写入、没有外键可依"只说明"不能靠外键删"，不等于"不能删"。
      现在 Cursor 走可达性分析那条路径（lib/cursor-purge.mjs），所以各家都可写。 */
   const readOnly = { zcode: false, codex: false, claude: false, cursor: false, dsh: false };
   for (const [app, expected] of Object.entries(readOnly)) {

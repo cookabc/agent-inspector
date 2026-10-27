@@ -3,8 +3,8 @@
  *
  * scripts/ 下三个测量脚本都要做同一件事：起一个 headless Chrome、
  * 拿到页面 target 的 WebSocket、发 Runtime.evaluate。这段样板抄三份
- * 是最容易被"改一处忘两处"的那种代码（尤其那个 result/exceptionDetails
- * 的嵌套层级 —— 我在这上面踩过一次），所以收成一份。
+ * 最容易"改一处忘两处"（尤其 result/exceptionDetails 的嵌套层级 ——
+ * 写错时真正的报错会被 undefined 吞掉），所以收成一份。
  *
  * 用 Node 自带的 WebSocket（22.0 起全局可用），不引任何第三方包。
  */

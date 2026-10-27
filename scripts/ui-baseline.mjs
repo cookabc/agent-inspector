@@ -132,9 +132,9 @@ const PROBE = String.raw`(async () => {
         }
       } else {
         /* 单工具视图：会话面板要读库（Cursor 的 state.vscdb 几百 MB，
-           读一次几秒）。原来固定等 2500ms，于是在快机器上够、慢一点就
-           只抓到半张卡片 —— 同一份代码两次抓取能差出一千多像素。
-           改为等"会话面板那句 lede 不再说正在读"且任务列表已成形。 */
+           读一次几秒）。固定 sleep 不可靠 —— 快机器上够、慢一点就只抓到
+           半张卡片，同一份代码两次抓取能差出一千多像素。
+           必须等"会话面板那句 lede 不再说正在读"且任务列表已成形。 */
         for (let k = 0; k < 120; k += 1) {
           await sleep(400);
           const lede = (document.querySelector('#taskLede')?.textContent) || '';

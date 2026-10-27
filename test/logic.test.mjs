@@ -55,7 +55,7 @@ test('任何体积都不会印出 1024 或更高', () => {
 test('单位阶梯到 EB 才封顶，中间没有卡住的地方', () => {
   assert.equal(fmtBytes(TB), '1.00 TB');
   assert.equal(fmtBytes(1023 * TB), '1023.00 TB');
-  assert.equal(fmtBytes(1024 * TB), '1.00 PB');   // 曾经在这里印出 1024.00 TB
+  assert.equal(fmtBytes(1024 * TB), '1.00 PB');   // 任何量级都不印 1024
   assert.equal(fmtBytes(1024 ** 5), '1.00 PB');
   assert.equal(fmtBytes(1024 ** 6), '1.00 EB');
   // 9.007e15 字节 ≈ 8 PB —— 顺带确认这个量级也不会掉进科学计数法

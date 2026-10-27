@@ -31,7 +31,7 @@ const STRIPE = 'sk_live_' + 'c'.repeat(24);
 const SLACK = 'xoxb-' + '1'.repeat(12) + '-' + '2'.repeat(12) + '-abcdefghijklmnop';
 const GOOGLE = 'AIza' + 'D'.repeat(35);
 /* JWT 用片段拼出来：写成一整串的话，会被某些工具链当成模板占位符替换掉，
-   于是测试悄悄断言一个根本不是 JWT 的值（曾经就这样假绿过一次）。 */
+   于是测试会悄悄断言一个根本不是 JWT 的值，假绿。 */
 const JWT = 'eyJ' + 'hbGciOiJIUzI1NiJ9' + '.' + 'eyJzdWIiOiIxIn0' + '.' + 'c2lnbmF0dXJlLXBhcnQtaGVyZQ';
 const PGPASS = 'passw0rd-in-connection-string';
 const BEARER_VAL = 'tok_live_abcdefghijklmnopqrstuvwxyz';

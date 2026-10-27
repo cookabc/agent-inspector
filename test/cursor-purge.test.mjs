@@ -5,7 +5,7 @@
  *
  * 要验证的核心命题只有一条：**删掉会话 A 时，只删只被 A 引用的 blob；
  * 还被 B 引用的 blob 必须留下。** 这条错了就是数据丢失，方向与"清理不干净"相反，
- * 而且事后无法从库里恢复 —— 上一版这个工具在真实库上就踩过一次，
+ * 而且事后无法从库里恢复 —— 误删一次就得靠备份，
  * 报的是 Conversation data missing。
  */
 
@@ -118,8 +118,8 @@ test('只被一个会话引用的 blob 算独占；被两个会话引用的不�
 
 test('二进制里嵌着的 hash 也算引用（文本正则看不见的那条通道）', async (t) => {
   /* 构造：outer 的**原始字节**里直接嵌着 inner 的 sha256 字节。
-     纯文本扫描永远看不到这条边 —— 历史事故正是漏了它：删掉"看起来无人引用"
-     的 inner，Cursor 立刻报 Conversation data missing。
+     纯文本扫描永远看不到这条边 —— 漏掉它就删掉"看起来无人引用"的 inner，
+     Cursor 会立刻报 Conversation data missing。
 
      有了这条边之后，inner 的归属集合与 outer 相同（都只有 A 能到），
      所以两个都算 A 独占 —— 删 A 时一起带走，这是对的：
@@ -257,7 +257,7 @@ test('归档会话自己名下没有数据时不会误删别人的 blob', async 
  */
 
 test('下标 31 的 owner 不能被漏掉（位集最高位）', async (t) => {
-  /* 位集按 32 个会话一 word 存。取最低位那段原来是 `Math.log2(bit | 0)`；
+  /* 位集按 32 个会话一 word 存。取最低位不能用 `Math.log2(bit | 0)`：
      对 1<<31，`bit | 0` 是负数，log2 得 NaN，下标变成 sids[NaN] = undefined。
 
      后果方向是**该删的没删**（不是删错）：onlyIn 里 `goneSet.has(undefined)`

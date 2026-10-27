@@ -3,7 +3,7 @@
  *
  * 这些规则不分 app —— 同一个路径在不同工具下落到同一个分类，是"分类是纯函数"
  * 这件事的前提。实测漂过两回：`backups/` 只在 Claude 有专门规则，Codex 与 ZCode
- * 于是把 44 MB 的项目副本归进了 unknown；同一个 pluginData 曾经四个名字。
+ * 于是把 44 MB 的项目副本归进了 unknown；同一个 pluginData 有四个名字。
  *
  * 所以这里不定逐条规则的细节，只锁两件事：
  *   1. 共享规则在每家给出同一个答案
@@ -24,7 +24,7 @@ const ctxOf = (app) => ({ app: app.id, t: mainTarget(app) });
 
 test('共享规则在每家给出同一个答案', () => {
   /* 这里锁的是"同一个路径在每家得到同一个分类"。
-     dataBackupDir 曾经被排除在外（理由是 Claude 的 backups/ 更像配置副本），
+     dataBackupDir 容易被排除在外（理由是 Claude 的 backups/ 更像配置副本），
      结果各家对 backups/x.sqlite 给出三种答案：claude=configBackup、
      codex=database（扩展名规则抢在前面）、zcode/cursor=dataBackup。
      测试绕开不一致，等于把 bug 写进了契约 —— 现在每家都过同一条规则。 */

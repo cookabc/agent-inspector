@@ -350,7 +350,7 @@ test('没有 sessions/ 时给空表 + 一句人话', async (t) => {
 });
 
 test('bodyRel 是相对扫描根的路径 —— 前端拿它去文件清单里找那一行', async (t) => {
-  /* 实测 bug：bodyRel 曾经相对 sessions/ 拼，而文件清单相对 ~/.dsh，
+  /* bodyRel 若相对 sessions/ 拼，而文件清单相对 ~/.dsh，
      差一层 `sessions/`。界面上点「按文件清理…」会弹
      "勾上的会话在文件清单里找不到对应正文 —— 目录大概在这期间变了"，
      看着像磁盘被改过，其实只是路径拼错。
