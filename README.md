@@ -156,7 +156,7 @@ CI 配置在 Linux、macOS 与 Node 22.5 / 24 / 26 上执行检查。本地通�
 | `public/` | 页面、样式、浏览器状态和纯函数 |
 | `test/` | 临时数据回归测试 |
 
-维护约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。本轮审查与验证记录见 [代码审查记录](docs/code-audit.md)。
+维护约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 许可
 
