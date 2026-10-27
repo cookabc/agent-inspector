@@ -66,13 +66,32 @@
      浅色五值 = Radix 各家的 11 档（文字档，白底可读）。深色五值 =
      官方 dark 刻度里挑的组合：11 档为主（mauve/violet/mint），
      pink/ruby 用 9/10 档 —— dark 刻度里这两家任何同档值都只差
-     ΔE 个位数，换档才拉得开。判据写在测试里：任意两色在浅/深两套
-     下 ΔE 都 ≥ 30，且全部值都是 Radix 官方刻度原值。 */
+     ΔE 个位数，换档才拉得开。判据写在测试里。
+
+     这套色只做**功能标记**：色签、筛选钮、选中底色、「全部」视图的
+     组头文字 —— 这些地方颜色本身要能互相区分，且当文字用时必须过 AA。
+     它**不是 logo 色**：logo 用下面的 --brand-*（品牌真色），
+     Claude 的橙不是粉、DeepSeek 的蓝不是宝石红 —— 那才叫认得出。 */
   --tool-zcode:  #65636d;   /* Radix mauve-11  */
   --tool-codex:  #6550b9;   /* Radix violet-11 */
   --tool-cursor: #027864;   /* Radix mint-11   */
   --tool-claude: #c2298a;   /* Radix pink-11   */
   --tool-dsh:    #ca244d;   /* Radix ruby-11   */
+
+  /* ── 品牌 logo 色（只给侧栏的 brand-icon 用）────────────
+     品牌真值，不参与功能配色：
+     - claude  #D97757  Anthropic "Claude 橙"（官方深浅两种底都用它）
+     - codex   OpenAI 单色黑，深色下反白
+     - cursor  Cursor 同为单色，与 codex 同族是品牌事实 —— 形状不同
+       （扭结 / 立方体 / Z），且标签就在旁边
+     - dsh     #4D6BFE  DeepSeek 官方蓝；深底上提亮保证 3:1
+     - zcode   Z.ai 同为单色。
+     图形对比度按 3:1 判（WCAG 非文字），全部值在两套主题下实测达标。 */
+  --brand-claude: #D97757;
+  --brand-codex:  #111111;
+  --brand-cursor: #111111;
+  --brand-dsh:    #4D6BFE;
+  --brand-zcode:  #111111;
 }
 
 /* 深色底上换用 dark 刻度，浅色那组在深底上会掉到 3:1 上下。 */
@@ -83,6 +102,11 @@
     --tool-cursor: #58d5ba;   /* Radix dark mint-11   */
     --tool-claude: #d6409f;   /* Radix dark pink-9    */
     --tool-dsh:    #ec5a72;   /* Radix dark ruby-10   */
+    --brand-claude: #D97757;
+    --brand-codex:  #ECECEC;
+    --brand-cursor: #ECECEC;
+    --brand-dsh:    #7C90FF;
+    --brand-zcode:  #ECECEC;
   }
 }
 :root[data-theme="dark"] {
@@ -91,6 +115,11 @@
   --tool-cursor: #58d5ba;   /* Radix dark mint-11   */
   --tool-claude: #d6409f;   /* Radix dark pink-9    */
   --tool-dsh:    #ec5a72;   /* Radix dark ruby-10   */
+  --brand-claude: #D97757;
+  --brand-codex:  #ECECEC;
+  --brand-cursor: #ECECEC;
+  --brand-dsh:    #7C90FF;
+  --brand-zcode:  #ECECEC;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -458,9 +487,11 @@ p { margin: 0; }
   transition: border-color var(--dur) var(--ease-out), background var(--dur) var(--ease-out), color var(--dur) var(--ease-out);
 }
 .app-tab:hover { background: var(--surface-2); color: var(--ink); }
+/* 选中底色吃 --brand（logo 真色）：标签是 logo 的家，橙 logo 配紫底
+   就是下一处"颜色不对"。--tool-* 只留在「全部」视图做功能色签。 */
 .app-tab.is-on {
-  background: color-mix(in oklab, var(--tc, var(--ink)) 16%, var(--surface));
-  border-color: color-mix(in oklab, var(--tc, var(--line-strong)) 45%, var(--line));
+  background: color-mix(in oklab, var(--brand, var(--tc, var(--ink))) 16%, var(--surface));
+  border-color: color-mix(in oklab, var(--brand, var(--tc, var(--line-strong))) 45%, var(--line));
   color: var(--ink);
 }
 /* 选中态靠**左边一条竖条**表明，不靠底色深浅。
@@ -483,7 +514,7 @@ p { margin: 0; }
   background: var(--ink);
 }
 /* 选中项悬停时底色略深，但竖条始终在 —— 两者的区别不依赖颜色 */
-.app-tab.is-on:hover { background: color-mix(in oklab, var(--tc, var(--ink)) 20%, var(--surface)); }
+.app-tab.is-on:hover { background: color-mix(in oklab, var(--brand, var(--tc, var(--ink))) 20%, var(--surface)); }
 /* 「未安装」的降级不用整体透明度。
    实测 opacity: .55 把未选中项的 5.93:1 直接压到 2.33:1（浅色）——
    远远低于 4.5。而这个状态要传达的信息是"这台机器上没装它"，
@@ -496,12 +527,14 @@ p { margin: 0; }
 
 /* 每个标签吃自己那个工具的颜色 —— 与「全部」视图里的色签同一套变量，
    不新造颜色（判据仍在 test/frontend-static 的 ΔE≥30 那条）。
-   「全部」「安全审计」用中性灰：它们不是某一个工具的落盘。 */
-.app-tab[data-app-tone="zcode"]  { --tc: var(--tool-zcode);  }
-.app-tab[data-app-tone="codex"]  { --tc: var(--tool-codex);  }
-.app-tab[data-app-tone="claude"] { --tc: var(--tool-claude); }
-.app-tab[data-app-tone="cursor"] { --tc: var(--tool-cursor); }
-.app-tab[data-app-tone="dsh"]    { --tc: var(--tool-dsh);    }
+   「全部」「安全审计」用中性灰：它们不是某一个工具的落盘。
+   --brand 是 logo 真色，只喂给图标：色签/底色要互相区分且当文字用过 AA，
+   logo 要认得出是哪家 —— 两件事各自成立，别混用。 */
+.app-tab[data-app-tone="zcode"]  { --tc: var(--tool-zcode);  --brand: var(--brand-zcode);  }
+.app-tab[data-app-tone="codex"]  { --tc: var(--tool-codex);  --brand: var(--brand-codex);  }
+.app-tab[data-app-tone="claude"] { --tc: var(--tool-claude); --brand: var(--brand-claude); }
+.app-tab[data-app-tone="cursor"] { --tc: var(--tool-cursor); --brand: var(--brand-cursor); }
+.app-tab[data-app-tone="dsh"]    { --tc: var(--tool-dsh);    --brand: var(--brand-dsh);    }
 .app-tab--meta { --tc: var(--muted); }
 
 /* 每个工具一个**形状**，不是色点。
@@ -511,7 +544,7 @@ p { margin: 0; }
 .app-tab-icon {
   width: 16px; height: 16px;
   flex: none;
-  color: var(--tc, var(--muted));
+  color: var(--brand, var(--tc, var(--muted)));
   opacity: .8;
 }
 .app-tab:hover .app-tab-icon,
@@ -984,7 +1017,7 @@ pre code { background: none; padding: 0; }
 
 /* 窄两栏（≤1500px 视口）时右栏只有 ~430–504px：250px 下限加上 gap 后
    auto-fit 只装得下一列，三张选择卡竖着摞成 393px，把清单顶出面板。
-   固定三列让它们始终保持一行（430px 的右栏也放得下）；选择卡内容
+   130px 下限让三张卡始终保持一行（430px 的右栏也放得下）；选择卡内容
    （标题+体积+两行说明）在 130px 里只是换行更多，仍可读。
    规则必须写在这里 —— 放去文件前面的嵌套媒体块里会被本条按源码顺序
    覆盖，媒体查询不加特异性。 */
@@ -2311,8 +2344,8 @@ body.is-busy .sidebar::after {
   .lane-line .btn { margin-inline-start: 0; flex: 1 1 100%; justify-content: center; }
   .lane-sub { flex-basis: 100%; }
   /* 换行成多行后必须弃用 baseline：跨行元素没有共同基线，Chrome 会把
-     整个 flex 容器拉高到几百像素来对齐首末行（实测 860px 视口下这一行
-     660px 高）。每行顶对齐即可。 */
+     整个 flex 容器拉高到几百像素来对齐首末行（实测 860px 视口下按钮
+     686×610、这一行 660px 高）。每行顶对齐即可。 */
   .lane-line { align-items: flex-start; }
 }
 

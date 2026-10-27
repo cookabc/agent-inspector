@@ -559,6 +559,45 @@ test('工具标识色不能借用状态色', () => {
   }
 });
 
+test('品牌 logo 用品牌真色，且图形对比度过 3:1', () => {
+  /* 侧栏的 brand-icon 是 simple-icons 的真 logo，颜色也必须是品牌真值 ——
+     Claude 的橙不是粉、DeepSeek 的蓝不是宝石红，认不出就是错的。
+     但 --tool-* 不能跟着换：它还当「全部」视图的**文字**用（AA 4.5），
+     且色签之间要互相区分 —— 所以拆两套：--brand-* 只喂图标。
+     codex/cursor/zcode 三家品牌本来就是单色，同值是有意的。 */
+  const brands = {
+    claude: ['#D97757', '#D97757'],   // Anthropic Claude 橙（深浅同值）
+    codex:  ['#111111', '#ECECEC'],   // OpenAI 单色
+    cursor: ['#111111', '#ECECEC'],   // Cursor 单色
+    dsh:    ['#4D6BFE', '#7C90FF'],   // DeepSeek 蓝，深底提亮
+    zcode:  ['#111111', '#ECECEC'],   // Z.ai 单色
+  };
+  for (const [id, [light, dark]] of Object.entries(brands)) {
+    const hits = [...css.matchAll(new RegExp(`--brand-${id}:\\s*(#[0-9a-f]{6})`, 'gi'))].map((m) => m[1].toUpperCase());
+    assert.ok(hits.length >= 3, `--brand-${id} 应有浅色 + 两套深色共 3 条声明，实际 ${hits.length}`);
+    assert.ok(hits.includes(light), `--brand-${id} 浅色应为 ${light}，实际 ${hits.join(',')}`);
+    assert.ok(hits.includes(dark), `--brand-${id} 深色应为 ${dark}，实际 ${hits.join(',')}`);
+  }
+  // 图标颜色吃 --brand，色签/底色仍吃 --tool-*：两套不许串
+  assert.match(css, /\.app-tab-icon\s*\{[^}]*color: var\(--brand, var\(--tc/);
+  assert.match(css, /\.app-tab\[data-app-tone="claude"\]\s*\{[^}]*--brand: var\(--brand-claude\)/);
+
+  // 品牌色只当图形用（logo），按 WCAG 非文字 3:1 判
+  const lum = (hex) => {
+    const rgb = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+      .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+  };
+  const ratio = (fg, bg) => { const [a, b] = [lum(fg), lum(bg)].sort((x, y) => y - x); return (a + 0.05) / (b + 0.05); };
+  const surfaces = { light: '#FDFDFC', dark: '#242424' };
+  for (const [scope, bg] of Object.entries(surfaces)) {
+    for (const [id, [light, dark]] of Object.entries(brands)) {
+      const c = ratio(scope === 'light' ? light : dark, bg);
+      assert.ok(c >= 3, `${scope} 下 ${id} logo 与底色只差 ${c.toFixed(2)}:1，图形要 3:1`);
+    }
+  }
+});
+
 test('分页续段在界面上要说出"删了会毁整条会话"', () => {
   /* Codex 把长会话按压缩点切成多段 rollout。续段首行带 history_base，
      删掉它整条会话永久不可恢复，而 Codex 报的是 "missing source rollout" ——
