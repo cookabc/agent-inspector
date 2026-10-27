@@ -490,8 +490,8 @@ p { margin: 0; }
 /* 选中底色吃 --brand（logo 真色）：标签是 logo 的家，橙 logo 配紫底
    就是下一处"颜色不对"。--tool-* 只留在「全部」视图做功能色签。 */
 .app-tab.is-on {
-  background: color-mix(in oklab, var(--brand, var(--tc, var(--ink))) 16%, var(--surface));
-  border-color: color-mix(in oklab, var(--brand, var(--tc, var(--line-strong))) 45%, var(--line));
+  background: color-mix(in oklab, var(--brand, var(--ink)) 16%, var(--surface));
+  border-color: color-mix(in oklab, var(--brand, var(--line-strong)) 45%, var(--line));
   color: var(--ink);
 }
 /* 选中态靠**左边一条竖条**表明，不靠底色深浅。
@@ -514,7 +514,7 @@ p { margin: 0; }
   background: var(--ink);
 }
 /* 选中项悬停时底色略深，但竖条始终在 —— 两者的区别不依赖颜色 */
-.app-tab.is-on:hover { background: color-mix(in oklab, var(--brand, var(--tc, var(--ink))) 20%, var(--surface)); }
+.app-tab.is-on:hover { background: color-mix(in oklab, var(--brand, var(--ink)) 20%, var(--surface)); }
 /* 「未安装」的降级不用整体透明度。
    实测 opacity: .55 把未选中项的 5.93:1 直接压到 2.33:1（浅色）——
    远远低于 4.5。而这个状态要传达的信息是"这台机器上没装它"，
@@ -525,17 +525,15 @@ p { margin: 0; }
 .app-tab.is-empty .app-tab-icon { opacity: .5; }
 .app-tab.is-empty:hover { color: var(--ink-2); }
 
-/* 每个标签吃自己那个工具的颜色 —— 与「全部」视图里的色签同一套变量，
-   不新造颜色（判据仍在 test/frontend-static 的 ΔE≥30 那条）。
-   「全部」「安全审计」用中性灰：它们不是某一个工具的落盘。
-   --brand 是 logo 真色，只喂给图标：色签/底色要互相区分且当文字用过 AA，
-   logo 要认得出是哪家 —— 两件事各自成立，别混用。 */
-.app-tab[data-app-tone="zcode"]  { --tc: var(--tool-zcode);  --brand: var(--brand-zcode);  }
-.app-tab[data-app-tone="codex"]  { --tc: var(--tool-codex);  --brand: var(--brand-codex);  }
-.app-tab[data-app-tone="claude"] { --tc: var(--tool-claude); --brand: var(--brand-claude); }
-.app-tab[data-app-tone="cursor"] { --tc: var(--tool-cursor); --brand: var(--brand-cursor); }
-.app-tab[data-app-tone="dsh"]    { --tc: var(--tool-dsh);    --brand: var(--brand-dsh);    }
-.app-tab--meta { --tc: var(--muted); }
+/* 每个标签只带一个颜色变量 --brand（品牌真色）。
+   色签那套 --tool-* 留给「全部」视图 —— 那里颜色要互相区分且当文字用
+   需过 AA，logo 只要认得出是哪家，两件事各自成立，别混用。
+   「全部」「安全审计」不是具体工具的落盘，用中性色（见下方 --meta）。 */
+.app-tab[data-app-tone="zcode"]  { --brand: var(--brand-zcode);  }
+.app-tab[data-app-tone="codex"]  { --brand: var(--brand-codex);  }
+.app-tab[data-app-tone="claude"] { --brand: var(--brand-claude); }
+.app-tab[data-app-tone="cursor"] { --brand: var(--brand-cursor); }
+.app-tab[data-app-tone="dsh"]    { --brand: var(--brand-dsh);    }
 
 /* 每个工具一个**形状**，不是色点。
    窄屏时侧栏只剩 56px，图标是唯一的识别线索 —— 七个圆点除了颜色
@@ -544,7 +542,7 @@ p { margin: 0; }
 .app-tab-icon {
   width: 16px; height: 16px;
   flex: none;
-  color: var(--brand, var(--tc, var(--muted)));
+  color: var(--brand, var(--muted));
   opacity: .8;
 }
 .app-tab:hover .app-tab-icon,
@@ -554,7 +552,7 @@ p { margin: 0; }
 
 /* 「全部」与「安全审计」不是具体工具，用中性色；中间用一条细线隔开 ——
    它们回答的是跨工具的问题，与"某个工具的落盘"不是一类。 */
-.app-tab--meta { --tc: var(--muted); }
+.app-tab--meta { --brand: var(--muted); }
 /* 分组靠留白，不靠线 —— 两条细分隔线把七项切成三段，看起来像三个
    不同的列表。真正的分组信息是顺序（跨工具的在两头），线只是噪音。 */
 .app-tab-sep {

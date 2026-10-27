@@ -579,8 +579,14 @@ test('品牌 logo 用品牌真色，且图形对比度过 3:1', () => {
     assert.ok(hits.includes(dark), `--brand-${id} 深色应为 ${dark}，实际 ${hits.join(',')}`);
   }
   // 图标颜色吃 --brand，色签/底色仍吃 --tool-*：两套不许串
-  assert.match(css, /\.app-tab-icon\s*\{[^}]*color: var\(--brand, var\(--tc/);
-  assert.match(css, /\.app-tab\[data-app-tone="claude"\]\s*\{[^}]*--brand: var\(--brand-claude\)/);
+  assert.match(css, /\.app-tab-icon\s*\{[^}]*color: var\(--brand, var\(--muted\)\)/);
+  // 侧栏标签上只允许出现 --brand —— 出现 --tool-* 就是把功能色漏进了 logo 层
+  const tabToneRules = css.match(/\.app-tab\[data-app-tone="[a-z]+"\]\s*\{[^}]*\}/g) || [];
+  assert.equal(tabToneRules.length, 5, `五个工具标签各一条 tone 规则，实际 ${tabToneRules.length}`);
+  for (const r of tabToneRules) {
+    assert.doesNotMatch(r, /--tool-/, `侧栏标签串用了功能色：${r.trim()}`);
+    assert.match(r, /--brand: var\(--brand-[a-z]+\)/);
+  }
 
   // 品牌色只当图形用（logo），按 WCAG 非文字 3:1 判
   const lum = (hex) => {
