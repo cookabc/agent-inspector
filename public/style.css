@@ -592,6 +592,10 @@ p { margin: 0; }
 .btn-sm { padding: 5px 10px; font-size: 12px; }
 .btn-icon { padding: 6px; }
 .btn-icon svg { width: 16px; height: 16px; }
+/* .btn 里随文字注入的 svg 必须钉住尺寸：没钉的 svg 在 Chrome 里按容器
+   撑满计算，按钮一旦被 flex 拉伸（860px 窄屏的 .lane-line .btn 是
+   flex:1 1 100%）就会跟着长成几百像素方块，整行被顶到 660px 高。 */
+.btn > svg { width: 16px; height: 16px; flex: none; }
 /* 工具栏里的图标按钮：与旁边的文字按钮同高（26px）。
    单独的 .btn-icon 是 6px padding + 16px = 30px，混在 btn-sm 里会高出一截，
    那一行按钮的下边缘就对不齐了。 */
@@ -2304,6 +2308,10 @@ body.is-busy .sidebar::after {
   /* 窄到一行放不下时，按钮独占第二行、拉满宽（更好点）；说明回到正常流 */
   .lane-line .btn { margin-inline-start: 0; flex: 1 1 100%; justify-content: center; }
   .lane-sub { flex-basis: 100%; }
+  /* 换行成多行后必须弃用 baseline：跨行元素没有共同基线，Chrome 会把
+     整个 flex 容器拉高到几百像素来对齐首末行（实测 860px 视口下这一行
+     660px 高）。每行顶对齐即可。 */
+  .lane-line { align-items: flex-start; }
 }
 
 @media (max-width: 620px) {
