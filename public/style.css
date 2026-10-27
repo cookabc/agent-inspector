@@ -424,7 +424,9 @@ p { margin: 0; }
   justify-content: flex-start;
   gap: 6px;
 }
-.sidebar-actions .btn-icon { flex: 0 0 auto; width: 32px; padding: 6px 0; }
+/* width 32 + padding 左右为 0，图标靠 justify-content 居中 —— 漏了它时
+   svg 贴在左边，视觉中心比按钮中心左偏 7px。 */
+.sidebar-actions .btn-icon { flex: 0 0 auto; width: 32px; padding: 6px 0; justify-content: center; }
 
 /* ── 工具切换 ───────────────────────────────────────────── */
 
