@@ -2,8 +2,8 @@
  * 路径取自 simple-icons（https://simple-icons.org，CC0）：
  *   claude.svg / openai.svg / cursor.svg / deepseek.svg / zdotai.svg
  *   （ZCode 由 Z.ai 出品，用 zdotai 的官方标识）。
- * 原先那些手画的近似形状（折角页、三层堆叠…）在 19px 下彼此难分，
- * 而品牌 logo 是用户本来就认识的图形 —— 侧栏图标该用真的。
+ * 手画的近似形状（折角页、三层堆叠…）在 19px 下彼此难分，
+ * 而品牌 logo 是用户本来就认识的图形 —— 侧栏图标用真的。
  *
  * 都是实心 fill 路径（与分类图标那套 stroke 线稿不同），渲染时统一
  * 用 currentColor，颜色仍由各自的 --tool-* 决定。

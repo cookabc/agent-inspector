@@ -26,6 +26,11 @@ const serverSrc = await fs.readFile(path.join(root, 'server.mjs'), 'utf8');
 const sharedSrc = await fs.readFile(path.join(root, 'public/views/shared.js'), 'utf8');
 const allSrc = await fs.readFile(path.join(root, 'public/views/all.js'), 'utf8');
 const actionsSrc = await fs.readFile(path.join(root, 'public/actions.js'), 'utf8');
+/* 会话面板的模板层（app.js 的编排从它 import）。模板行为的契约断言
+   在 views-contract.test.mjs；这里只放"必须在某个文件里"的存在性锁。 */
+const taskViewsSrc = await fs.readFile(path.join(root, 'public/views/tasks.js'), 'utf8');
+/* 文件清单视图（含三块分组与清理抽屉的模板）。 */
+const filesSrc = await fs.readFile(path.join(root, 'public/views/files.js'), 'utf8');
 
 test('导航是竖排 tablist：aria-orientation + roving tabindex + aria-controls', () => {
   assert.match(html, /role="tablist"/);
@@ -69,12 +74,17 @@ test('两个抽屉都有焦点陷阱，并且开合时管焦点', () => {
   assert.match(app, /function trapTab/);
   assert.match(app, /function openModal/);
   assert.match(app, /function closeModal/);
-  // 打开两个抽屉的地方都要调 openModal
-  const opens = app.match(/openModal\(/g) || [];
-  assert.ok(opens.length >= 3, `openModal 应当有一个定义 + 两处调用，实际 ${opens.length} 次`);
-  // 关闭也要各调一次
-  const closes = app.match(/closeModal\(/g) || [];
-  assert.ok(closes.length >= 3, `closeModal 应当有一个定义 + 两处调用，实际 ${closes.length} 次`);
+  /* 开合收进 showDrawer / hideDrawer 一处之后，焦点管理的正确性靠结构保证：
+     openModal / closeModal 各只有"定义 + showDrawer/hideDrawer 里一处调用"，
+     而三个抽屉（文件清理 / 会话清理 / 回灌）全部经过这两个入口。 */
+  for (const fn of ['openModal', 'closeModal']) {
+    const uses = app.match(new RegExp(`${fn}\\(`, 'g')) || [];
+    assert.equal(uses.length, 2, `${fn} 应当是"一个定义 + showDrawer/hideDrawer 里一处调用"，实际 ${uses.length} 次`);
+  }
+  for (const fn of ['showDrawer', 'hideDrawer']) {
+    const uses = app.match(new RegExp(`${fn}\\(`, 'g')) || [];
+    assert.equal(uses.length, 4, `${fn} 应当是"一个定义 + 三个抽屉各一处"，实际 ${uses.length} 次`);
+  }
   // Tab 键要真的走陷阱
   assert.match(app, /e\.key === 'Tab'[\s\S]{0,200}trapTab\(e, els\.drawer\)/);
   assert.match(app, /e\.key === 'Tab'[\s\S]{0,300}trapTab\(e, tEls\.drawer\)/);
@@ -88,7 +98,7 @@ test('抽屉声明 aria-modal 时，背景滚动真的被锁住', () => {
 
 test('打开抽屉时同步取焦点，不等 rAF', () => {
   // rAF 可能在样式重算前就跑，那时 getClientRects() 还是空的，
-  // 焦点留在背后那个按钮上 —— 实测踩过。
+  // 焦点会留在背后那个按钮上。
   const body = app.slice(app.indexOf('function openModal'), app.indexOf('function closeModal'));
   // 只看代码，不看注释：注释里正好写着"不能用 requestAnimationFrame"
   const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
@@ -143,7 +153,7 @@ test('所有往选区里写东西的地方都过同一个判据', () => {
   for (const [name, re] of [
     ['分组全选', /selectableOnly\(filesOf\(/],
     ['推荐清理', /selectableOnly\(filesOf\(/],
-    ['全选可见', /selectableOnly\(files, cat\)|selectableOnly\(files, cat\)|for \(const \{ cat, files \} of groups\)/],
+    ['全选可见', /for \(const \{ cat, files \} of groups\)/],
     ['三块分组', /canPick\(f\) && matches\(f\)|canPick, matches/],
   ]) {
     assert.match(everything, re, `${name} 没有过可选中判据`);
@@ -169,10 +179,8 @@ test('所有往选区里写东西的地方都过同一个判据', () => {
   }
 });
 test('清理成功后抽屉立刻关，结果交给 toast —— 不再靠延时等人读完', () => {
-  /* 用户报的："移入废纸篓的 loading 结束后，侧边栏没有马上消失"。
-     原来的顺序是：成功 → await load(true) 重扫约 1 秒 → 再 setTimeout 1.2 秒
-     → 才关。于是转圈早停了，抽屉还杵着，看起来像没反应。
-     会话那条线更夸张，写的是 3000。 */
+  /* 动作完成就必须立刻关抽屉：成功 → 重扫（约 1 秒）→ 再延时 → 才关，
+     会让转圈早停了、抽屉还杵着，看起来像没反应。先关再报，重扫放后台。 */
   assert.doesNotMatch(app, /setTimeout\(closeDrawer, \d+\)/, '不该再用延时关抽屉');
   assert.doesNotMatch(app, /setTimeout\(closeTaskDrawer, \d+\)/, '不该再用延时关抽屉');
 
@@ -213,8 +221,8 @@ test('toast 是个 aria-live 的独立元素，不靠抽屉承载结果', () => 
 });
 
 test('构成条按量出来的像素决定放不放文字，不按百分比也不靠估算', () => {
-  /* 实测 bug 两次：
-     ① 按百分比当阈值（floors[i] > 14）—— 同一个 21% 在宽屏是 200px、
+  /* 按百分比或估算像素当阈值都会裁掉半截字：
+     ① 同一个 21% 在宽屏是 200px、
         在窄栏只有 89px，「索引与其他开销 135.5 MB」被裁掉半截。
      ② 改成估算像素 —— 100px 的文字放 106px 的段里仍然溢出 2px。
      最终做法：两个版本都渲进 DOM，量 scrollWidth，放不下的收起来。 */
@@ -226,12 +234,12 @@ test('构成条按量出来的像素决定放不放文字，不按百分比也�
   // 靠量出来的宽度做最终判断 —— 用**段自身**的 scrollWidth，不是 span 的
   assert.match(dbCode, /seg\.scrollWidth > seg\.clientWidth/);
   assert.doesNotMatch(dbCode, /fullEl\.scrollWidth > seg\.clientWidth/);
-  // 不许退回按百分比（注释里会提到旧写法，所以只看代码）
+  // 不许退回按百分比（注释里会提到它，所以只看代码）
   assert.doesNotMatch(dbCode, /floors\[i\] > 1[0-9]/);
 });
 
 test('界面上不许把 undefined 印出来：单 app 的会话行没有 appLabel 字段', () => {
-  /* 实测 bug：抽屉清单里写 `${esc(t.appLabel)}，${esc(t.title)}`，
+  /* 抽屉清单若写 `${esc(t.appLabel)}，${esc(t.title)}`，
      而任何后端适配器都没有给会话行塞过 appLabel —— 于是每个 app 的清单
      第一项都是 "undefined · 标题"。这类缺陷不会报错，只是把实现细节
      漏到屏幕上，而这套工具的全部信任都建立在"屏幕上的字是真的"上。
@@ -239,12 +247,14 @@ test('界面上不许把 undefined 印出来：单 app 的会话行没有 appLab
      唯一例外是跨工具的「全部」视图：那边每一行必须自带归属，
      aggregateSessions() 确实给每行赋了 appLabel。 */
   assert.match(app, /const who = d\.appLabel/);
-  assert.match(app, /<span>\$\{esc\(who\)\}，\$\{esc\(t\.title\)\}<\/span>/);
+  // 抽屉清单的模板在 views/tasks.js（taskDrawerListHtml）：工具名由调用方传入，
+  // 不许取行上的 appLabel —— 那个字段不存在，取了就印 "undefined，标题"
+  assert.match(taskViewsSrc, /<span>\$\{esc\(who\)\}，\$\{esc\(t\.title\)\}<\/span>/);
 
-  // 抽屉那段不许再取行上的 appLabel（只看代码，注释里正解释这件事）
-  const drawer = app.slice(app.indexOf('function openTaskDrawer'), app.indexOf('function checkLine'))
-    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-  assert.doesNotMatch(drawer, /t\.appLabel/, '抽屉要用这一屏的 who，不是行上的字段');
+  // 会话行模板（views/tasks.js）也不许取行上的 appLabel —— 模板一次只服务
+  // 一个 app，标题旁的工具名由调用方拼。剥掉注释后全文不许出现。
+  const template = taskViewsSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.doesNotMatch(template, /\bt\.appLabel\b/, '会话行模板要用调用方给的名字，不是行上的字段');
 
   // 跨工具视图可以，而且必须有（否则那一屏分不清哪行是哪个工具）
   const agg = tasksSrc;
@@ -308,8 +318,9 @@ test('三块分组的数字跟着筛选走，且勾选只覆盖筛出来的那�
      根因是筛选只调 renderGroups()，没调 renderSplit()。 */
   const split = app.slice(app.indexOf('function renderSplit'), app.indexOf('function renderRecommend'));
   assert.match(split, /const vis = \(xs\) => xs\.filter\(matches\)/, '三块要按同一套 matches() 过滤');
-  assert.match(split, /筛选下没有条目/, '筛空的组要说清是"筛空了"还是"本来就没有"');
-  assert.match(split, /筛出 \$\{shown\.length/, 'meta 要写"筛出 N / 一共 M"');
+  // 空态文案与"筛出 N / M"长在模板里（views/files.js），行为断言在 views-contract
+  assert.match(filesSrc, /筛选下没有条目/, '筛空的组要说清是"筛空了"还是"本来就没有"');
+  assert.match(filesSrc, /筛出 \$\{shown\.length/, 'meta 要写"筛出 N / 一共 M"');
 
   // 三处触发筛选的地方都要重画 split
   assert.match(app, /renderChips\(\); renderSplit\(\); renderGroups\(\);/);
@@ -326,20 +337,21 @@ test('三块分组的数字跟着筛选走，且勾选只覆盖筛出来的那�
 });
 
 test('会话行不再重复印状态：pill 那一列已删除', () => {
-  /* 状态文字原来在 meta 行和右侧药丸各印一遍，药丸吃掉 69px + 12px gap，
+  /* 状态文字只在 meta 行印一次：右侧再放一个药丸会吃掉 69px + 12px gap，
      把标题挤到 267px（84 行里 60 行被截断）。 */
   assert.doesNotMatch(app, /class="trow-pill/);
-  assert.match(app, /class="trow-state-m \$\{stateTone\(t\)\}"/);
+  assert.match(taskViewsSrc, /class="trow-state-m \$\{stateTone\(t\)\}"/);
   // 网格从 5 列降到 4 列
   assert.match(css, /\.trow \{[\s\S]{0,200}grid-template-columns: auto auto minmax\(0, 1fr\) auto;/);
 });
 
 test('Cursor 的连带回收进详情与抽屉，不进清单行', () => {
   /* 塞进 meta 会撑爆（348px 需要 398px，13 行被截断）；
-     塞进体积列会把标题压回 278px。所以它只出现在展开后的详情里。 */
-  assert.match(app, /删除会连带回收/);
+     塞进体积列会把标题压回 278px。所以它只出现在展开后的详情里（行模板）
+     和抽屉的合计里（编排层）。 */
+  assert.match(taskViewsSrc, /删除会连带回收/);
   assert.match(app, /const exPending = taskState\.exclusive === null && d\.history === 'cursor-db'/);
-  assert.match(app, /dstat-pending/, '还没算完时要说"正在算"，不能装作没有连带');
+  assert.match(taskViewsSrc, /dstat-pending/, '还没算完时要说"正在算"，不能装作没有连带');
 });
 
 test('分类卡展开后把焦点还给三角，键盘不会断在半路', () => {
@@ -355,7 +367,7 @@ test('空提示挂在工具栏正下方，不在列表末尾', () => {
   /* 文案本身（是哪个条件筛空的）在 views-contract.test.mjs 里测 —— 那边
      直接调 emptyHintHtml 断言产出，比在源码里找字符串可靠。
      这里只剩一件只能在文件层查的事：它的 DOM 位置。
-     原来提示挂在列表末尾，离搜索框一百多像素，筛空之后人根本看不见。 */
+     提示必须紧挨搜索框：挂在列表末尾时筛空之后人根本看不见。 */
   assert.ok(html.indexOf('id="emptyHint"') < html.indexOf('id="groups"'), '空提示要在分组之前');
 });
 
@@ -417,11 +429,9 @@ test('三条改动磁盘的路径共用同一套确认交互', () => {
 });
 
 test('三条写入路径的确认串都是"输对才亮"，且来自同一份定义', () => {
-  /* 确认串以前散在四处：前端两个常量、服务端两条字面量、cursor-purge 里
-     一个没人 import 的死导出。改一处忘另一处，界面就会放行一个服务端
-     必然拒绝的请求 —— 而且三条路径用三个词，"清理"既用于删除又差点用于写入。
-     现在只有 lib/confirm-words.mjs 一份，服务端校验它、随 /api/scan 下发，
-     前端只读下发的值。 */
+  /* 确认串只能有 lib/confirm-words.mjs 一份：服务端校验它、随 /api/scan 下发，
+     前端只读下发的值。两边各写一份，改一处忘另一处，界面就会放行一个服务端
+     必然拒绝的请求；三条路径各用不同的词，也免得分不清在确认删除还是写入。 */
   // 前端不许自己写死这几个字
   assert.doesNotMatch(app, /const PURGE_WORD = '彻底删除'/);
   assert.doesNotMatch(app, /const TASK_PURGE_WORD = '清理'/);
@@ -500,7 +510,7 @@ test('宽屏与单列的阅读顺序一致：会话管理在前，文件清单�
 test('工具标识色不能借用状态色', () => {
   /* 状态色是固定语义：绿=安全、黄=谨慎、橙=异常、红=禁止。
      拿它来区分工具，"黄色"就会同时意味着"这是 Cursor"和"这要小心"，
-     两个含义打架。第一版就是这么写的，看起来能分，语义是错的。
+     两个含义打架 —— 看着能分，语义是错的。
 
      判据：工具标识只能用 --tool-* 这组变量，不许出现 --st-*。 */
   // 只取这四个变量的声明行：它们的右侧不许出现状态色
@@ -552,19 +562,18 @@ test('工具标识色不能借用状态色', () => {
 test('分页续段在界面上要说出"删了会毁整条会话"', () => {
   /* Codex 把长会话按压缩点切成多段 rollout。续段首行带 history_base，
      删掉它整条会话永久不可恢复，而 Codex 报的是 "missing source rollout" ——
-     看起来像别处坏了。行上和详情里都必须明说。 */
+     看起来像别处坏了。行上和详情里都必须明说（模板在 views/tasks.js）。 */
   // 行上标出它从第几段起
-  assert.match(app, /t\.lineage\?\.continuation/);
-  assert.match(app, /分页第 \$\{t\.lineage\.endOrdinal\} 段起/);
+  assert.match(taskViewsSrc, /t\.lineage\?\.continuation/);
+  assert.match(taskViewsSrc, /分页第 \$\{t\.lineage\.endOrdinal\} 段起/);
   // 详情里说清后果
-  assert.match(app, /missing source rollout/);
-  assert.match(app, /删掉任何一段，整条会话都再也恢复不了/);
+  assert.match(taskViewsSrc, /missing source rollout/);
+  assert.match(taskViewsSrc, /删掉任何一段，整条会话都再也恢复不了/);
 });
 
 test('次要文字在三种浅色底上都过 AA', () => {
-  /* --muted 原来 #868d80：白底 3.42、surface-2 2.85 —— 而它被用在十几处
-     10.5–12px 的小字上（"删了会怎样"、分类计数、排序标签、工具路径）。
-     加深到 #5e655a 之后三档都过 4.5。 */
+  /* --muted 用在十几处 10.5–12px 的小字上（"删了会怎样"、分类计数、
+     排序标签、工具路径），三种浅色底都必须过 4.5。当前值 #5e655a。 */
   const muted = css.match(/--muted:\s*(#[0-9a-f]{6})/i)[1];
   const lum = (hex) => {
     const v = [0,2,4].map(i => parseInt(hex.replace('#','').slice(i,i+2),16)/255)
@@ -590,8 +599,8 @@ test('切主题时主动取消已启动的过渡', () => {
 });
 
 test('三块分组不借状态色说反话', () => {
-  /* 「会话仍在」那块写的是"请谨慎"，原来却用 --st-good（绿）——
-     绿色在全站表示"可安全清理"，用在这里等于说反话。改成中性 --ink-2。 */
+  /* 「会话仍在」那块写的是"请谨慎"，不能用 --st-good（绿）——
+     绿色在全站表示"可安全清理"，用在这里等于说反话，要用中性 --ink-2。 */
   assert.match(css, /\.split-block\.is-live\s*\{\s*--c:\s*var\(--ink-2\)/);
   assert.doesNotMatch(css, /\.split-block\.is-live\s*\{\s*--c:\s*var\(--st-good\)/);
 });
@@ -610,8 +619,8 @@ test('「未安装」的降级不牺牲可读性', () => {
 });
 
 test('app.js 从各模块 import 的名字，模块里确实导出了', async () => {
-  /* 实测踩过：删掉 actions.js 里的 toggleCatFilter 之后，app.js 还 import 着它 ——
-     浏览器直接抛 "does not provide an export named"，整个页面白屏，
+  /* 这类错误只在浏览器里炸：删掉模块里的导出而 app.js 还 import 着它 ——
+     浏览器抛 "does not provide an export named"，整个页面白屏，
      而 338 条单测全绿（前端模块没被任何单测 import 过，语法检查也查不出
      跨文件的导出名）。这类错误只会在浏览器里炸，所以在这里静态查一遍。 */
   const modules = {
@@ -619,6 +628,8 @@ test('app.js 从各模块 import 的名字，模块里确实导出了', async ()
     './views/shared.js': sharedSrc,
     './views/files.js': await fs.readFile(path.join(root, 'public/views/files.js'), 'utf8'),
     './views/all.js': allSrc,
+    './views/tasks.js': taskViewsSrc,
+    './views/audit.js': await fs.readFile(path.join(root, 'public/views/audit.js'), 'utf8'),
     './logic.js': await fs.readFile(path.join(root, 'public/logic.js'), 'utf8'),
   };
 
@@ -636,7 +647,7 @@ test('app.js 从各模块 import 的名字，模块里确实导出了', async ()
 });
 
 test('侧栏底部在窄屏下真的竖排（按钮住在一个横向容器里）', () => {
-  /* 实测踩过两次：
+  /* 这里断过两次：
      ① 「扫描用时」和两个按钮挤一行 → 那句话在词中间断成"扫描用 / 时 3.5s"
      ② 改成两行后，窄屏媒体查询只在 .sidebar-foot 上设 column，
         而按钮住在 .sidebar-actions 里 —— 按钮仍横向并排，总宽 82px，

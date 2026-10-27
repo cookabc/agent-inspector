@@ -72,12 +72,12 @@ import { fmtBytes, isSelectable } from './logic.js';
 /* 视图层：转义、图标、徽标、状态字典、行/卡片模板。
    这一层不碰 DOM、不读全局 state，测试能直接喂夹具断言产出的 HTML。 */
 import {
-  esc, icon, badge, navIcon, STATUS_CLASS, STATUS_LABEL,
-  shortPath, fmtDate, fmtDateTime,
-  bytesTip, bytesB, bytesWithExact,
+  esc, icon, navIcon, STATUS_CLASS, STATUS_LABEL,
+  shortPath, bytesTip, bytesB, bytesWithExact, confirmWordHint,
 } from './views/shared.js';
 import {
-  rowHtml as fileRowHtml, groupCard, emptyHintHtml, MAX_ROWS,
+  rowHtml as fileRowHtml, groupCard, emptyHintHtml,
+  splitBlockHtml, drawerStatsHtml, drawerMixHtml, drawerListHtml, recChipsHtml,
 } from './views/files.js';
 import {
   groupSessions, sessionGroup, allLedeHtml, toolFilterChip, DEFAULT_OPEN_GROUPS,
@@ -88,6 +88,19 @@ import {
   toggleGroupBox, toggleRow, toggleStatus, toggleExplain,
   toggleCategory, toggleRecommendItem, toggleAllGroup, toggleToolFilter, nextTheme,
 } from './actions.js';
+/* 会话面板的模板与派生：状态文案、行/分组模板、清理数字（纯函数，有契约测试）。
+   渲染与副作用留在这里 —— 编排层只决定"往哪个元素画什么"。 */
+import {
+  isPurgeable, STATE_TONE, STATE_META_CN, STATUS_CLASS_TONE,
+  taskSelTotals, taskQuickSet, visibleTasks, groupTasksByWorkspace,
+  dbBarSegments, taskRowHtml, taskGroupHtml, recoverRowHtml, dryRunHtml, checkLine,
+  taskLedeHtml, taskWarnHtml, taskEmptyWarnHtml, taskQuickTexts,
+  taskDrawerStatsHtml, taskDrawerNoteHtml, taskDrawerListHtml,
+} from './views/tasks.js';
+/* 安全审计视图的模板与汇总（纯函数，有契约测试）。 */
+import {
+  auditSummary, auditLedeHtml, auditToolHtml, auditHitGroups, auditGroupHtml,
+} from './views/audit.js';
 
 /* 推荐清理的范围：rules.mjs 里标了 recommend 的那几类 —— 就是"删了不影响
    会话、配置和凭据"的那些（日志、缓存、系统垃圾）。其中标了 recommendDefaultOff
@@ -139,7 +152,7 @@ function recStore() {
 }
 
 function loadRecOff() {
-  // 只认得当前这个 app 存在的分类；旧版留下的、或换 app 带过来的 id 直接丢掉
+  // 只认得当前这个 app 存在的分类；存着的 id 里不属于它的直接丢掉
   const ids = recStore()[state.appId];
   if (Array.isArray(ids)) {
     const known = new Set(recommendAll().map((c) => c.id));
@@ -362,8 +375,7 @@ const isAll = () => state.appId === ALL_ID;
 const AUDIT_ID = 'audit';
 const isAudit = () => state.appId === AUDIT_ID;
 
-function renderAppTabs() {
-  /* 导航从顶栏搬到左侧栏（理由见 style.css 里那段：七个标签横排要 780px，
+function renderAppTabs() {  /* 导航从顶栏搬到左侧栏（理由见 style.css 里那段：七个标签横排要 780px，
      1280 视口下「安全审计」被推出可视区）。竖排之后每个工具是一整行，
      加工具只是多一行，不会再挤。
 
@@ -621,47 +633,10 @@ function openDrawer() {
       : '没有选中任何可以删除的条目。', { error: true });
     return;
   }
-  const bytes = rows.reduce((s, f) => s + f.s, 0);
-  const biggest = rows.reduce((a, b) => (a.s >= b.s ? a : b), rows[0]);
-
-  els.drawerStats.innerHTML = `
-    <div class="dstat"><span>条目</span><b>${rows.length.toLocaleString()}</b></div>
-    <div class="dstat"><span>合计</span><b title="${bytesTip(bytes)}">${fmtBytes(bytes)}</b></div>
-    <div class="dstat"><span>最大一项</span><b title="${esc(rowTitle(biggest))}，${bytesTip(biggest.s)}">${fmtBytes(biggest.s)}</b></div>`;
-
-  // 这批里都是些什么 —— 按分类摊开，别只给一个总数
-  // 跨 app 时同名分类（各工具都有一类"缓存"）是不同的元信息对象，
-  // 按对象 identity 求 key 会把同一类拆成好几项。按分类 id 合并。
-  const mix = new Map();
-  for (const f of rows) {
-    const c = catOfRow(f);
-    const hit = mix.get(c.id);
-    if (hit) hit.bytes += f.s;
-    else mix.set(c.id, { cat: c, bytes: f.s });
-  }
-  const mixSorted = [...mix.values()].sort((a, b) => b.bytes - a.bytes);
-  const head = mixSorted.slice(0, 5);
-  els.drawerMix.innerHTML = '包含 ' + head.map(({ cat: c, bytes }) =>
-    `<span class="mix-item ${STATUS_CLASS[c.status]}">
-       <span class="swatch"></span>${esc(c.label)} <em>${fmtBytes(bytes)}</em>
-     </span>`).join('')
-    + (mixSorted.length > head.length
-        ? `<span>…共 ${mixSorted.length} 类</span>` : '');
-
-  const shown = rows.slice().sort((a, b) => b.s - a.s).slice(0, 300);
-  els.drawerList.innerHTML = shown.map((f) => {
-    const cut = f.p.lastIndexOf('/');
-    const dir = cut < 0 ? '' : f.p.slice(0, cut + 1);
-    const name = cut < 0 ? f.p : f.p.slice(cut + 1);
-    return `<li title="${esc(rowTitle(f))}">
-      <span class="dl-path"><span class="row-dir">${esc(dir)}</span><b>${esc(name)}</b></span>
-      <span title="${bytesTip(f.s)}">${fmtBytes(f.s)}</span></li>`;
-  }).join('')
-    + (rows.length > 300
-        // 截断的只是这张预览表，不是删除范围 —— 不写清楚，人会以为剩下的不删。
-        ? `<li class="drawer-more"><span>下面还有 ${(rows.length - 300).toLocaleString()} 项没列出来` +
-          `（这张表只列最大的 300 项），<b>它们同样在这次的删除范围里</b>。</span><span></span></li>`
-        : '');
+  // 抽屉的三块预览（读数 / 分类构成 / 清单）在 views/files.js，有契约测试
+  els.drawerStats.innerHTML = drawerStatsHtml(rows, { titleOf: rowTitle });
+  els.drawerMix.innerHTML = drawerMixHtml(rows, catOfRow);
+  els.drawerList.innerHTML = drawerListHtml(rows, { titleOf: rowTitle });
   els.drawerListCount.textContent = `${rows.length.toLocaleString()} 项`;
 
   els.drawerMsg.textContent = dropped
@@ -693,16 +668,26 @@ function openDrawer() {
   }
   syncDrawerMode();
 
-  els.scrim.hidden = false;
-  els.drawer.hidden = false;
-  openModal(els.drawer);
+  showDrawer(els.drawer, els.scrim);
+}
+
+/* 三个确认抽屉（文件清理 / 会话清理 / 回灌）共用的开合。开之前调用方
+   先把内容备好 —— 这里只管"显示 + 焦点进抽屉"与"隐藏 + 焦点归还"。
+   busy 时不许关：动作正在跑，抽屉里那份失败清单本身就是要看的东西。 */
+function showDrawer(drawer, scrim) {
+  scrim.hidden = false;
+  drawer.hidden = false;
+  openModal(drawer);
+}
+function hideDrawer(drawer, scrim) {
+  if (operationBusy) return;
+  scrim.hidden = true;
+  drawer.hidden = true;
+  closeModal();
 }
 
 function closeDrawer() {
-  if (operationBusy) return;
-  els.scrim.hidden = true;
-  els.drawer.hidden = true;
-  closeModal();
+  hideDrawer(els.drawer, els.scrim);
 }
 
 /* ── 模态抽屉的焦点 ───────────────────────────────────────
@@ -1004,26 +989,6 @@ function renderAllSessions() {
 const auditState = { data: null, loading: false };
 let auditRequest = 0;
 
-const AUDIT_LEVEL = {
-  high: { label: '高危', cls: 'st-critical' },
-  medium: { label: '疑似', cls: 'st-warning' },
-};
-/** 样式 → 人话。key 是 lib/audit.mjs 里的 kind/样式名，两边的字典必须一起改。 */
-const AUDIT_STYLE = {
-  'aws-key': 'AWS 访问密钥', github: 'GitHub 令牌', 'api-key': 'API key',
-  stripe: 'Stripe 密钥', slack: 'Slack 令牌', google: 'Google API 密钥',
-  jwt: 'JWT', bearer: 'Bearer 令牌', 'url-creds': 'URL 内嵌的账号密码',
-};
-/** bank 来源是 KV 键名（password / token…），转成"密码 / 令牌"。 */
-const AUDIT_KEY = {
-  password: '密码', passwd: '密码', pwd: '密码', secret: '密钥', token: '令牌',
-  api_key: 'API key', apikey: 'API key', access_key: '访问密钥',
-  secret_key: '私钥', private_key: '私钥', client_secret: '客户端密钥',
-};
-
-const auditStyleName = (f) =>
-  AUDIT_STYLE[f.style] || AUDIT_KEY[f.style] || (f.style ? f.style : '凭据');
-
 function renderAuditAll() {
   for (const id of ['overview', 'files', 'tasks', 'diagnosis']) {
     const el = document.getElementById(id);
@@ -1058,94 +1023,25 @@ async function loadAudit(refresh = false) {
   }
 }
 
-const auditCount = (s, level) => s.findings.filter((f) => f.level === level).length;
-
 function renderAudit() {
   const d = auditState.data;
   if (!d) return;
 
-  const tot = d.apps.reduce((a, x) => ({
-    h: a.h + (x.totals?.high || 0), m: a.m + (x.totals?.medium || 0), i: a.i + (x.totals?.info || 0),
-  }), { h: 0, m: 0, i: 0 });
-  const scanned = d.apps.reduce((s, a) => s + (a.sessionsScanned || 0), 0);
-  const bytes = d.apps.reduce((s, a) => s + (a.bytesScanned || 0), 0);
-  const problems = d.apps.flatMap((a) => (a.problems || []).map((p) => `${a.label}：${p}`));
+  const s = auditSummary(d);
+  els.auditLede.innerHTML = auditLedeHtml(d, s);
+  els.auditTools.innerHTML = d.apps.map(auditToolHtml).join('');
 
-  els.auditLede.innerHTML =
-    `把 <b>${scanned.toLocaleString()}</b> 个会话的正文（约 ${fmtBytes(bytes)}）过了一遍：` +
-    `<b>${tot.h}</b> 处高危（读到又外发）、<b>${tot.m}</b> 处疑似（外发内嵌）、` +
-    `<b>${tot.i}</b> 次敏感文件读取。` +
-    `<span class="all-note">证据已脱敏；这一屏只读，要处理去对应工具。</span>` +
-    (problems.length ? `<span class="all-note">${esc(problems[0])}${problems.length > 1 ? ` 等 ${problems.length} 条` : ''}</span>` : '');
-
-  els.auditTools.innerHTML = d.apps.map((a) => {
-    const tone = `data-app-tone="${esc(a.app)}"`;
-    if (!a.supported) {
-      return `<span class="all-tool" ${tone} title="${esc(a.reason || '')}">${esc(a.label)} 暂不支持</span>`;
-    }
-    if (a.absent) {
-      return `<span class="all-tool" ${tone} title="${esc(a.label)}：这台机器上没有">${esc(a.label)} 未安装</span>`;
-    }
-    const t = a.totals;
-    /* 高危/疑似各带色显示，第三个数字是"读过敏感文件"——它中性、无标签，
-       容易被读成"还有 40 处问题"。所以给它加个小字后缀，把三档说清楚。 */
-    const many = [];
-    if (t.high) many.push(`<em class="is-high">${t.high}</em>`);
-    if (t.medium) many.push(`<em class="is-med">${t.medium}</em>`);
-    if (t.info) many.push(`<em>${t.info}</em><i class="audit-unit">次读取</i>`);
-    return `<span class="all-tool" ${tone} title="${esc(a.label)}：扫了 ${a.sessionsScanned} 个会话，用时 ${a.ms} ms${
-      a.truncatedSessions ? `，${a.truncatedSessions} 个超长被截断` : ''}${
-      a.hitsDropped ? `，另有 ${a.hitsDropped} 个命中会话没列出` : ''}">
-      ${esc(a.label)} ${many.join('')}
-    </span>`;
-  }).join('');
-
-  // 有高危/疑似的会话才成组；只有"读过敏感文件"的会话进不了列表 ——
-  // 那是背景知识，全摆出来会把真问题淹了。
-  const groups = d.apps
-    .flatMap((a) => (a.hits || []).map((h) => ({ app: a, h })))
-    .filter(({ h }) => auditCount(h, 'high') + auditCount(h, 'medium') > 0)
-    .sort((x, y) =>
-      (auditCount(y.h, 'high') - auditCount(x.h, 'high')) ||
-      (auditCount(y.h, 'medium') - auditCount(x.h, 'medium')));
-
+  const groups = auditHitGroups(d);
   els.auditEmpty.hidden = groups.length > 0;
   if (!groups.length) {
-    els.auditEmpty.innerHTML = scanned
+    els.auditEmpty.innerHTML = s.scanned
       ? '没有扫到外发命中。敏感文件的读取只算提示，不在这里展开。'
       : '没有可扫描的会话。';
     els.auditList.innerHTML = '';
     return;
   }
 
-  els.auditList.innerHTML = groups.map(({ app, h }) => {
-    const rows = h.findings
-      .filter((f) => f.level !== 'info')
-      .map((f) => {
-        const lv = AUDIT_LEVEL[f.level];
-        const what = f.kind === 'secret-out'
-          ? `读到的${auditStyleName(f)}又出现在外发命令里${f.from && f.from !== '命令输出' ? `（读取来源 ${esc(shortPath(f.from))}）` : ''}`
-          : `外发命令里内嵌了${auditStyleName(f)}`;
-        return `<div class="audit-row">
-          <span class="audit-level ${lv.cls}">${lv.label}</span>
-          <div class="audit-body">
-            <p class="audit-what">${what} <code class="audit-val">${esc(f.valueMasked)}</code></p>
-            ${f.evidence ? `<code class="audit-ev">${esc(f.evidence)}</code>` : ''}
-          </div>
-        </div>`;
-      }).join('');
-    const info = h.sensitiveReadCount
-      ? `<p class="audit-info">另读过 ${h.sensitiveReadCount} 个敏感文件${h.sensitiveReads?.length ? `：${h.sensitiveReads.slice(0, 4).map((p) => esc(p.split('/').pop())).join('、')}${h.sensitiveReadCount > 4 ? ' 等' : ''}` : ''}${h.truncated ? '；会话超长，只扫了前 32 MB' : ''}</p>`
-      : (h.truncated ? '<p class="audit-info">会话超长，只扫了前 32 MB</p>' : '');
-    return `<section class="all-group">
-      <header class="all-group-head">
-        <span class="all-app" data-app-tone="${esc(app.app)}">${esc(app.label)}</span>
-        <span class="all-title" title="${esc(h.title)}">${esc(h.title)}</span>
-        <span class="all-group-n">${h.bodyRel ? esc(h.bodyRel) : ''}</span>
-      </header>
-      ${rows}${info}
-    </section>`;
-  }).join('');
+  els.auditList.innerHTML = groups.map(({ app, h }) => auditGroupHtml(app, h)).join('');
 }
 
 /* ── 会话与非会话 ──────────────────────────────────────────
@@ -1158,7 +1054,6 @@ function renderSplit() {
   for (const f of files) groups[groupOf(f)].push(f);
   const { orphan, live, other } = groups;
 
-  const sum = (xs) => xs.reduce((a, f) => a + f.s, 0);
   const sids = (xs) => new Set(xs.map((f) => f.sid)).size;
   /* 两块"会话"分组都空的时候这里只剩一块，说"分成三组"就是假话 ——
      而这句说明的主要作用恰恰是解释"为什么没有那两组"。
@@ -1167,8 +1062,6 @@ function renderSplit() {
   const twoEmpty = orphan.length === 0 && live.length === 0;
 
   // 数字全部长在下面几块上，这里只交代"为什么这么分"，不再把同一批数字念一遍
-  // One sentence, not two: the group names already say what the groups
-  // are, and the protected-content rule is shown on the blocks themselves.
   els.splitLede.innerHTML = twoEmpty
     ? `点整块可勾选这一组。`
     : `按<b>会话是否还在</b>分成三组，点一块选中那一组。`;
@@ -1176,65 +1069,11 @@ function renderSplit() {
   /* 每块自己就是一个勾选框：点一下把这一组整个勾上，行也跟着筛到这一组，
      在下面的清单里能看见勾。再点一下取消。
      计数用真正"能勾"的条数 —— 受保护的内容（凭据、会话库、配置）与软链接
-     都不进勾选，所以「非会话文件」那块的已选数会比它自己的文件数少，这是对的，照实写。 */
-  const selectable = (xs) => xs.filter((f) => canPick(f));
-
-  const anyPicked = state.selection.size > 0;
-  /**
-   * 一块分组。
-   *
-   * `xs` 是这一组的全部文件，`hit` 是筛过之后看得见的那些。两者不同的
-   * （搜索 / 状态筛选生效时）要在块上写清"筛出多少 / 一共多少" ——
-   * 只印全量数字的话，上面三块加起来 1,360 个文件，下面分类卡却只剩 2 组，
-   * 数字与内容对不上；只印筛后的数字又会让人以为文件真的只剩这么点。
-   */
-  const block = (cls, title, desc, xs, extra, split, hit) => {
-    const shown = hit || xs;
-    const can = selectable(shown);
-    const picked = can.filter((f) => state.selection.has(keyOf(f)));
-    const allOn = can.length > 0 && picked.length === can.length;
-    const part = picked.length > 0 && !allOn;     // 只勾了这一组的一部分
-    const toggle = can.length < shown.length ? '（受保护的几项不会被勾上）' : '';
-    // 空分组没有可勾的东西：不给 tabindex、不写"点这里选"，也不假装是复选框。
-    // 留一个空的 role=checkbox 让人点下去没反应，比不放这块更糟。
-    const empty = can.length === 0;
-    // 筛选让这一组少了东西时，体积和条数都按"看得见的"算，并把全量写在后面。
-    const filtered = shown.length !== xs.length;
-    // 三种状态说三种话。勾一半时点下去是"补全"，不是"取消" —— 文案写反了就是骗人。
-    // 没勾的那两块还要说明：点它不是"加进去"，是"换成它"。
-    const flag = empty
-      ? (filtered && xs.length ? '这一组当前筛选下没有条目' : '这一组没有可勾选的条目')
-      : allOn
-        ? `已选 <b>${picked.length.toLocaleString()}</b> 项，<b>${fmtBytes(sum(picked))}</b>，再点一下取消${toggle}`
-        : part
-          ? `已选 <b>${picked.length.toLocaleString()}</b> / <b>${can.length.toLocaleString()}</b> 项，` +
-            `<b>${fmtBytes(sum(picked))}</b>　再点一下补全${toggle}`
-          : anyPicked
-            ? `点这里换成这一组${toggle}`
-            : `点这里选中这一组${toggle}`;
-    // 空分组整块退出交互：没有 tabindex、没有 role=checkbox、没有 data-split，
-    // 点下去也不会触发任何选择逻辑。
-    const cls2 = `split-block ${cls}${allOn ? ' is-on' : ''}${part ? ' is-part' : ''}` +
-      `${empty ? ' is-empty' : ' is-clickable'}`;
-    const attrs = empty
-      ? ''
-      : ` data-split="${split}" role="checkbox" tabindex="0" aria-checked="${part ? 'mixed' : String(allOn)}"`;
-    const shownBytes = sum(shown);
-    return `
-    <section class="${cls2}"${attrs}>
-      <header class="split-head">
-        <h3><span class="box" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span>${esc(title)}</h3>
-        <span class="split-size" title="${bytesTip(shownBytes)}">${fmtBytes(shownBytes)}</span>
-      </header>
-      <p class="split-desc">${esc(desc)}</p>
-      <p class="split-meta">${
-        filtered
-          ? `筛出 ${shown.length.toLocaleString()} / ${xs.length.toLocaleString()} 个文件`
-          : `${xs.length.toLocaleString()} 个文件`
-      }${extra}</p>
-      <p class="split-flag">${flag}</p>
-    </section>`;
+     都不进勾选，所以「非会话文件」那块的已选数会比它自己的文件数少，这是对的，照实写。
+     块的模板在 views/files.js（splitBlockHtml，有契约测试），这里只递上下文。 */
+  const splitCtx = {
+    selection: state.selection, keyOf, canPick,
+    anyPicked: state.selection.size > 0,
   };
 
   /* 两块"会话"分组都没内容时（Claude Code 与 Cursor 是常态：前者没有索引库
@@ -1255,18 +1094,19 @@ function renderSplit() {
   const vis = (xs) => xs.filter(matches);
 
   els.split.innerHTML = sessNote + (bothEmpty ? '' : [
-    block('is-orphan', '会话已不存在', '会话库里找不到它，只剩文件残留。可以直接清理。', orphan,
-      sids(orphan) ? `，${sids(orphan).toLocaleString()} 个会话` : '', 'orphan', vis(orphan)),
-    block('is-live', '会话仍在', `这些会话还在 ${esc(state.index.label)} 里，文件有用，请谨慎。`, live,
-      sids(live) ? `，${sids(live).toLocaleString()} 个会话` : '', 'live', vis(live)),
-  ].join('')) + block('is-other', '非会话文件', '日志、缓存、配置等，不属于任何会话。', other, '', 'other', vis(other));
+    splitBlockHtml({ cls: 'is-orphan', title: '会话已不存在', desc: '会话库里找不到它，只剩文件残留。可以直接清理。',
+      xs: orphan, extra: sids(orphan) ? `，${sids(orphan).toLocaleString()} 个会话` : '', split: 'orphan', hit: vis(orphan), ...splitCtx }),
+    splitBlockHtml({ cls: 'is-live', title: '会话仍在', desc: `这些会话还在 ${esc(state.index.label)} 里，文件有用，请谨慎。`,
+      xs: live, extra: sids(live) ? `，${sids(live).toLocaleString()} 个会话` : '', split: 'live', hit: vis(live), ...splitCtx }),
+  ].join('')) + splitBlockHtml({ cls: 'is-other', title: '非会话文件', desc: '日志、缓存、配置等，不属于任何会话。',
+    xs: other, extra: '', split: 'other', hit: vis(other), ...splitCtx });
 }
 
 /* 按钮上直接写出这批有多大，点之前就知道会发生什么。
    下面的条目可以逐项开关，按钮数字跟着变。
 
-   一行结构（原来是名字 / 数字 / "共 N 项" / 按钮+说明 四行）：
-   lane-line 里放 名称 + 大数字 + 计数与后果 + 按钮，lane-scope 放分类 chip。 */
+   一行结构：lane-line 里放 名称 + 大数字 + 计数与后果 + 按钮，
+   lane-scope 放分类 chip。挤成一行是为了让按钮数字与说明对得上同一个范围。 */
 function renderRecommend() {
   // 一个字节都没有的推荐项不立空壳 —— 跟分类卡片同一条规矩
   const all = recommendAll().filter((c) => c.bytes > 0);
@@ -1300,9 +1140,9 @@ function renderRecommend() {
      一个看得见但按不动的胖子，占着 hero 右栏。 */
   const nothingOn = !on.length;
 
-  /* 特殊态：藏掉"名称 + 数字 + 按钮"，只留说明文字在同一行 —— 而不是把
-     整行藏掉再另起一行说（那正是原来四行结构的来源）。chip 留着，那是
-     把排除掉的分类放回来的唯一入口。 */
+  /* 特殊态：藏掉"名称 + 数字 + 按钮"，只留说明文字在同一行 —— 整行藏掉
+     再另起一行说会把行高撑回去。chip 留着，那是把排除掉的分类放回来的
+     唯一入口。 */
   if (nothingOn || nothingPickable) {
     recLineParts(true);
     els.recSub.innerHTML = nothingOn
@@ -1321,8 +1161,8 @@ function renderRecommend() {
      那句"删掉不影响会话、配置和凭据"对它就是假话。 */
   els.recName.textContent = all.length <= 2 ? all.map((c) => c.label).join('、') : '文件与日志';
 
-  /* 一行之内把"共几项 / 删不掉的例外 / 后果"依次说清。原来这三件各占一行。
-     "勾选后摊开确认清单、不会立刻删除"不再写在这 —— 抽屉里的确认串已经把
+  /* 一行之内把"共几项 / 删不掉的例外 / 后果"依次说清。
+     "勾选后摊开确认清单、不会立刻删除"不写在这 —— 抽屉里的确认串已经把
      这层保险说得更清楚，重复三遍只是噪音。 */
   els.recSub.innerHTML =
     `共 <b>${count.toLocaleString()}</b> 项`
@@ -1356,18 +1196,8 @@ function recLineParts(hidden) {
   els.recBtn.hidden = hidden;
 }
 
-/** 推荐范围里的分类开关。全排除那一条也要用它，所以单独提出来。 */
-function recChips(list) {
-  return list.map((c) => {
-    const isOn = !state.recOff.has(c.id);
-    return `<button type="button" class="rec-chip ${STATUS_CLASS[c.status]} ${isOn ? 'is-on' : ''}"
-      data-rec="${c.id}" aria-pressed="${isOn}" title="${esc(c.what)}">
-      <span class="box" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-        stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span>
-      ${esc(c.label)} <em title="${bytesTip(c.bytes)}">${fmtBytes(c.bytes)}</em>
-    </button>`;
-  }).join('');
-}
+/** 推荐范围里的分类开关（recChipsHtml 在 views/files.js，排除状态由这里递进去）。 */
+const recChips = (list) => recChipsHtml(list, state.recOff);
 
 function renderChips() {
   const order = ['good', 'warning', 'serious', 'critical'];
@@ -1620,23 +1450,16 @@ const PURGE_WORD = () => confirmWords().FILES || '彻底删除';
 const TASK_PURGE_WORD = () => confirmWords().SESSION || '清理';
 const RECOVER_WORD = () => confirmWords().RECOVER || '回灌';
 
-/* 彻底删除的确认串：输对之前按钮按不动。
-   以前是"按钮一直可点，点了才报错" —— 那等于故意让人先撞一次墙。
-   现在按钮状态直接反映"这句话你确认了没有"，顺带把还差几个字告诉人。 */
+/* 彻底删除的确认串：输对之前按钮按不动 —— 按钮状态直接反映"这句话你
+   确认了没有"，顺带把还差几个字告诉人。可点然后报错等于让人白撞一次墙。 */
 function syncPurgeWord() {
   if (operationBusy) return;
   if (mode() !== 'purge') return;
   const ok = els.purgeWord.value === PURGE_WORD();
   els.drawerGo.disabled = !ok;
   els.drawerMsg.className = 'drawer-msg';
-  if (ok) {
-    // 输对了就把"还差…"那行擦掉 —— 留着它等于说"你还没输完"
-    els.drawerMsg.textContent = '';
-  } else if (els.purgeWord.value.length) {
-    els.drawerMsg.textContent = `还差「${PURGE_WORD().slice(els.purgeWord.value.length)}」—— 输全才能彻底删除。`;
-  } else {
-    els.drawerMsg.textContent = '';
-  }
+  // "还差几个字"的提示是三条路径共用的一份（confirmWordHint），输入为空或已输对时是空串
+  els.drawerMsg.textContent = confirmWordHint(els.purgeWord.value, PURGE_WORD(), '彻底删除');
 }
 els.purgeWord.addEventListener('input', syncPurgeWord);
 
@@ -1661,8 +1484,8 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.key === 'Escape') {
     /* 由近及远一层层退：先关浮层，再撤搜索，最后撤筛选。
-       原来只在焦点恰好在搜索框里时才清搜索 —— 而人通常是点完筛选钮、
-       或者滚到清单里才发现筛空了，那时焦点早就不在输入框上，Esc 什么也不做。 */
+       不按"焦点在不在搜索框"决定 —— 人通常是点完筛选钮、或者滚到清单里
+       才发现筛空了，那时焦点早就不在输入框上。 */
     if (!els.drawer.hidden) closeDrawer();
     else if (!tEls.drawer.hidden) closeTaskDrawer();
     else if (!rEls.drawer.hidden) closeRecoverDrawer();
@@ -1762,32 +1585,8 @@ const rEls = {
 };
 const recoverState = { data: null, sel: new Set(), open: false };
 
-/* 可清理 = 后端给出了 reason。判定只在服务端做一次，前端照着用。
-   各 app 给出的 reason 不完全一样（ZCode 有"界面已删除"，Codex 没有；Cursor 一个都不给）。 */
-const isPurgeable = (t) => t.reason != null;
-
-const REASON_LABEL = {
-  deleted:     '已在界面删除',
-  archived:    '已归档',
-  wsMissing:   '工作区已丢失',
-  untracked:   '界面不可见',
-  bodyMissing: '正文已丢失',
-  empty:       '空文件',
-  /* Cursor 专属：会话本身正常，可清理是因为它按可达性分析删 —— 删一条活跃
-     会话是自洽的，不留下任何悬空引用。别的工具没有这个档。 */
-  manual:      '可手动清理',
-};
-const REASON_TONE = {
-  deleted: 'st-serious', archived: 'st-warning', wsMissing: 'st-serious',
-  untracked: 'st-serious', bodyMissing: 'st-serious', empty: 'st-serious',
-  manual: 'st-warning',
-};
-
-const stateLabel = (t) => t.reason ? REASON_LABEL[t.reason] : STATE_META_CN[t.state];
-const stateTone = (t) => t.reason ? REASON_TONE[t.reason] : STATE_TONE[t.state];
-
-const STATE_TONE = { deleted: 'st-serious', archived: 'st-warning', active: 'st-good', untracked: 'st-warning', empty: 'st-serious' };
-
+/* 状态字典与"可清理"判定在 views/tasks.js（纯函数，有契约测试）——
+   reason 的文案由后端判定、前端照用，不再各存一份。 */
 
 /**
  * 把会话面板擦回到"还没有任何数据"的样子。
@@ -2006,25 +1805,7 @@ function renderRecoverable() {
     rEls.warn.hidden = true;
   }
 
-  rEls.list.innerHTML = sessions.map((s) => {
-    const sel = recoverState.sel.has(s.id);
-    const meta = [
-      s.workspace,
-      fmtDate(s.date),
-      `${s.messages} 条消息`,
-      s.tools ? `${s.tools} 次工具调用` : '',
-      s.workspaceResolved ? '' : '路径未还原',
-    ].filter(Boolean).join('、');
-    return `<label class="recover-row ${sel ? 'is-on' : ''}" data-recover-row="${esc(s.id)}">
-      <input type="checkbox" data-recover-id="${esc(s.id)}" ${sel ? 'checked' : ''}
-        aria-label="选择会话 ${esc(s.title)}">
-      <span class="recover-main">
-        <span class="recover-title" title="${esc(s.title)}">${esc(s.title)}</span>
-        <span class="recover-meta" title="${esc(meta)}">${esc(meta)}</span>
-      </span>
-      <span class="recover-size" title="${bytesTip(s.bytes)}">${fmtBytes(s.bytes)}</span>
-    </label>`;
-  }).join('');
+  rEls.list.innerHTML = sessions.map((s) => recoverRowHtml(s, recoverState.sel.has(s.id))).join('');
 
   const picked = sessions.filter((s) => recoverState.sel.has(s.id));
   rEls.foot.hidden = picked.length === 0;
@@ -2038,8 +1819,7 @@ function renderRecoverable() {
 /* 回灌的确认串。它和另外两条清理线共用"输对才亮"的规矩，
    但这条是**写入**（往库里加会话头与气泡），比删除更需要这道闸 ——
    删除错了至少还在废纸篓里，回灌错了是往一个活库里塞东西。
-   这里原来完全没有这道闸：按钮只看"有没有勾选"和"Cursor 在不在跑"，
-   一直亮着，点下去才由服务端返回"确认串不正确"。 */
+   所以按钮不能只看"有没有勾选"和"Cursor 在不在跑"，必须等确认串输对。 */
 function syncRecoverWord() {
   if (operationBusy) return;
   const d = recoverState.data;
@@ -2052,8 +1832,8 @@ function syncRecoverWord() {
      ① 没勾任何会话 / Cursor 在跑 —— 这是**比输入**更前面的拦阻，
         说了它就不必再说"还差几个字"，那会让两件事挤在一行里互相盖住；
      ② 输入不完整 —— 只在没有 ① 的时候才有意义。
-     原来的顺序是 `if (running || !picked)` 直接 return，于是 Cursor 开着时
-     输错确认串也看不到"还差…"，人不知道自己还漏了一步。 */
+     ① 若提前 return，Cursor 开着时输错确认串就看不到"还差…"，
+     人不知道自己还漏了一步。 */
   if (!picked) {
     rEls.msg.textContent = '';
     rEls.msg.className = 'drawer-msg';
@@ -2067,16 +1847,9 @@ function syncRecoverWord() {
       (ok ? `退出 Cursor 后重新打开本页即可点「${word}」。` : '');
     return;
   }
-  if (ok) {
-    rEls.msg.textContent = '';
-    rEls.msg.className = 'drawer-msg';
-  } else if (rEls.word.value.length) {
-    rEls.msg.className = 'drawer-msg';
-    rEls.msg.textContent = `还差「${word.slice(rEls.word.value.length)}」—— 输全才能写入。`;
-  } else {
-    rEls.msg.textContent = '';
-    rEls.msg.className = 'drawer-msg';
-  }
+  // 能输入了（没勾 / 在跑的两个拦阻都处理完）：进度提示是三条路径共用的一份
+  rEls.msg.className = 'drawer-msg';
+  rEls.msg.textContent = confirmWordHint(rEls.word.value, word, '写入');
 }
 rEls.word?.addEventListener('input', syncRecoverWord);
 
@@ -2084,8 +1857,8 @@ rEls.word?.addEventListener('input', syncRecoverWord);
  * 打开回灌确认抽屉。
  *
  * 结构与另外两条清理线一致：**列表在页面上浏览与勾选，确认进抽屉**。
- * 原来回灌把确认区塞在列表下面内联展开，同一个页面里出现两种确认姿势 ——
- * 而它是三条路径里唯一往库里**写**东西的，最该长得像"要动手了"。
+ * 三条路径的确认姿势必须一致 —— 而回灌是唯一往库里**写**东西的那条，
+ * 最该长得像"要动手了"。
  */
 function openRecoverDrawer() {
   const d = recoverState.data;
@@ -2101,9 +1874,7 @@ function openRecoverDrawer() {
   rEls.word.value = '';
   rEls.dryWrap.hidden = true;
   renderRecoverDrawer();
-  rEls.scrim.hidden = false;
-  rEls.drawer.hidden = false;
-  openModal(rEls.drawer);
+  showDrawer(rEls.drawer, rEls.scrim);
 }
 
 function renderRecoverDrawer() {
@@ -2147,12 +1918,9 @@ function renderRecoverDrawer() {
 }
 
 const closeRecoverDrawer = () => {
-  if (operationBusy) return;
   recoverState.open = false;
-  rEls.scrim.hidden = true;
-  rEls.drawer.hidden = true;
   rEls.msg.textContent = '';
-  closeModal();
+  hideDrawer(rEls.drawer, rEls.scrim);
 };
 
 async function callRecover(dryRun) {
@@ -2176,7 +1944,7 @@ async function callRecover(dryRun) {
 
     if (dryRun) {
       /* 空跑结果摊在抽屉里，与"会话清理"那条线同一个位置、同一个形状 ——
-         以前它只是一句 msg，另外两条都有一块逐项清单。 */
+         三条路径的确认界面共用一套结构，逐项清单也是同一块。 */
       rEls.dryWrap.hidden = false;
       rEls.dryList.innerHTML =
         `<li><span>会话头（composerHeaders）</span><span>${(data.imported ?? 0).toLocaleString()}</span></li>` +
@@ -2233,29 +2001,7 @@ rEls.scrim?.addEventListener('click', closeRecoverDrawer);
 $('rdrawerClose')?.addEventListener('click', closeRecoverDrawer);
 $('rdrawerCancel')?.addEventListener('click', closeRecoverDrawer);
 
-const visibleTasks = () => {
-  const d = taskState.data;
-  if (!d) return [];
-  const q = taskState.q;
-  let list = d.tasks.filter((t) => {
-    if (taskState.states.size && !taskState.states.has(t.state)) return false;
-    if (q && !(`${t.title} ${t.workspace}`.toLowerCase().includes(q))) return false;
-    return true;
-  });
-  const s = taskState.sort;
-  list = list.sort((a, b) =>
-    s === 'size' ? b.bytes - a.bytes :
-    s === 'time' ? b.updatedAt - a.updatedAt :
-    a.title.localeCompare(b.title, 'zh'));
-  return list;
-};
-
-/* 为什么这家只能按文件删 —— 文案由适配器给（每家正文放在哪不一样），
-   这里只负责摆上去。缺了就退回一句通用的，不按 app 名硬编码。 */
-const fileBasedNote = (d) =>
-  `${icon('doc')}<div>${d?.fileBasedNote ||
-    `${esc(d?.appLabel || '这个工具')} 的会话正文就是文件本身，没有数据库行可删。` +
-    `勾选后走<b>文件清理</b>那条线：默认进废纸篓，可随时恢复。`}</div>`;
+/* visibleTasks / fileBasedNote 在 views/tasks.js —— 这里的调用点传当前筛选状态。 */
 
 function renderTasks() {
   const d = taskState.data;
@@ -2283,95 +2029,23 @@ function renderTasks() {
     renderTaskFoot();
     renderTaskQuick();
     // Claude Code 这类"正文就是文件"的工具，就算一条会话没读到，也要说清楚
-    // 为什么这里没有可勾的东西 —— 否则人会以为文件清单里那堆 .jsonl 失踪了。
-    // 后端报的读取问题也要上屏："库打不开"与"库是空的"必须能分清。
-    const notes = [];
-    if (d?.fileBased) notes.push(fileBasedNote(d));
-    if (d?.problems?.length) {
-      notes.push(`${icon('alert')}<div>${d.problems.map((p) => esc(p)).join('<br>')}</div>`);
-    }
-    if (notes.length) {
+    // 为什么这里没有可勾的东西；后端报的读取问题也要上屏。模板在 views/tasks.js。
+    const emptyWarn = taskEmptyWarnHtml(d);
+    if (emptyWarn) {
       tEls.warn.hidden = false;
-      tEls.warn.className = d.problems?.length ? 'app-warn' : 'app-warn is-ok';
-      tEls.warn.innerHTML = notes.join('<br>');
+      tEls.warn.className = emptyWarn.className;
+      tEls.warn.innerHTML = emptyWarn.html;
     }
     return;
   }
-  const who = d.appLabel;
   tEls.toolbar.hidden = false;   // 有数据了，把搜索/排序/分组放回来
 
-  const del = d.totals.byState.find((g) => g.state === 'deleted');
-  const text = d.totals.bytes;
-
-  // 正文不在会话库里的两处：Claude 的正文就是 .jsonl 文件本身；Codex 是索引库 + 磁盘上的
-  // rollout。分开说，免得把 Codex 的"两段式"说法安到 Claude 头上。
-  // 只读的只剩 Cursor，它的会话正文就在库里，按键族摊开。
-  //
-  // 标题来自库里每条会话的 name 字段（Cursor 自己起的名字）。有些会话它没起名，
-  // 也没有改动摘要 —— 那几条只能显示 ID。这里主动交代一句，
-  // 免得人以为是工具没读到标题、或者以为界面出了 bug。
-  const untitledNote = d.untitled
-    ? `其中 <b>${d.untitled}</b> 条 Cursor 没有生成标题（库里没有 name 也没有改动摘要），按 ID 显示。`
-    : '';
-  /* 上面那根条按 state 分段，而"能不能清"看的是 reason —— 两个轴。
-     Cursor 与 DeepSeek 的活跃会话也给勾（删它们是自洽的），此时条上只有
-     「活跃会话」四个字，看起来像"一个都不能动"。这里把可清的数量明说出来，
-     免得人去条上找一个不存在的"可清理"段。只在"全部可清"或"部分可清"时补，
-     全都不清时不啰嗦（那种情况条上的分段本身就说清了）。 */
-  const purgeable = d.tasks.filter(isPurgeable).length;
-  const purgeNote = !d.readOnly && purgeable > 0
-    ? (purgeable === d.totals.count
-      ? `这 ${purgeable} 条都可以清 —— 条上按生命周期分段，不是按能不能清。`
-      : `其中 <b>${purgeable}</b> 条可以清（勾选框没灰的就是）。`)
-    : '';
-  tEls.lede.innerHTML = d.readOnly
-    ? `${esc(who)} 的会话库 ${bytesB(d.db.total)}，读到 <b>${d.totals.count}</b> 个会话、` +
-      `${bytesB(text)} 的正文。下面按键族摊开这 ${fmtBytes(d.db.total)} 到底是怎么分的。` +
-      (untitledNote ? ` ${untitledNote}` : '')
-    : d.fileBased
-      ? `${esc(who)} 的会话正文就是 <b>${d.db.bodies?.count || 0}</b> 个正文文件，` +
-        `共 ${bytesB(d.db.bodies?.bytes || 0)}；本机没有会话数据库 —— 清理走文件那条线。` +
-        `读到 <b>${d.totals.count}</b> 个会话。` +
-        (purgeNote ? ` ${purgeNote}` : '')
-      : d.db.bodies
-        ? `${esc(who)} 的会话分两处存：索引库 ${bytesB(d.db.total)}，` +
-          `正文文件 ${bytesB(d.db.bodies.bytes)}（<b>${d.db.bodies.count}</b> 个 rollout 文件）。` +
-          `读到 <b>${d.totals.count}</b> 个会话。`
-        : `会话库 ${bytesB(d.db.total)}，装着 <b>${d.totals.count}</b> 个会话、` +
-          `${bytesB(text)} 的正文。` +
-          (del
-            ? `其中 <b>${del.count}</b> 个已在界面上删除，仍占 ${bytesB(del.bytes)}。`
-            : '');
-
-  // 动手之前的前提，三个 app 三种说法 —— 都从后端的能力标记来，不在前端猜
+  // 顶部那句话与警示条都是"给一行数据说人话"的模板（views/tasks.js，有契约测试）
+  tEls.lede.innerHTML = taskLedeHtml(d);
+  const warn = taskWarnHtml(d);
   tEls.warn.hidden = false;
-  if (d.readOnly) {
-    // 只读的理由由适配器给，前端不按 app 名硬编码。
-    tEls.warn.className = 'app-warn';
-    tEls.warn.innerHTML = `${icon('key')}<div><b>${esc(who)} 的会话只读</b>：${esc(d.readOnlyNote || '这个工具的会话数据不提供写路径。')}</div>`;
-  } else if (d.fileBased) {
-    tEls.warn.className = 'app-warn is-ok';
-    tEls.warn.innerHTML = fileBasedNote(d);
-  } else if (d.app.unknown) {
-    tEls.warn.className = 'app-warn';
-    tEls.warn.innerHTML = `${icon('alert')}<div>无法确认 ${esc(who)} 是否退出，暂不能写入数据库。${esc(d.app.error || '')}</div>`;
-  } else if (d.app.running) {
-    tEls.warn.className = 'app-warn';
-    tEls.warn.innerHTML =
-      `${icon('alert')}<div><b>${esc(who)} 正在运行</b>（${d.app.hits.map((h) => `${esc(h.name)} ×${h.pids}`).join('、')}）。` +
-      `清理需要往会话库里写数据，必须先<b>完全退出 ${esc(who)}</b>，否则可能损坏数据库。` +
-      `下面可以正常浏览和勾选，只是删除按钮会被拒。</div>`;
-  } else {
-    tEls.warn.className = 'app-warn is-ok';
-    tEls.warn.innerHTML = `${icon('box')}<div>${esc(who)} 没在运行，可以安全清理。动手前会自动把库完整备份到 <code>${esc(shortPath(d.backupDir))}</code>。</div>`;
-  }
-
-  // 读取问题（某个库打不开、文件缺失）后端一直在报，以前只有回灌面板显示 ——
-  // 静默会让人以为"这里本来就是空的"。
-  if (d.problems?.length) {
-    tEls.warn.classList.remove('is-ok');
-    tEls.warn.innerHTML += `<br>${d.problems.map((p) => esc(p)).join('<br>')}`;
-  }
+  tEls.warn.className = warn.className;
+  tEls.warn.innerHTML = warn.html;
 
   renderDbBar();
   renderTaskChips();
@@ -2381,47 +2055,11 @@ function renderTasks() {
   renderComposition();
 }
 
-/** 这些体积花在哪：按任务状态等比切开，剩下的是索引与开销。 */
+/** 体积条：分段、分母与宽度分配都在 views/tasks.js（dbBarSegments，有契约测试）。
+ *  这里只画 DOM，并按量出来的像素决定放不放文字。 */
 function renderDbBar() {
   const d = taskState.data;
-  // ZCode / Cursor 的正文就在库里，分母就是库文件大小；Codex 的正文是磁盘上的 rollout
-  // 文件，分母必须把库和文件加起来 —— 否则"活跃任务"那一根会画到 374% 宽。
-  const bodies = d.db.bodies?.bytes || 0;
-  // 分母是"库 + 库外正文"。没有库时（Claude 的正文全是 .jsonl）total 为 0，
-  // 不能拿 1 去垫 —— 那会凭空多出一个 1 字节的"开销"段。
-  const total = (d.db.total || 0) + bodies;
-  const byState = d.totals.byState.map((g) => ({
-    // 兜底：将来后端多一个状态桶而前端没跟上时，退化成可读的词，而不是 undefined
-    label: STATE_META_CN[g.state] || g.state, bytes: g.bytes, tone: STATE_TONE[g.state] || '', key: g.state,
-  }));
-  // 余量按"每一段真正占了分母多少"来算，不能用 totals.bytes —— Codex 的分段里还叠了
-  // 库中的条目体积，减错就会让整排色块加起来超过 100%。
-  const used = byState.reduce((s, g) => s + g.bytes, 0);
-  const segs = [
-    ...byState,
-    {
-      /* 正文即文件的工具（Claude、DeepSeek）没有索引库，分母就是那堆正文文件 ——
-         叫它"索引与其他开销"是在描述一个不存在的东西。它们的余量另有来源：
-         DB 之外、也没被任何会话认领的文件。 */
-      label: d.fileBased ? '未归入会话的文件' : (bodies ? '索引库与其余开销' : '索引与其他开销'),
-      bytes: Math.max(0, total - used), tone: 'is-neutral', key: 'overhead',
-      // 这一块是技术性的：库文件不只有正文。名字写在块上，解释挂在 tooltip 里，
-      // 不占版面。
-      tip: d.fileBased
-        ? '这个工具没有会话库 —— 分母是磁盘上的正文文件。这一段是既不属于任何会话、也不在统计里的部分。'
-        : bodies
-          ? '索引库文件里不属于任何会话正文的部分 —— thread_items 的索引、WAL、已释放的空页与页对齐。删掉会话后它才会跟着缩。'
-          : '数据库文件里不属于任何任务正文的部分 —— 索引、已释放的空页、页对齐等。删掉任务后它才会跟着缩。',
-    },
-  ].filter((s) => s.bytes > 0);
-
-  const W = 100;
-
-  const pct = segs.map((s) => (total ? (s.bytes / total) * W : 0));
-  const floors = pct.map(Math.floor);
-  let rest = Math.round(W - floors.reduce((a, b) => a + b, 0));
-  const order = pct.map((v, i) => [v - Math.floor(v), i]).sort((a, b) => b[0] - a[0]);
-  for (let k = 0; rest > 0 && k < order.length; k++, rest--) floors[order[k][1]] += 1;
+  const { segs, floors } = dbBarSegments(d);
 
   // 名称直接写进色块里，不再另起一行图例 —— 那一行把体积、状态又念了一遍，
   // 而下面那排筛选按钮本来就说的是同一件事。窄到写不下的块靠 tooltip 兜底。
@@ -2482,12 +2120,6 @@ function renderComposition() {
     }).join('');
 }
 
-const STATE_META_CN = {
-  deleted: '已删除会话', archived: '已归档会话', active: '活跃会话',
-  untracked: '界面不可见', empty: '空文件',
-};
-const STATUS_CLASS_TONE = { 'st-serious': 'st-serious', 'st-warning': 'st-warning', 'st-good': 'st-good', 'st-critical': 'st-critical' };
-
 function renderTaskChips() {
   const d = taskState.data;
   // 体积写在上面那根条上，这里改说"几个任务" —— 换个数字，不把同一件事念两遍。
@@ -2503,115 +2135,31 @@ function renderTaskChips() {
 }
 
 function renderTaskList() {
-  const list = visibleTasks();
+  const list = visibleTasks(taskState.data, { q: taskState.q, states: taskState.states, sort: taskState.sort });
   tEls.empty.hidden = list.length > 0;
 
-  const rowHtml = (t) => {
-    const sel = taskState.sel.has(t.id);
-    const open = taskState.open.has(t.id);
-    /* 分页续段：这个 .jsonl 只是会话的一段。Codex 恢复时要求完整血统，
-       删掉任何一段都会让整条会话永久不可恢复 —— 而且它报的是
-       "missing source rollout"，看着像别处坏了。行上必须说出来。 */
-    const segNote = t.lineage?.continuation
-      ? `分页第 ${t.lineage.endOrdinal} 段起`
-      : '';
-    const meta = [
-      taskState.group ? '' : shortPath(t.workspace),
-      `${fmtDate(t.updatedAt)} 最后使用`,
-      t.model ? t.model : '',
-      t.children ? `${t.children} 子会话` : '',
-      t.typeLabel,
-      segNote,
-    ].filter(Boolean).join('、');
-    const body = t.bodyRel
-      ? `<button class="btn btn-ghost btn-sm" type="button" data-locate="${esc(t.bodyRel)}">在文件清单中定位</button>`
-      : '';
-    /* Cursor 的"连带回收"不进清单行 —— 行里那一行 meta 已经装了状态、
-       最后使用、子会话、类型，右侧体积列也要留给主数字。实测把它塞进
-       meta 或体积列都会把标题压回 278px、13 行 meta 被截断。
-
-       它进**展开后的详情**：勾选和删除都是在看过详情之后做的决定，
-       那个位置才是"删这条能省多少"该出现的地方。摘要放在抽屉里
-       （选中若干条之后一次性算总账），这里给单条的。 */
-    const ex = taskState.exclusive?.get(t.id);
-    return `<div class="tsession ${open ? 'is-open' : ''}">
-      <div class="trow ${sel ? 'is-on' : ''}" data-task="${esc(t.id)}">
-        <button class="trow-caret" type="button" data-task-toggle="${esc(t.id)}"
-          aria-expanded="${open}" title="${open ? '收起' : '会话详情'}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
-            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
-        </button>
-        <input type="checkbox" data-task-box="${esc(t.id)}" ${sel ? 'checked' : ''}
-          ${isPurgeable(t) ? '' : 'disabled'} aria-label="选择会话 ${esc(t.title)}">
-        <div class="trow-main">
-          <span class="trow-title" title="${esc(t.title)}">${esc(t.title)}</span>
-          <span class="trow-meta" title="${esc(t.workspace)}"><b class="trow-state-m ${stateTone(t)}">${esc(stateLabel(t))}</b>${esc(meta)}</span>
-        </div>
-        <span class="trow-size" title="${bytesTip(t.bytes)}">${fmtBytes(t.bytes)}</span>
-      </div>
-      ${open ? `<div class="tdetail" data-detail="${esc(t.id)}">
-        <dl class="tdetail-grid">
-          <div><dt>最后使用</dt><dd>${fmtDateTime(t.updatedAt)}</dd></div>
-          <div><dt>创建</dt><dd>${fmtDateTime(t.createdAt)}</dd></div>
-          <div><dt>文件夹</dt><dd title="${esc(t.workspace)}"><code>${esc(shortPath(t.workspace) || '—')}</code></dd></div>
-          <div><dt>模型</dt><dd>${esc(t.model || '—')}</dd></div>
-          <div class="tspan"><dt>会话 ID</dt><dd><code>${esc(t.id)}</code></dd></div>
-          <div class="tspan"><dt>正文</dt><dd title="${esc(t.bodyRel || '')}"><code>${esc(t.bodyRel || '库内存储')}</code></dd></div>
-          ${t.lineage?.continuation ? `<div class="tspan"><dt>血统</dt>
-            <dd>分页续段：这个文件从第 <b>${t.lineage.endOrdinal.toLocaleString()}</b> 个 ordinal 起接，
-              前面那段在另一个文件里。Codex 恢复会话时要顺着它往回找 ——
-              <b>删掉任何一段，整条会话都再也恢复不了</b>（报 missing source rollout）。
-              它在文件清单里已锁成「请勿删除」。</dd></div>` : ''}
-          ${ex && ex.exclusiveBytes > 0 ? `<div class="tspan"><dt>删除会连带回收</dt>
-            <dd title="${ex.exclusiveBytes.toLocaleString()} 字节">
-              <b>${fmtBytes(ex.exclusiveBytes)}</b>
-              <span class="tdetail-note">（${ex.exclusiveBlobs.toLocaleString()} 个只被这条会话引用的工具结果）</span>
-            </dd></div>` : ''}
-        </dl>
-        <div class="tdetail-acts">
-          <button class="btn btn-ghost btn-sm" type="button" data-copy-id="${esc(t.id)}">复制会话 ID</button>
-          ${body}
-        </div>
-      </div>` : ''}
-    </div>`;
-  };
+  /* 行模板在 views/tasks.js（taskRowHtml，有契约测试）；这里只补这一屏的
+     上下文：勾选、展开、Cursor 的独占 blob、分组开关（关时行里带工作区）。 */
+  const rowOf = (t) => taskRowHtml(t, {
+    sel: taskState.sel.has(t.id),
+    open: taskState.open.has(t.id),
+    exclusive: taskState.exclusive?.get(t.id),
+    showWorkspace: !taskState.group,
+  });
 
   if (!taskState.group) {
-    tEls.list.innerHTML = list.map(rowHtml).join('');
+    tEls.list.innerHTML = list.map(rowOf).join('');
     return;
   }
 
   // 按工作区聚合。组按正文合计降序；组内保持当前排序（list 已经排好了）。
-  const byWs = new Map();
-  for (const t of list) {
-    const key = t.workspace || '(未知工作区)';
-    let g = byWs.get(key);
-    if (!g) byWs.set(key, (g = { ws: key, tasks: [], bytes: 0 }));
-    g.tasks.push(t);
-    g.bytes += t.bytes;
-  }
-  const groups = [...byWs.values()].sort((a, b) => b.bytes - a.bytes);
+  const groups = groupTasksByWorkspace(list);
 
-  tEls.list.innerHTML = groups.map((g) => {
-    const folded = taskState.foldedWs.has(g.ws);
-    const selN = g.tasks.filter((t) => taskState.sel.has(t.id)).length;
-    const named = g.ws === '(未知工作区)';
-    const base = named ? g.ws : (g.ws.split('/').filter(Boolean).pop() || g.ws);
-    return `<section class="tgroup ${folded ? 'is-folded' : ''}" data-ws="${esc(g.ws)}">
-      <header class="tgroup-head" data-ws-toggle="${esc(g.ws)}" role="button" tabindex="0"
-        aria-expanded="${!folded}" title="${esc(g.ws)}">
-        <svg class="tgroup-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
-        <span class="tgroup-name">
-          <b>${esc(base)}</b>
-          <code>${esc(shortPath(g.ws))}</code>
-        </span>
-        <span class="tgroup-n">${g.tasks.length} 个会话${selN ? `，已选 ${selN}` : ''}</span>
-        <span class="tgroup-size" title="${bytesTip(g.bytes)}">${fmtBytes(g.bytes)}</span>
-      </header>
-      ${folded ? '' : `<div class="tgroup-body">${g.tasks.map(rowHtml).join('')}</div>`}
-    </section>`;
-  }).join('');
+  tEls.list.innerHTML = groups.map((g) => taskGroupHtml(g, {
+    folded: taskState.foldedWs.has(g.ws),
+    selCount: g.tasks.filter((t) => taskState.sel.has(t.id)).length,
+    rowsHtml: taskState.foldedWs.has(g.ws) ? '' : g.tasks.map(rowOf).join(''),
+  })).join('');
 }
 
 /** 从会话详情跳到文件清单：定位正文文件并让搜索框带着它。 */
@@ -2624,23 +2172,11 @@ function locateBody(rel) {
   document.getElementById('files').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function taskSelTotals() {
-  const d = taskState.data;
-  if (!d) return { count: 0, bytes: 0, children: 0, rows: 0 };
-  const picked = d.tasks.filter((t) => taskState.sel.has(t.id));
-  return {
-    count: picked.length,
-    bytes: picked.reduce((s, t) => s + t.bytes, 0),
-    children: picked.reduce((s, t) => s + t.children, 0),
-    // Codex 没有子会话这一层，能说的是库里有多少条投影条目
-    rows: picked.reduce((s, t) => s + (t.rows || 0), 0),
-    picked,
-  };
-}
+/* 勾选合计（taskSelTotals）在 views/tasks.js —— 调用点传数据与选择集。 */
 
 function renderTaskFoot() {
   const d = taskState.data;
-  const { count, bytes } = taskSelTotals();
+  const { count, bytes } = taskSelTotals(d, taskState.sel);
   // 只读的 app 连"清理"这个入口都不摆 —— 摆了也是必然被拒的按钮
   tEls.foot.hidden = !d || d.readOnly || count === 0;
   /* 这一栏的数字也要擦干净，不能只靠 hidden：从某个工具带着勾选切到「全部」，
@@ -2686,21 +2222,8 @@ const saveTqScope = () => {
   try { localStorage.setItem(TQ_KEY, JSON.stringify(tq)); } catch {}
 };
 
-function taskQuickSet() {
-  const d = taskState.data;
-  if (!d) return { tasks: [], bytes: 0, total: 0, totalBytes: 0, skippedRecent: 0, skippedPinned: 0 };
-  const base = d.tasks.filter((t) => t.state === 'deleted');
-  const cutoff = tq.ageDays > 0 ? Date.now() - tq.ageDays * 86400000 : 0;
-  const picked = base.filter((t) =>
-    (!tq.skipPinned || !t.pinned) && (!cutoff || t.updatedAt < cutoff));
-  return {
-    tasks: picked,
-    bytes: picked.reduce((s, t) => s + t.bytes, 0),
-    total: base.length,
-    totalBytes: base.reduce((s, t) => s + t.bytes, 0),
-    skippedRecent: cutoff ? base.filter((t) => t.updatedAt >= cutoff).length : 0,
-    skippedPinned: base.filter((t) => t.pinned).length,
-  };
+function taskQuickSetCall() {
+  return taskQuickSet(taskState.data, tq);
 }
 
 function renderTaskQuick() {
@@ -2709,21 +2232,12 @@ function renderTaskQuick() {
   if (!del) { els.taskQuick.hidden = true; return; }
   els.taskQuick.hidden = false;
 
-  const s = taskQuickSet();
+  const s = taskQuickSetCall();
   els.tqFigure.textContent = fmtBytes(s.bytes);
-  /* 一行说清"勾了多少 / 从哪来"：这条线勾的是界面上删过的会话，
-     它的"删除"只是打标记、正文仍占空间 —— 这句解释挪进大数字的 tooltip
-     （第一次见这个状态的人才需要，且悬停够了），行里只留当前能操作的量。
-     跳过计数折进行内 —— 它说的就是"上面那两个开关挡掉了什么"。 */
-  const skips = [];
-  if (s.skippedRecent) skips.push(`${s.skippedRecent} 个近期还在用的`);
-  if (tq.skipPinned && s.skippedPinned) skips.push(`${s.skippedPinned} 个置顶的`);
-  els.tqSub.innerHTML =
-    `勾选 <b>${s.tasks.length}</b> 个，共 ${fmtBytes(s.bytes)}`
-    + (skips.length ? ` <span class="rec-off">（已跳过 ${skips.join('、')}）</span>` : '');
-  els.tqFigure.title =
-    `${fmtBytes(s.bytes)}（${bytesTip(s.bytes)}）—— ${d.appLabel} 里"已删除"会话的正文总量。`
-    + `它的删除只是打标记，正文一行没少，所以这里清的是仍占着的空间。`;
+  // 三段文案（行内说明 / 大数字 tooltip / 按钮 tooltip）在 views/tasks.js
+  const texts = taskQuickTexts(d, s, tq);
+  els.tqSub.innerHTML = texts.subHtml;
+  els.tqFigure.title = texts.figureTitle;
 
   els.taskAge.value = String(tq.ageDays);
 
@@ -2736,9 +2250,7 @@ function renderTaskQuick() {
   // 按钮不重复体积（大数字就是它）；"勾选后先出确认清单、不会立刻删除"进 tooltip
   els.taskQuickBtn.disabled = !s.tasks.length;
   els.taskQuickBtn.textContent = '一键清理';
-  els.taskQuickBtn.title = s.tasks.length
-    ? `勾选 ${s.tasks.length} 个会话，先摊开确认清单，不会立刻删除`
-    : '按上面的范围一个都不剩，放宽"跳过最近"再试';
+  els.taskQuickBtn.title = texts.btnTitle;
 }
 
 /* ── 会话清理抽屉 ───────────────────────────────────────── */
@@ -2784,9 +2296,9 @@ function openTaskAsFiles() {
 }
 
 function openTaskDrawer() {
-  const { count, bytes, children, rows, picked } = taskSelTotals();
-  if (!count) return;
   const d = taskState.data;
+  const { count, bytes, children, rows, picked } = taskSelTotals(d, taskState.sel);
+  if (!count) return;
   const who = d.appLabel;
 
   /* Cursor 的抽屉要把"连带回收"算进总数：勾两条会话，正文只有 32.6 MB，
@@ -2794,7 +2306,8 @@ function openTaskDrawer() {
      只省那么点。数字必须能对上下一次真的删完之后的 toast。
 
      分析要十几秒。没算完时不要装作"没有连带" —— 那会让人以为数字很小，
-     显式说一句"还在算"，等它到了再补。 */
+     显式说一句"还在算"，等它到了再补。这里只算这一遍：读数与说明文字
+     都用它，各算各的迟早对不上。 */
   const exTotal = (() => {
     if (!taskState.exclusive) return null;
     let b = 0, n = 0;
@@ -2806,66 +2319,12 @@ function openTaskDrawer() {
   })();
   const exPending = taskState.exclusive === null && d.history === 'cursor-db';
 
-  tEls.stats.innerHTML = d.db?.bodies
-    ? `<div class="dstat"><span>会话</span><b>${count.toLocaleString()}</b></div>
-       <div class="dstat"><span>库里的条目</span><b>${rows.toLocaleString()}</b></div>
-       <div class="dstat"><span>正文文件合计</span><b>${fmtBytes(bytes)}</b></div>`
-    : `<div class="dstat"><span>会话</span><b>${count.toLocaleString()}</b></div>
-       <div class="dstat"><span>正文合计</span><b>${fmtBytes(bytes)}</b></div>` +
-      (exTotal && exTotal.bytes > 0
-        ? `<div class="dstat"><span>连带回收</span><b>${fmtBytes(exTotal.bytes)}</b></div>
-           <div class="dstat"><span>预计共回收</span><b>${fmtBytes(bytes + exTotal.bytes)}</b></div>`
-        : exPending
-          ? `<div class="dstat"><span>连带回收</span><b class="dstat-pending">正在算…</b></div>`
-          : '');
-
-  // 会写到哪几个库，由后端报的路径决定 —— 各工具不一样，前端不硬编码文件名
-  const dbFiles = d.db.dbs.map((x) => shortPath(x.path));
-  const dbsTxt = dbFiles.map((p) => `<code>${esc(p)}</code>`).join(' 和 ');
-  const backupTxt = `动手前会把库完整备份到 <code>${esc(shortPath(d.backupDir))}</code>。`;
-
-  /* Cursor 的说明与别家不同，两点：
-     ① 它只写 state.vscdb —— conversation-search.db 是搜索索引，这里不碰。
-        把两个库都写成"会从里面移除"，是在暗示一件不会发生的事。
-     ② 回收量有一大半来自"连带删掉的工具结果 blob"，那不是这条会话名下的行，
-        不说清楚数字会显得虚高。 */
-  const cursorDbs = d.db.dbs.filter((x) => x.role !== 'index');
-  const cursorDbsTxt = cursorDbs.map((x) => `<code>${esc(shortPath(x.path))}</code>`).join(' 和 ');
-  const cursorTxt = (() => {
-    let exB = 0, exN = 0;
-    if (taskState.exclusive) {
-      for (const t of picked) {
-        const e = taskState.exclusive.get(t.id);
-        if (e) { exB += e.exclusiveBytes; exN += e.exclusiveBlobs; }
-      }
-    }
-    return exB > 0
-      ? `另外，这些会话还独占着 <b>${exN.toLocaleString()}</b> 个工具结果 blob（共 <b>${fmtBytes(exB)}</b>）—— ` +
-        `只被它们引用的会一起删掉；仍被其它会话引用的会保留。`
-      : `另：只被这些会话引用的工具结果 blob 会一起删掉，共享的保留。`;
-  })();
-
-  tEls.note.innerHTML = d.app.running
-    ? `<b>${esc(who)} 仍在运行</b>，现在不能删除。请完全退出 ${esc(who)} 后重新打开本页。`
-    : d.history === 'cursor-db'
-      ? `删除会把这些会话的行从 ${cursorDbsTxt} 里彻底移除，` +
-        `随后 <code>VACUUM</code> 重建数据库把空间真正交还给磁盘。${backupTxt}${cursorTxt}`
-      : `删除会把这些会话的行从 ${dbsTxt} 里彻底移除，` +
-        `随后 <code>VACUUM</code> 重建数据库把空间真正交还给磁盘。${backupTxt}` +
-        // Codex 的正文是磁盘上的 rollout 文件，行级删除碰不到它 —— 不说清楚，
-        // 用户会以为回收的数字偏小是工具没干活。
-        (d.db.bodies
-          ? `但 <b>Codex 的正文不在这些库里</b>：它存在 <code>sessions/</code> 的 rollout 文件里，` +
-            `这里只抹索引行。文件要等索引里再也没有它们，才会变成孤儿、归「文件清单」那条线清理。`
-          : `<b>正文合计只是下限</b> —— 实际回收通常更多，因为索引也会一起收缩。`);
-
-  const sorted = picked.slice().sort((a, b) => b.bytes - a.bytes);
-  /* 前缀用这一屏的 who，不用 t.appLabel —— 会话行上根本没有这个字段
-     （它是全局视图时代的遗留），取不到就印出 "undefined，标题"。
-     抽屉一次只服务一个 app，who 就是准确的来源。 */
-  tEls.listD.innerHTML = sorted.slice(0, 200).map((t) =>
-    `<li title="${esc(t.title)}"><span>${esc(who)}，${esc(t.title)}</span><span>${fmtBytes(t.bytes)}</span></li>`).join('')
-    + (sorted.length > 200 ? `<li><span>…还有 ${(sorted.length - 200).toLocaleString()} 个</span><span></span></li>` : '');
+  // 抽屉的三块文案（读数 / 说明 / 待删清单）在 views/tasks.js，有契约测试
+  tEls.stats.innerHTML = taskDrawerStatsHtml({
+    count, rows, bytes, exTotal, exPending, hasBodies: Boolean(d.db?.bodies),
+  });
+  tEls.note.innerHTML = taskDrawerNoteHtml(d, { exB: exTotal?.bytes || 0, exN: exTotal?.blobs || 0 });
+  tEls.listD.innerHTML = taskDrawerListHtml(picked, who);
   tEls.countD.textContent = `${count.toLocaleString()} 个`;
 
   tEls.dryWrap.hidden = true;
@@ -2878,32 +2337,12 @@ function openTaskDrawer() {
   tEls.go.textContent = '删除';
   tEls.dryBtn.disabled = false;
 
-  tEls.scrim.hidden = false;
-  tEls.drawer.hidden = false;
-  openModal(tEls.drawer);
+  showDrawer(tEls.drawer, tEls.scrim);
 }
 
-const closeTaskDrawer = () => {
-  if (operationBusy) return;
-  tEls.scrim.hidden = true;
-  tEls.drawer.hidden = true;
-  closeModal();
-};
+const closeTaskDrawer = () => hideDrawer(tEls.drawer, tEls.scrim);
 
-/** 删除后的一致性检查：ZCode 一个库给一个结论，Codex 逐库给一组 —— 都说成人能读的一行。 */
-function checkLine(data) {
-  /* Cursor 报的是悬空引用，不是外键违规 —— 它没有外键，那套概念在这里不成立。
-     写"外键违规 undefined"是在用别人的术语描述这个库。 */
-  if (data.dangling !== undefined) {
-    return `完整性 ${data.integrity}，悬空引用 ${data.dangling} 处。`;
-  }
-  if (!Array.isArray(data.integrity)) {
-    return `完整性 ${data.integrity}，外键违规 ${data.fkViolations}。`;
-  }
-  const bad = data.integrity.filter((r) => r.integrity !== 'ok' || r.fkViolations);
-  if (!bad.length) return `${data.integrity.length} 个库完整性全部 ok，外键违规 0。`;
-  return data.integrity.map((r) => `${r.name} ${r.integrity}/违规 ${r.fkViolations}`).join('，') + '。';
-}
+/** 删除后的一致性检查（checkLine）在 views/tasks.js —— 三种返回形状都说成人话。 */
 
 /**
  * 执行删除（或空跑）。一条请求过完服务端的四道闸：
@@ -2950,32 +2389,16 @@ async function callPurge(dryRun) {
   }
 }
 
-/** 空跑：逐库逐表摊开会删掉的行，数据库没有任何改动。 */
+/** 空跑：逐库逐表摊开会删掉的行，数据库没有任何改动。
+ *  行与文案的构造在 views/tasks.js（dryRunHtml，有契约测试）。 */
 function renderDryRun(data) {
-  /* 两种形状：ZCode/Codex 报的是"逐库逐表会删多少行"（perDb）；
-     Cursor 没有外键表，它报的是"会话行 + 连带 blob"。分开渲染，
-     不要硬把 Cursor 塞成 perDb —— 那会造出一个不存在的表名。 */
-  const rows = Array.isArray(data.perDb)
-    ? data.perDb.map((x) => [`${x.table}（${x.name}）`, x.count ?? 0])
-    : [
-        ['会话条目（cursorDiskKV）', data.sessionRows ?? 0],
-        ['会话头（composerHeaders）', data.sessions ?? 0],
-        ['连带删除的工具结果 blob', data.blobs ?? 0],
-      ];
-  const totalRows = Array.isArray(data.perDb) ? rows.reduce((s, [, c]) => s + c, 0) : (data.sessionRows ?? 0);
-  const bodies = data.bodyBytes
-    ? `<br>另有 <b>${fmtBytes(data.bodyBytes)}</b> 正文在 rollout 文件里 —— 这里只删索引行，正文要等它们变成孤儿后走文件清理。`
-    : data.blobBytes
-      ? `<br>可回收 <b>${fmtBytes((data.sessionBytes || 0) + (data.blobBytes || 0))}</b>：` +
-        `会话正文 <b>${fmtBytes(data.sessionBytes || 0)}</b> + 只被它们引用的 blob <b>${fmtBytes(data.blobBytes)}</b>。`
-      : '';
-  tEls.dryList.innerHTML = rows
-    .map(([k, c]) => `<li><span>${esc(k)}</span><span>${c.toLocaleString()}</span></li>`).join('');
+  const { rowsHtml, bodiesHtml, totalRows } = dryRunHtml(data);
+  tEls.dryList.innerHTML = rowsHtml;
   tEls.dryWrap.hidden = false;
   tEls.msg.className = 'drawer-msg is-ok';
   tEls.msg.innerHTML =
-    `空跑完成：共 <b>${totalRows.toLocaleString()}</b> 行，数据库没有任何改动。${bodies}` +
-    `确认无误后输入「清理」再删除。`;
+    `空跑完成：共 <b>${totalRows.toLocaleString()}</b> 行，数据库没有任何改动。${bodiesHtml}` +
+    `确认无误后输入「${TASK_PURGE_WORD()}」再删除。`;
 }
 
 /** 删除完成：报回收量与自检结论，然后刷新会话与文件两边的视图。 */
@@ -3068,7 +2491,9 @@ document.addEventListener('click', (e) => {
   // 全选：范围就是当前筛选后可见的全部。状态标签、搜索都在它之前生效，
   // 所以"只选已删除"就是先点"已删除任务"标签，再点全选。
   if (t.closest('#taskPickAll')) {
-    for (const x of visibleTasks()) if (isPurgeable(x)) taskState.sel.add(x.id);
+    for (const x of visibleTasks(taskState.data, { q: taskState.q, states: taskState.states, sort: taskState.sort })) {
+      if (isPurgeable(x)) taskState.sel.add(x.id);
+    }
     renderTaskList(); renderTaskFoot(); return;
   }
   if (t.closest('#taskClearSel')) {
@@ -3078,7 +2503,7 @@ document.addEventListener('click', (e) => {
     tq.skipPinned = !tq.skipPinned; saveTqScope(); renderTaskQuick(); return;
   }
   if (t.closest('#taskQuickBtn')) {
-    const s = taskQuickSet();
+    const s = taskQuickSetCall();
     taskState.sel.clear();
     for (const x of s.tasks) taskState.sel.add(x.id);
     renderTaskList(); renderTaskFoot();
@@ -3104,12 +2529,10 @@ function syncTaskWord() {
   if (operationBusy) return;
   const ok = tEls.word.value === TASK_PURGE_WORD();
   tEls.go.disabled = !ok;
-  if (ok) {
-    tEls.msg.textContent = '';
+  // 与文件清理同一份提示逻辑；无输入且未输对时不动消息（上一条提示可能还在）
+  if (ok || tEls.word.value.length) {
     tEls.msg.className = 'drawer-msg';
-  } else if (tEls.word.value.length) {
-    tEls.msg.className = 'drawer-msg';
-    tEls.msg.textContent = `还差「${TASK_PURGE_WORD().slice(tEls.word.value.length)}」—— 输全才能删除。`;
+    tEls.msg.textContent = confirmWordHint(tEls.word.value, TASK_PURGE_WORD(), '删除');
   }
 }
 tEls.word.addEventListener('input', syncTaskWord);

@@ -6,7 +6,7 @@
  *   旧：在源码里找某个字符串（`assert.match(app, /tabindex="\$\{on \? .../)`）
  *   新：拿夹具调用渲染函数，断言它产出的 HTML
  *
- * 为什么必须换：旧写法保护的是"上次是怎么写的"。想改模板的排版、把
+ * 为什么用契约而不是源码字面：源码正则保护的是"这段代码怎么写的"。想改模板的排版、把
  * 三元表达式换成 if、把两个 span 合并成一个 —— 只要行为没变，这些断言
  * 都会变红。于是重构的第一步永远被自己的测试挡住，而真正的回归（比如
  * 受保护项突然变成可勾）反倒不一定被抓住，因为它藏在一堆字符串里。
@@ -446,4 +446,599 @@ test('工具状态：零会话给灰标签，有提示仍是正常钮，真读�
 test('工具状态：选中态真的反映在 aria-pressed 上', () => {
   assert.match(toolFilterChip({ app: 'a', label: 'A', count: 2 }, true), /aria-pressed="true"/);
   assert.match(toolFilterChip({ app: 'a', label: 'A', count: 2 }, false), /aria-pressed="false"/);
+});
+
+/* ── 会话面板模板（views/tasks.js）──────────────────────────
+   模板住在 views/tasks.js 之后，"在源码里找字符串"的断言换成对
+   产出的直接断言 —— 锁的是用户看得见的结果，不是上次的写法。 */
+
+import {
+  isPurgeable, stateLabel, stateTone, STATE_TONE, STATE_META_CN, STATUS_CLASS_TONE,
+  taskSelTotals, taskQuickSet, visibleTasks, groupTasksByWorkspace,
+  dbBarSegments, taskRowHtml, taskGroupHtml, recoverRowHtml, dryRunHtml, checkLine,
+  fileBasedNote, REASON_LABEL, REASON_TONE,
+} from '../public/views/tasks.js';
+import { auditSummary, auditLedeHtml, auditToolHtml, auditHitGroups, auditGroupHtml } from '../public/views/audit.js';
+
+const trow = (over = {}) => ({
+  id: 'sess-1', title: '迁移数据库', workspace: '/Users/x/proj', state: 'active', reason: null,
+  bytes: 2048, updatedAt: Date.parse('2026-10-01T00:00:00Z'), createdAt: Date.parse('2026-10-01T00:00:00Z'),
+  model: 'm', children: 0, rows: 3, typeLabel: '对话', bodyRel: null, residual: false,
+  lineage: null, pinned: false, ...over,
+});
+
+test('状态文案：reason 优先于 state，两者都有档位映射', () => {
+  assert.equal(stateLabel(trow({ reason: 'deleted', state: 'active' })), '已在界面删除');
+  assert.equal(stateLabel(trow({ reason: null, state: 'active' })), '活跃会话');
+  assert.equal(stateTone(trow({ reason: 'manual', state: 'active' })), 'st-warning');
+  assert.equal(stateTone(trow({ reason: null, state: 'deleted' })), 'st-serious');
+  for (const k of Object.keys(REASON_LABEL)) assert.ok(REASON_TONE[k], `reason ${k} 缺色档`);
+  for (const k of Object.keys(STATE_META_CN)) assert.ok(STATE_TONE[k], `state ${k} 缺色档`);
+  for (const k of Object.values(STATUS_CLASS_TONE)) assert.match(k, /^st-/);
+});
+
+test('可清理判定：reason 有值即可勾，缺失不可勾', () => {
+  assert.equal(isPurgeable(trow({ reason: 'deleted' })), true);
+  assert.equal(isPurgeable(trow({ reason: null })), false);
+  assert.equal(isPurgeable(trow({ reason: 'manual', state: 'active' })), true);
+});
+
+test('会话行：受保护的行复选框禁用，可清的行不禁用', () => {
+  const open = taskRowHtml(trow({ reason: 'deleted' }), { sel: false, open: false, showWorkspace: true });
+  assert.ok(!open.includes('disabled'), '可清的行不该禁用复选框');
+
+  const locked = taskRowHtml(trow({ reason: null }), { sel: false, open: false, showWorkspace: true });
+  assert.match(locked, /disabled/);
+  assert.match(locked, /aria-label="选择会话/);
+  assert.match(locked, /活跃会话/);
+});
+
+test('会话行：勾选与展开的态都长在类名与属性上', () => {
+  const on = taskRowHtml(trow(), { sel: true, open: false, showWorkspace: true });
+  assert.match(on, /class="trow is-on"/);
+  assert.match(on, /checked/);
+  assert.ok(!on.includes('tdetail'), '收起态不该有详情');
+
+  const open = taskRowHtml(trow(), { sel: false, open: true, showWorkspace: false });
+  assert.match(open, /class="tsession is-open"/);
+  assert.match(open, /aria-expanded="true"/);
+  assert.match(open, /复制会话 ID/);
+});
+
+test('会话行：分页续段把"删了毁整条会话"写在详情里', () => {
+  const html = taskRowHtml(
+    trow({ lineage: { continuation: true, endOrdinal: 7 } }),
+    { sel: false, open: true, showWorkspace: true });
+  assert.match(html, /分页第 7 段起/);
+  assert.match(html, /missing source rollout/);
+  assert.match(html, /删掉任何一段，整条会话都再也恢复不了/);
+});
+
+test('会话行：Cursor 独占 blob 只进详情，不进清单行', () => {
+  const plain = taskRowHtml(trow(), { sel: false, open: false, showWorkspace: true });
+  assert.ok(!plain.includes('连带回收'));
+
+  const open = taskRowHtml(trow(), {
+    sel: false, open: true, showWorkspace: true,
+    exclusive: { exclusiveBytes: 1536, exclusiveBlobs: 2 },
+  });
+  assert.match(open, /删除会连带回收/);
+  // 1536 字节按 fmtBytes 的既有口径（KB 档 0 位小数）印成 "2 KB"，精确值在 title 里
+  assert.match(open, /<b>2 KB<\/b>/);
+  assert.match(open, /title="1,536 字节"/);
+});
+
+test('分组头：折叠时名字、路径、条数、体积都在', () => {
+  const g = { ws: '/Users/x/proj', tasks: [trow(), trow()], bytes: 4096 };
+  const html = taskGroupHtml(g, { folded: false, selCount: 1, rowsHtml: '<div>row</div>' });
+  assert.match(html, /<b>proj<\/b>/);
+  assert.match(html, /~\/proj/);
+  assert.match(html, /2 个会话，已选 1/);
+  assert.match(html, /aria-expanded="true"/);
+  assert.match(html, /<div>row<\/div>/);
+
+  const folded = taskGroupHtml(g, { folded: true, selCount: 0, rowsHtml: '<div>row</div>' });
+  assert.ok(!folded.includes('tgroup-body'), '折叠时不画行');
+  assert.match(folded, /aria-expanded="false"/);
+});
+
+test('空标题的工作区分组不冒充有名字', () => {
+  const g = { ws: '(未知工作区)', tasks: [trow()], bytes: 1 };
+  const html = taskGroupHtml(g, { folded: false, selCount: 0, rowsHtml: '' });
+  assert.match(html, /<b>\(未知工作区\)<\/b>/);
+});
+
+test('groupTasksByWorkspace：无主工作区归一组，组按体积降序', () => {
+  const groups = groupTasksByWorkspace([
+    trow({ workspace: '', bytes: 2 }), trow({ id: 'b', workspace: '/w/a', bytes: 1 }),
+    trow({ id: 'c', workspace: '/w/b', bytes: 100 }),
+  ]);
+  assert.equal(groups[0].ws, '/w/b');
+  assert.equal(groups[1].ws, '(未知工作区)', '空工作区单独成组，体积排在其真实大小该在的位置');
+  assert.equal(groups[0].bytes, 100);
+});
+
+test('visibleTasks：状态筛选、搜索与三种排序', () => {
+  const d = { tasks: [
+    trow({ id: 'a', title: '迁移数据库', bytes: 10, updatedAt: 3 }),
+    trow({ id: 'b', title: '写前端', workspace: '/w/web', bytes: 30, updatedAt: 2 }),
+    trow({ id: 'c', title: '修 bug', bytes: 20, updatedAt: 1, state: 'deleted' }),
+  ] };
+  assert.deepEqual(visibleTasks(d, { states: new Set(), q: '', sort: 'size' }).map((x) => x.id), ['b', 'c', 'a']);
+  assert.deepEqual(visibleTasks(d, { states: new Set(), q: '', sort: 'time' }).map((x) => x.id), ['a', 'b', 'c']);
+  assert.deepEqual(visibleTasks(d, { states: new Set(['deleted']), q: '' }).map((x) => x.id), ['c']);
+  assert.deepEqual(visibleTasks(d, { states: new Set(), q: '前端' }).map((x) => x.id), ['b']);
+  assert.equal(visibleTasks(null, { states: new Set(), q: '' }).length, 0);
+});
+
+test('taskSelTotals：合计只算勾选的行', () => {
+  const d = { tasks: [trow({ id: 'a', bytes: 10, children: 1, rows: 2 }), trow({ id: 'b', bytes: 100, children: 0, rows: 5 })] };
+  const s = taskSelTotals(d, new Set(['a']));
+  assert.equal(s.count, 1);
+  assert.equal(s.bytes, 10);
+  assert.equal(s.children, 1);
+  assert.equal(s.rows, 2);
+  assert.equal(taskSelTotals(null, new Set()).count, 0);
+});
+
+test('taskQuickSet：只勾已删除的，跳过近期与置顶', () => {
+  const now = Date.now();
+  const d = { tasks: [
+    trow({ id: 'old', state: 'deleted', updatedAt: now - 90 * 86400000 }),
+    trow({ id: 'recent', state: 'deleted', updatedAt: now - 3 * 86400000 }),
+    trow({ id: 'pinned', state: 'deleted', updatedAt: now - 90 * 86400000, pinned: true }),
+    trow({ id: 'live', state: 'active', updatedAt: now - 90 * 86400000 }),
+  ] };
+  const s = taskQuickSet(d, { ageDays: 30, skipPinned: true });
+  assert.deepEqual(s.tasks.map((x) => x.id), ['old']);
+  assert.equal(s.skippedRecent, 1);
+  assert.equal(s.skippedPinned, 1);
+  assert.equal(s.total, 3);
+
+  // 放宽两个开关，置顶与近期都进来
+  const wide = taskQuickSet(d, { ageDays: 0, skipPinned: false });
+  assert.equal(wide.tasks.length, 3);
+  assert.equal(taskQuickSet(null, { ageDays: 0, skipPinned: false }).tasks.length, 0);
+});
+
+test('dbBarSegments：分段之和等于分母，整数宽度合计恰好 100', () => {
+  const d = {
+    db: { total: 700, bodies: { bytes: 300 } },
+    fileBased: false,
+    totals: { byState: [
+      { state: 'active', bytes: 600, count: 2 },
+      { state: 'deleted', bytes: 200, count: 1 },
+    ] },
+  };
+  const { segs, floors, total } = dbBarSegments(d);
+  assert.equal(total, 1000);
+  assert.equal(segs.reduce((s, x) => s + x.bytes, 0), 1000, '余量段把分母补齐');
+  assert.equal(floors.reduce((a, b) => a + b, 0), 100, '宽度合计恒为 100');
+  // 状态段的标签走中文字典；最后一段是余量
+  assert.equal(segs[0].label, '活跃会话');
+  assert.equal(segs[segs.length - 1].key, 'overhead');
+});
+
+test('dbBarSegments：文件型工具没有库时分母就是正文文件', () => {
+  const d = {
+    db: { total: 0, bodies: { bytes: 100 } },
+    fileBased: true,
+    totals: { byState: [{ state: 'active', bytes: 80, count: 1 }] },
+  };
+  const { segs } = dbBarSegments(d);
+  const last = segs[segs.length - 1];
+  assert.equal(last.bytes, 20);
+  assert.equal(last.label, '未归入会话的文件');
+});
+
+test('dryRunHtml：逐库逐表形状与 Cursor 形状分开渲染', () => {
+  const perDb = dryRunHtml({ perDb: [{ name: 'db.sqlite', table: 'session', count: 2 }, { name: 'db.sqlite', table: 'message', count: 5 }] });
+  assert.equal(perDb.totalRows, 7);
+  assert.match(perDb.rowsHtml, /session（db\.sqlite）/);
+  assert.equal(perDb.bodiesHtml, '');
+
+  const cursor = dryRunHtml({ sessionRows: 3, sessions: 1, blobs: 9, sessionBytes: 1024, blobBytes: 2048 });
+  assert.equal(cursor.totalRows, 3);
+  assert.match(cursor.rowsHtml, /连带删除的工具结果 blob/);
+  // 1024+2048=3072 字节 → KB 档 0 位小数 → "3 KB"
+  assert.match(cursor.bodiesHtml, /<b>3 KB<\/b>/);
+
+  const codex = dryRunHtml({ perDb: [], bodyBytes: 4096 });
+  assert.match(codex.bodiesHtml, /rollout 文件里/);
+});
+
+test('checkLine：三种返回形状都说成人话，不用别人的术语', () => {
+  assert.equal(checkLine({ integrity: 'ok', fkViolations: 0 }), '完整性 ok，外键违规 0。');
+  assert.equal(checkLine({ integrity: 'ok', dangling: 2 }), '完整性 ok，悬空引用 2 处。');
+  assert.equal(
+    checkLine({ integrity: [{ name: 'a.sqlite', integrity: 'ok', fkViolations: 0 }, { name: 'b.sqlite', integrity: 'ok', fkViolations: 0 }] }),
+    '2 个库完整性全部 ok，外键违规 0。');
+  assert.equal(
+    checkLine({ integrity: [{ name: 'a.sqlite', integrity: 'ok', fkViolations: 0 }, { name: 'b.sqlite', integrity: 'corrupt', fkViolations: 1 }] }),
+    'a.sqlite ok/违规 0，b.sqlite corrupt/违规 1。');
+});
+
+test('recoverRow：勾选态长在类名上，路径未还原要说出来', () => {
+  const s = { id: 'orphan-1', title: '丢失的会话', workspace: '/w/a', date: 1790000000000, messages: 3, tools: 2, bytes: 512, workspaceResolved: true };
+  const plain = recoverRowHtml(s, false);
+  assert.ok(!plain.includes('is-on'));
+  assert.ok(!plain.includes('路径未还原'));
+
+  const sel = recoverRowHtml({ ...s, workspaceResolved: false }, true);
+  assert.match(sel, /recover-row is-on/);
+  assert.match(sel, /checked/);
+  assert.match(sel, /路径未还原/);
+  assert.match(sel, /aria-label="选择会话 丢失的会话"/);
+});
+
+test('fileBasedNote：适配器给了文案就用它的，缺了退回通用句', () => {
+  assert.match(fileBasedNote({ appLabel: 'Claude Code', fileBasedNote: '正文在 projects/ 下。' }), /正文在 projects\/ 下。/);
+  assert.match(fileBasedNote({ appLabel: '某工具' }), /没有数据库行可删/);
+  assert.match(fileBasedNote({}), /这个工具/);
+});
+
+/* ── 安全审计视图（views/audit.js）────────────────────────── */
+
+const ahit = (over = {}) => ({
+  title: '有泄漏的会话', bodyRel: 'x/bubble.json', truncated: false, sensitiveReadCount: 0,
+  sensitiveReads: [], findings: [], ...over,
+});
+
+test('auditSummary：跨 app 归并三档计数与规模', () => {
+  const d = { apps: [
+    { totals: { high: 2, medium: 1, info: 3 }, sessionsScanned: 10, bytesScanned: 1000, problems: ['a 库慢'] },
+    { totals: { high: 0, medium: 0, info: 0 }, sessionsScanned: 5, bytesScanned: 500 },
+    { absent: true, sessionsScanned: 0, bytesScanned: 0 },
+  ] };
+  const s = auditSummary(d);
+  assert.deepEqual(s.totals, { h: 2, m: 1, i: 3 });
+  assert.equal(s.scanned, 15);
+  assert.equal(s.bytes, 1500);
+  assert.equal(s.problems.length, 1);
+  assert.match(s.problems[0], /a 库慢/);
+});
+
+test('auditLede：命中与规模都在那一句里，只读说明带在后面', () => {
+  const s = auditSummary({ apps: [{ totals: { high: 1, medium: 2, info: 3 }, sessionsScanned: 4, bytesScanned: 2048 }] });
+  const html = auditLedeHtml({}, s);
+  assert.match(html, /4/);
+  assert.match(html, /1<\/b> 处高危/);
+  assert.match(html, /2<\/b> 处疑似/);
+  assert.match(html, /只读/);
+});
+
+test('auditTool：未安装、暂不支持、三档计数三种形态', () => {
+  // 缺库的 app 在服务端响应里 supported 恒为真值（absent 单独标）
+  assert.match(auditToolHtml({ app: 'x', label: 'X', supported: true, absent: true, totals: {} }), /未安装/);
+  assert.match(auditToolHtml({ app: 'x', label: 'X', supported: false, reason: '没适配' }), /暂不支持/);
+  const ok = auditToolHtml({ app: 'x', label: 'X', supported: true, totals: { high: 2, medium: 1, info: 4 }, sessionsScanned: 9, ms: 12 });
+  assert.match(ok, /data-app-tone="x"/);
+  assert.match(ok, /is-high/);
+  assert.match(ok, /次读取/);
+  assert.match(ok, /扫了 9 个会话/);
+});
+
+test('auditHitGroups：只有高危/疑似的会话成组，且按严重度排序', () => {
+  const d = { apps: [
+    { app: 'a', label: 'A', hits: [ahit({ title: '低', findings: [{ level: 'info' }] }), ahit({ title: '高', findings: [{ level: 'high' }, { level: 'high' }] })] },
+    { app: 'b', label: 'B', hits: [ahit({ title: '中', findings: [{ level: 'medium' }] })] },
+  ] };
+  const groups = auditHitGroups(d);
+  assert.deepEqual(groups.map((g) => g.h.title), ['高', '中'], 'info-only 的不进列表');
+});
+
+test('auditGroup：掩码证据转义，敏感读取只做背景说明', () => {
+  const html = auditGroupHtml(
+    { app: 'a', label: '<b>A</b>' },
+    ahit({
+      findings: [{ level: 'high', kind: 'secret-out', style: 'aws-key', valueMasked: 'AKIA****', from: '/Users/x/.env', evidence: 'export AWS_KEY=AKIA...' }],
+      sensitiveReadCount: 6, sensitiveReads: ['/Users/x/.env', '/Users/x/.aws/credentials', '/a', '/b', '/c', '/d'],
+      truncated: true,
+    }));
+  assert.ok(!html.includes('<b>A</b>'), '工具名要转义');
+  assert.match(html, /&lt;b&gt;A&lt;\/b&gt;/);
+  assert.match(html, /高危/);
+  assert.match(html, /读到的AWS 访问密钥又出现在外发命令里/);
+  assert.match(html, /读取来源 ~\/\.env/);
+  assert.match(html, /AKIA\*\*\*\*/);
+  assert.match(html, /另读过 6 个敏感文件/);
+  // 列前四个之后交代还有更多，再接截断说明
+  assert.match(html, /、b 等；会话超长，只扫了前 32 MB/);
+});
+
+test('auditGroup：内嵌型命中的说法与外发型分开', () => {
+  const html = auditGroupHtml({ app: 'a', label: 'A' },
+    ahit({ findings: [{ level: 'medium', kind: 'secret-inline', style: 'github', valueMasked: 'ghp_****' }] }));
+  assert.match(html, /外发命令里内嵌了GitHub 令牌/);
+});
+
+/* ── 三块分组与清理抽屉（views/files.js 第二批）────────────── */
+
+import {
+  splitBlockHtml, drawerStatsHtml, drawerMixHtml, drawerListHtml, recChipsHtml,
+} from '../public/views/files.js';
+import { confirmWordHint } from '../public/views/shared.js';
+
+const srow = (over = {}) => ({ p: 'cache/a.bin', t: 'root', s: 1024, k: 'root:cache/a.bin', link: false, ...over });
+const sctx = (over = {}) => ({ selection: new Set(), keyOf: (f) => f.k, canPick: (f) => !f.link, anyPicked: false, ...over });
+
+test('split-block：可勾时是 role=checkbox，勾满 / 勾一半 / 没勾三种说法', () => {
+  const files = [srow(), srow({ k: 'b', p: 'x' })];
+  const base = { cls: 'is-other', title: '非会话文件', desc: 'd', xs: files, extra: '', split: 'other', hit: files };
+
+  const none = splitBlockHtml({ ...base, ...sctx() });
+  assert.match(none, /role="checkbox"/);
+  assert.match(none, /aria-checked="false"/);
+  assert.match(none, /点这里选中这一组/);
+
+  const some = splitBlockHtml({ ...base, ...sctx({ selection: new Set(['root:cache/a.bin']), anyPicked: true }) });
+  assert.match(some, /aria-checked="mixed"/);
+  assert.match(some, /再点一下补全/);
+  assert.match(some, /已选 <b>1<\/b> \/ <b>2<\/b> 项/);
+
+  const all = splitBlockHtml({ ...base, ...sctx({ selection: new Set(['root:cache/a.bin', 'b']) }) });
+  assert.match(all, /aria-checked="true"/);
+  assert.match(all, /再点一下取消/);
+  assert.match(all, /class="split-block is-other is-on/);
+});
+
+test('split-block：已有勾选时，没勾的块说"换成这一组"而不是"选中"', () => {
+  const html = splitBlockHtml({
+    cls: 'is-other', title: 'x', desc: 'd', xs: [srow()], extra: '', split: 'other', hit: null,
+    ...sctx({ anyPicked: true }),
+  });
+  assert.match(html, /点这里换成这一组/);
+  assert.ok(!html.includes('点这里选中这一组'));
+});
+
+test('split-block：整组不可勾时退出交互，不假装是复选框', () => {
+  const html = splitBlockHtml({
+    cls: 'is-orphan', title: 'x', desc: 'd', xs: [srow({ link: true })], extra: '', split: 'orphan', hit: null,
+    ...sctx(),
+  });
+  assert.ok(!html.includes('role="checkbox"'), '没有可勾项就不该有复选框语义');
+  assert.ok(!html.includes('tabindex'));
+  assert.ok(!html.includes('data-split'));
+  assert.match(html, /这一组没有可勾选的条目/);
+  assert.match(html, /is-empty/);
+});
+
+test('split-block：筛过时写"筛出 N / M"，且只有数字真的变了才补整组体积', () => {
+  const files = [srow(), srow({ k: 'b', p: 'x' })];
+  const html = splitBlockHtml({
+    cls: 'is-other', title: 'x', desc: 'd', xs: files, extra: '', split: 'other', hit: [files[0]],
+    ...sctx(),
+  });
+  assert.match(html, /筛出 1 \/ 2 个文件/);
+  assert.match(html, /这一组当前筛选下没有条目|点这里选中这一组/);
+});
+
+test('drawerStats：条目、合计带精确字节，最大一项带完整路径 title', () => {
+  const rows = [srow({ s: 1024, p: 'a/b.bin' }), srow({ s: 4096, k: 'x', p: 'c/d.bin' })];
+  const html = drawerStatsHtml(rows, { titleOf: (f) => `~/${f.p}` });
+  assert.match(html, /<span>条目<\/span><b>2<\/b>/);
+  assert.match(html, /title="5,120 字节"/);
+  assert.match(html, /title="~\/c\/d\.bin，4,096 字节"/);
+});
+
+test('drawerMix：同名分类按 id 合并，前五类之外报总数', () => {
+  const cat = (id, label, status = 'good') => ({ id, label, status });
+  const rows = Array.from({ length: 7 }, (_, i) => srow({ s: 10 * (i + 1), k: `k${i}` }));
+  const html = drawerMixHtml(rows, (f) => cat(`c${f.s}`, `类${f.s}`));
+  assert.match(html, /包含 /);
+  assert.match(html, /…共 7 类/);
+
+  const merged = drawerMixHtml(rows, () => cat('same', '同一类'));
+  assert.ok(!merged.includes('…共'), '同 id 合并后只有一类');
+  assert.match(merged, /同一类/);
+});
+
+test('drawerList：只列最大的 300 项，并明说截断不等于范围', () => {
+  const many = Array.from({ length: 305 }, (_, i) => srow({ s: i, k: `k${i}`, p: `f/${i}.bin` }));
+  const html = drawerListHtml(many, { titleOf: (f) => f.p });
+  assert.equal((html.match(/<li /g) || []).length, 301, '300 行 + 1 行截断说明');
+  assert.match(html, /下面还有 5 项没列出来/);
+  assert.match(html, /<b>它们同样在这次的删除范围里<\/b>/);
+  // 最大项排最前
+  assert.ok(html.indexOf('304.bin') < html.indexOf('303.bin'));
+
+  const few = drawerListHtml([srow()], { titleOf: (f) => f.p });
+  assert.ok(!few.includes('drawer-more'));
+});
+
+test('recChips：排除状态长在 is-on 与 aria-pressed 上，说明进 title', () => {
+  const cats = [
+    { id: 'cache', label: '缓存', status: 'good', what: '可重建的副本', bytes: 2048 },
+    { id: 'logs', label: '日志', status: 'good', what: '命令输出', bytes: 4096 },
+  ];
+  const html = recChipsHtml(cats, new Set(['logs']));
+  assert.match(html, /data-rec="cache" aria-pressed="true"/);
+  assert.match(html, /class="rec-chip st-good is-on"/);
+  assert.match(html, /data-rec="logs" aria-pressed="false"/);
+  assert.match(html, /title="可重建的副本"/);
+  // 体积带精确字节
+  assert.match(html, /title="4,096 字节"/);
+});
+
+test('confirmWordHint：三条路径共用同一句式，输对与空输入都返回空串', () => {
+  assert.equal(confirmWordHint('', '彻底删除', '彻底删除'), '');
+  assert.equal(confirmWordHint('彻底删除', '彻底删除', '彻底删除'), '');
+  assert.equal(confirmWordHint('彻底', '彻底删除', '彻底删除'), '还差「删除」—— 输全才能彻底删除。');
+  assert.equal(confirmWordHint('清', '清理', '删除'), '还差「理」—— 输全才能删除。');
+  assert.equal(confirmWordHint('回', '回灌', '写入'), '还差「灌」—— 输全才能写入。');
+});
+
+/* ── 跨层枚举契约 ───────────────────────────────────────────
+   后端 lib/tasks-shape.mjs 是 state/reason 值域的唯一来源；前端字典
+   （views/tasks.js）是它们的人话。后端加一档而前端字典没跟上时，
+   缺的那个值会以 undefined 一路画到界面上 —— 在这里锁住对齐。 */
+
+import { STATES, REASONS } from '../lib/tasks-shape.mjs';
+
+test('后端每个 state 在前端都有文案与色档，反之亦然', () => {
+  for (const s of STATES) {
+    assert.ok(STATE_META_CN[s], `后端 state「${s}」在前端字典缺文案`);
+    assert.ok(STATE_TONE[s], `后端 state「${s}」在前端字典缺色档`);
+  }
+  assert.deepEqual(Object.keys(STATE_META_CN).sort(), [...STATES].sort(),
+    '前端 state 字典与后端值域不一致（多出或缺少键）');
+});
+
+test('后端每个 reason 在前端都有文案与色档', () => {
+  for (const r of REASONS) {
+    assert.ok(REASON_LABEL[r], `后端 reason「${r}」在前端字典缺文案`);
+    assert.ok(REASON_TONE[r], `后端 reason「${r}」在前端字典缺色档`);
+  }
+  assert.deepEqual(Object.keys(REASON_LABEL).sort(), [...REASONS].sort(),
+    '前端 reason 字典与后端值域不一致');
+});
+
+/* ── 面板文案矩阵（views/tasks.js 第二批）─────────────────── */
+
+import {
+  taskLedeHtml, taskWarnHtml, taskEmptyWarnHtml, taskQuickTexts,
+  taskDrawerStatsHtml, taskDrawerNoteHtml, taskDrawerListHtml,
+} from '../public/views/tasks.js';
+
+const panel = (over = {}) => ({
+  appLabel: 'ZCode', readOnly: false, fileBased: false, untitled: 0,
+  totals: { count: 3, bytes: 2048, byState: [{ state: 'active', count: 3, bytes: 2048 }] },
+  db: { total: 4096, dbs: [{ path: '/Users/x/.zcode/cli/db/db.sqlite', role: 'chat' }] },
+  app: { running: false, unknown: false, hits: [] },
+  tasks: [trow(), trow({ id: 'b' }), trow({ id: 'c' })],
+  backupDir: '/tmp/backups', problems: [], ...over,
+});
+
+test('taskLede：四种形态各说各的，不把 A 工具的说法安到 B 头上', () => {
+  const ro = taskLedeHtml(panel({ readOnly: true }));
+  assert.match(ro, /按键族摊开/);
+  assert.ok(!ro.includes('正文文件合计') && !ro.includes('rollout'));
+
+  const fb = taskLedeHtml(panel({ fileBased: true, db: { total: 0, bodies: { count: 5, bytes: 2048 } } }));
+  assert.match(fb, /正文文件/);
+  assert.match(fb, /清理走文件那条线/);
+
+  const two = taskLedeHtml(panel({ db: { total: 4096, bodies: { count: 2, bytes: 1024 } } }));
+  assert.match(two, /分两处存/);
+  assert.match(two, /rollout 文件/);
+
+  const one = taskLedeHtml(panel());
+  assert.match(one, /会话库/);
+});
+
+test('taskLede：可清数量在"全部可清"与"部分可清"时补一句，全不可清不啰嗦', () => {
+  const allPurgeable = [trow({ reason: 'deleted' }), trow({ id: 'b', reason: 'deleted' }), trow({ id: 'c', reason: 'deleted' })];
+  const all = taskLedeHtml(panel({ fileBased: true, db: { total: 0, bodies: { count: 3, bytes: 2048 } }, tasks: allPurgeable }));
+  assert.match(all, /这 3 条都可以清/);
+  // 活跃且工作区在（reason=null）的行不可清 → 不补
+  assert.ok(!taskLedeHtml(panel()).includes('可以清'));
+});
+
+test('taskLede：无名会话的交代只出现在只读形态里', () => {
+  assert.match(taskLedeHtml(panel({ readOnly: true, untitled: 2 })), /2<\/b> 条 Cursor 没有生成标题/);
+  assert.ok(!taskLedeHtml(panel({ untitled: 2 })).includes('没有生成标题'));
+});
+
+test('taskWarn：五分支各自的能力前提，problems 一律压过 is-ok', () => {
+  const safe = taskWarnHtml(panel());
+  assert.equal(safe.className, 'app-warn is-ok');
+  assert.match(safe.html, /没在运行，可以安全清理/);
+  assert.match(safe.html, /完整备份到/);
+
+  const running = taskWarnHtml(panel({ app: { running: true, unknown: false, hits: [{ name: 'ZCode', pids: 2 }] } }));
+  assert.match(running.html, /<b>ZCode 正在运行<\/b>/);
+  assert.match(running.html, /完全退出/);
+
+  const unknown = taskWarnHtml(panel({ app: { running: false, unknown: true, error: 'pgrep 没了' } }));
+  assert.match(unknown.html, /无法确认 ZCode 是否退出/);
+  assert.match(unknown.html, /pgrep 没了/);
+
+  const ro = taskWarnHtml(panel({ readOnly: true, readOnlyNote: '这个库由 IDE 独占写入。' }));
+  assert.match(ro.html, /会话只读/);
+  assert.match(ro.html, /IDE 独占写入/);
+
+  const fb = taskWarnHtml(panel({ fileBased: true }));
+  assert.match(fb.html, /文件清理/);
+
+  // 有读取问题时必须上屏，且"绿色安全"的调子不能再挂着
+  const withProblem = taskWarnHtml(panel({ problems: ['db.sqlite 打不开（只读）'] }));
+  assert.equal(withProblem.className, 'app-warn');
+  assert.match(withProblem.html, /db\.sqlite 打不开（只读）/);
+});
+
+test('taskEmptyWarn：空面板说明文件型与读取问题，无可说时为 null', () => {
+  const fb = taskEmptyWarnHtml(panel({ fileBased: true }));
+  assert.match(fb.html, /文件清理/);
+  assert.equal(fb.className, 'app-warn is-ok');
+
+  const problem = taskEmptyWarnHtml(panel({ problems: ['读不到'] }));
+  assert.equal(problem.className, 'app-warn');
+  assert.match(problem.html, /读不到/);
+
+  assert.equal(taskEmptyWarnHtml(panel()), null);
+  assert.equal(taskEmptyWarnHtml(null), null);
+});
+
+test('taskQuickTexts：跳过计数折进行内，按钮的空范围说下一步', () => {
+  const s = { tasks: [trow()], bytes: 1024, skippedRecent: 2, skippedPinned: 0 };
+  const t = taskQuickTexts(panel(), s, { ageDays: 30, skipPinned: true });
+  assert.match(t.subHtml, /勾选 <b>1<\/b> 个，共 1 KB/);
+  assert.match(t.subHtml, /已跳过 2 个近期还在用的/);
+  assert.ok(!t.subHtml.includes('置顶'), 'skipPinned 关着时不提置顶');
+  assert.match(t.figureTitle, /它的删除只是打标记/);
+  assert.match(t.btnTitle, /先摊开确认清单/);
+
+  const empty = taskQuickTexts(panel(), { tasks: [], bytes: 0, skippedRecent: 0, skippedPinned: 0 }, { ageDays: 30, skipPinned: true });
+  assert.match(empty.btnTitle, /放宽"跳过最近"再试/);
+});
+
+test('taskDrawerStats：正文即文件的加"库里的条目"，Cursor 空跑时显式说"正在算"', () => {
+  const bodies = taskDrawerStatsHtml({ count: 2, rows: 9, bytes: 2048, exTotal: null, exPending: false, hasBodies: true });
+  assert.match(bodies, /库里的条目/);
+  assert.ok(!bodies.includes('连带回收'), 'Codex 形态不该出现连带');
+
+  const cursor = taskDrawerStatsHtml({ count: 2, rows: 0, bytes: 1024, exTotal: null, exPending: true, hasBodies: false });
+  assert.match(cursor, /dstat-pending/);
+  assert.match(cursor, /正在算/);
+
+  const done = taskDrawerStatsHtml({
+    count: 2, rows: 0, bytes: 1024,
+    exTotal: { bytes: 3072, blobs: 5 }, exPending: false, hasBodies: false,
+  });
+  assert.match(done, /连带回收/);
+  assert.match(done, /预计共回收/);
+  assert.match(done, /4 KB/);
+});
+
+test('taskDrawerNote：运行中 / Cursor / Codex 两段式 / 默认各说各的', () => {
+  const running = taskDrawerNoteHtml(panel({ app: { running: true, unknown: false, hits: [] } }), {});
+  assert.match(running, /仍在运行/);
+
+  const cursor = taskDrawerNoteHtml(
+    panel({ history: 'cursor-db', db: { total: 1, dbs: [
+      { path: '/x/state.vscdb', role: 'kv' }, { path: '/x/search.db', role: 'index' },
+    ] } }),
+    { exB: 2048, exN: 3 });
+  assert.match(cursor, /state\.vscdb/);
+  assert.ok(!cursor.includes('search.db'), '搜索索引不该被说成"会从里面移除"');
+  assert.match(cursor, /3<\/b> 个工具结果 blob/);
+
+  const codex = taskDrawerNoteHtml(
+    panel({ db: { total: 4096, dbs: [{ path: '/x/state_5.sqlite', role: 'chat' }], bodies: { count: 1, bytes: 10 } } }), {});
+  assert.match(codex, /正文不在这些库里/);
+
+  const plain = taskDrawerNoteHtml(panel(), {});
+  assert.match(plain, /正文合计只是下限/);
+});
+
+test('taskDrawerList：按体积降序、截断说明、工具名做前缀', () => {
+  const picked = [trow({ id: 'a', title: '小', bytes: 1 }), trow({ id: 'b', title: '大', bytes: 999 })];
+  const html = taskDrawerListHtml(picked, 'ZCode');
+  assert.ok(html.indexOf('大') < html.indexOf('小'));
+  assert.match(html, /<span>ZCode，大<\/span>/);
+  assert.ok(!html.includes('…还有'));
+
+  const many = Array.from({ length: 205 }, (_, i) => trow({ id: `k${i}`, title: `会话${i}`, bytes: i }));
+  const cut = taskDrawerListHtml(many, 'ZCode');
+  assert.match(cut, /…还有 5 个/);
 });
