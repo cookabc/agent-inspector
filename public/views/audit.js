@@ -41,6 +41,7 @@ export function auditSummary(d) {
     }), { h: 0, m: 0, i: 0 }),
     scanned: d.apps.reduce((s, a) => s + (a.sessionsScanned || 0), 0),
     bytes: d.apps.reduce((s, a) => s + (a.bytesScanned || 0), 0),
+    truncated: d.apps.reduce((s, a) => s + (a.truncatedSessions || 0), 0),
     problems: d.apps.flatMap((a) => (a.problems || []).map((p) => `${a.label}：${p}`)),
   };
 }
@@ -51,6 +52,7 @@ export function auditLedeHtml(d, s) {
     `<b>${s.totals.h}</b> 处高危（读到又外发）、<b>${s.totals.m}</b> 处疑似（外发内嵌）、` +
     `<b>${s.totals.i}</b> 次敏感文件读取。` +
     `<span class="all-note">证据已脱敏；这一屏只读，要处理去对应工具。</span>` +
+    (s.truncated ? `<span class="all-note">${s.truncated} 个会话有内容未扫描，结果不完整。</span>` : '') +
     (s.problems.length ? `<span class="all-note">${esc(s.problems[0])}${s.problems.length > 1 ? ` 等 ${s.problems.length} 条` : ''}</span>` : '');
 }
 
@@ -106,8 +108,8 @@ export function auditGroupHtml(app, h) {
         </div>`;
     }).join('');
   const info = h.sensitiveReadCount
-    ? `<p class="audit-info">另读过 ${h.sensitiveReadCount} 个敏感文件${h.sensitiveReads?.length ? `：${h.sensitiveReads.slice(0, 4).map((p) => esc(p.split('/').pop())).join('、')}${h.sensitiveReadCount > 4 ? ' 等' : ''}` : ''}${h.truncated ? '；会话超长，只扫了前 32 MB' : ''}</p>`
-    : (h.truncated ? '<p class="audit-info">会话超长，只扫了前 32 MB</p>' : '');
+    ? `<p class="audit-info">另读过 ${h.sensitiveReadCount} 个敏感文件${h.sensitiveReads?.length ? `：${h.sensitiveReads.slice(0, 4).map((p) => esc(p.split('/').pop())).join('、')}${h.sensitiveReadCount > 4 ? ' 等' : ''}` : ''}${h.truncated ? '；部分内容因扫描上限被跳过，结果不完整' : ''}</p>`
+    : (h.truncated ? '<p class="audit-info">部分内容因扫描上限被跳过，结果不完整</p>' : '');
   return `<section class="all-group">
       <header class="all-group-head">
         <span class="all-app" data-app-tone="${esc(app.app)}">${esc(app.label)}</span>

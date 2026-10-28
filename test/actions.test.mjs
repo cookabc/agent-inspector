@@ -52,6 +52,14 @@ const FILES = [
 const groupOf = (x) => (!x.sid ? 'other' : x.orphan === true ? 'orphan' : 'live');
 const canPick = (x) => !x.link;
 
+test('switching split groups applies the new group before evaluating active filters', () => {
+  const st = mkState({ group: 'orphan', q: 'live-a', selection: new Set(['k:orphan-a']) });
+  toggleSplitGroup(st, 'live', { files: FILES, groupOf, canPick, keyOf,
+    matches: x => (!st.group || groupOf(x) === st.group) && x.p.includes(st.q) });
+  assert.deepEqual([...st.selection], ['k:live-a']);
+  assert.equal(st.group, 'live');
+});
+
 /* ── 三块分组 ─────────────────────────────────────────────── */
 
 test('三块分组：勾上这一组里能被勾的那些', () => {

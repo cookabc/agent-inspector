@@ -10,6 +10,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fmtBytes, isSelectable } from '../public/logic.js';
 
+test('locked categories remain unselectable even with a review verdict', () => {
+  assert.equal(isSelectable({}, { locked: true, verdict: 'review' }), false);
+});
+
 const KB = 1024, MB = 1024 ** 2, GB = 1024 ** 3, TB = 1024 ** 4;
 
 test('常规量级与精度', () => {

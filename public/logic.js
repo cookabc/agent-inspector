@@ -28,7 +28,7 @@ const GB = 1024 ** 3, MB = 1024 ** 2, KB = 1024;
  * @param {{verdict?: string}} [cat] 该行所属分类（缺省时按不可清理处理）
  */
 export function isSelectable(file, cat) {
-  if (file.link) return false;
+  if (file.link || cat?.locked) return false;
   const verdict = cat?.verdict;
   if (!verdict) return false;          // 判不出来 → 不许勾
   return verdict !== 'never';

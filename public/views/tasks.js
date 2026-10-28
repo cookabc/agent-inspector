@@ -77,7 +77,7 @@ export function taskSelTotals(d, sel) {
  */
 export function taskQuickSet(d, tq) {
   if (!d) return { tasks: [], bytes: 0, total: 0, totalBytes: 0, skippedRecent: 0, skippedPinned: 0 };
-  const base = d.tasks.filter((t) => t.state === 'deleted');
+  const base = d.tasks.filter((t) => t.state === 'deleted' && isPurgeable(t));
   const cutoff = tq.ageDays > 0 ? Date.now() - tq.ageDays * 86400000 : 0;
   const picked = base.filter((t) =>
     (!tq.skipPinned || !t.pinned) && (!cutoff || t.updatedAt < cutoff));
@@ -154,7 +154,10 @@ export function dbBarSegments(d) {
   ].filter((s) => s.bytes > 0);
 
   const W = 100;
-  const pct = segs.map((s) => (total ? (s.bytes / total) * W : 0));
+  // WAL 尚未合入主库时，逻辑正文可能超过磁盘主库大小；条宽按已展示段归一化。
+  // total 继续保留原始磁盘口径，不伪造额外的磁盘占用。
+  const scale = segs.reduce((sum, s) => sum + s.bytes, 0);
+  const pct = segs.map((s) => (scale ? (s.bytes / scale) * W : 0));
   const floors = pct.map(Math.floor);
   let rest = Math.round(W - floors.reduce((a, b) => a + b, 0));
   const order = pct.map((v, i) => [v - Math.floor(v), i]).sort((a, b) => b[0] - a[0]);
@@ -177,7 +180,7 @@ export function taskRowHtml(t, ctx) {
      "missing source rollout"，看着像别处坏了。行上必须说出来。 */
   const segNote = t.lineage?.continuation
     ? `分页第 ${t.lineage.endOrdinal} 段起`
-    : '';
+    : t.lineage?.referenced ? '被分页续段引用' : '';
   const meta = [
     ctx.showWorkspace ? shortPath(t.workspace) : '',
     `${fmtDate(t.updatedAt)} 最后使用`,
@@ -221,6 +224,7 @@ export function taskRowHtml(t, ctx) {
               前面那段在另一个文件里。Codex 恢复会话时要顺着它往回找 ——
               <b>删掉任何一段，整条会话都再也恢复不了</b>（报 missing source rollout）。
               它在文件清单里已锁成「请勿删除」。</dd></div>` : ''}
+          ${t.lineage?.referenced ? '<div class="tspan"><dt>分页依赖</dt><dd>其他续段依赖此文件，禁止单独删除；文件清单中已锁定。</dd></div>' : ''}
           ${ex && ex.exclusiveBytes > 0 ? `<div class="tspan"><dt>删除会连带回收</dt>
             <dd title="${ex.exclusiveBytes.toLocaleString()} 字节">
               <b>${fmtBytes(ex.exclusiveBytes)}</b>
@@ -436,7 +440,7 @@ export function taskQuickTexts(d, s, tq) {
 
 /** 抽屉头上的读数。exTotal / exPending 由调用方算好传入 ——
  *  说明文字与读数要用同一份连带数字，各算各的迟早对不上。 */
-export function taskDrawerStatsHtml({ count, rows, bytes, exTotal, exPending, hasBodies }) {
+export function taskDrawerStatsHtml({ count, rows, bytes, exTotal, exPending, exFailed, hasBodies }) {
   if (hasBodies) {
     return `<div class="dstat"><span>会话</span><b>${count.toLocaleString()}</b></div>
        <div class="dstat"><span>库里的条目</span><b>${rows.toLocaleString()}</b></div>
@@ -449,7 +453,7 @@ export function taskDrawerStatsHtml({ count, rows, bytes, exTotal, exPending, ha
          <div class="dstat"><span>预计共回收</span><b>${fmtBytes(bytes + exTotal.bytes)}</b></div>`
       : exPending
         ? `<div class="dstat"><span>连带回收</span><b class="dstat-pending">正在算…</b></div>`
-        : '');
+        : exFailed ? '<div class="dstat"><span>连带回收</span><b class="dstat-pending">未能估算，请先空跑</b></div>' : '');
 }
 
 /** 抽屉的说明。Cursor 两点不同：

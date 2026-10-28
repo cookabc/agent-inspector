@@ -34,6 +34,8 @@
  */
 export function toggleSplitGroup(state, g, deps) {
   const { files, groupOf, canPick, matches, keyOf } = deps;
+  // matches 读取当前分组；切换时先应用新分组，仍保留搜索与状态筛选。
+  state.group = g;
   const mine = files.filter((f) => groupOf(f) === g && canPick(f) && matches(f));
   const allOn = mine.length > 0 && mine.every((f) => state.selection.has(keyOf(f)));
 

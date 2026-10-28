@@ -350,7 +350,7 @@ test('Cursor 的连带回收进详情与抽屉，不进清单行', () => {
      塞进体积列会把标题压回 278px。所以它只出现在展开后的详情里（行模板）
      和抽屉的合计里（编排层）。 */
   assert.match(taskViewsSrc, /删除会连带回收/);
-  assert.match(app, /const exPending = taskState\.exclusive === null && d\.history === 'cursor-db'/);
+  assert.match(app, /const exPending = taskState\.exclusive === null && !taskState\.exclusiveFailed && d\.history === 'cursor-db'/);
   assert.match(taskViewsSrc, /dstat-pending/, '还没算完时要说"正在算"，不能装作没有连带');
 });
 
@@ -444,9 +444,9 @@ test('三条写入路径的确认串都是"输对才亮"，且来自同一份定
   assert.match(app, /tEls\.word\.addEventListener\('input', syncTaskWord\)/);
   assert.match(app, /rEls\.word\?\.addEventListener\('input', syncRecoverWord\)/);
   assert.match(app, /els\.drawerGo\.disabled = !ok/);
-  assert.match(app, /tEls\.go\.disabled = !ok/);
+  assert.match(app, /tEls\.go\.disabled = taskWriteBlocked\(\) \|\| !ok/);
   // 收尾时按真实状态恢复，不要无条件打开
-  assert.match(app, /tEls\.go\.disabled = tEls\.word\.value !== TASK_PURGE_WORD/);
+  assert.match(app, /tEls\.go\.disabled = taskWriteBlocked\(\) \|\| tEls\.word\.value !== TASK_PURGE_WORD/);
 });
 
 test('切到「全部」时要清掉上一个工具留下的操作条', () => {

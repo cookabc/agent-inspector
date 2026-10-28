@@ -89,7 +89,9 @@ export const STATUS_LABEL = {
  */
 export const confirmWordHint = (input, word, tail) =>
   (input && input !== word)
-    ? `还差「${word.slice(String(input).length)}」—— 输全才能${tail}。`
+    ? word.startsWith(String(input))
+      ? `还差「${word.slice(String(input).length)}」—— 输全才能${tail}。`
+      : `请输入「${word}」才能${tail}。`
     : '';
 
 /* ── 图标 ─────────────────────────────────────────────────── */

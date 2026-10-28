@@ -53,14 +53,14 @@ export function caretBtn(cat, isOpen) {
  * 取消，人看到的是"这个框坏了"。
  */
 export function groupBox(cat, selCount, pickableCount) {
-  const disabled = cat.verdict === 'never';
+  const disabled = !isSelectable({}, cat);
   const checked = selCount > 0 && selCount === pickableCount;
   const indeterminate = selCount > 0 && selCount < pickableCount;
   return `<input type="checkbox" data-group-box="${cat.id}"
-            ${disabled ? 'disabled aria-label="受保护内容，不可清理"' : ''}
+            ${disabled ? 'disabled' : ''}
             ${checked ? 'checked' : ''}
             ${indeterminate ? 'data-indeterminate="1"' : ''}
-            aria-label="选择 ${esc(cat.label)} 的全部条目">`;
+            aria-label="${disabled ? '受保护内容，不可清理' : `选择 ${esc(cat.label)} 的全部条目`}">`;
 }
 
 /**
@@ -74,7 +74,7 @@ export function rowHtml(f, cat, ctx) {
   // 软链接：扫描时按链接本身记录（不跟随），服务端也一律拒绝删除。
   // 所以这里既不能勾，也要在行上说明白 —— 画成可勾的条目等于骗人点一下再报错。
   const isLink = Boolean(f.link);
-  const protectedRow = cat.verdict === 'never' || isLink;
+  const protectedRow = !isSelectable(f, cat);
   const when = new Date(f.m).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
   const cut = f.p.lastIndexOf('/');
   const dir = cut < 0 ? '' : f.p.slice(0, cut + 1);

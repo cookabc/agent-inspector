@@ -157,7 +157,7 @@ function loadRecOff() {
   if (Array.isArray(ids)) {
     const known = new Set(recommendAll().map((c) => c.id));
     const kept = ids.filter((id) => known.has(id));
-    if (ids.length || kept.length) return new Set(kept);
+    return new Set(kept);
   }
   return new Set(recommendAll().filter((c) => c.recommendDefaultOff).map((c) => c.id));
 }
@@ -223,12 +223,12 @@ async function load(refresh = false) {
     const data = await res.json();
     if (request !== scanRequest) return;
     state.scan = data;
-    if (refresh) allState.data = null;
+    if (refresh) { allState.data = null; auditState.data = null; }
     state.apps = state.scan.apps;
     // 每行在数据入手的这一刻就带上归属与稳定 key。之前靠 files.includes()
     // 反查 —— 抽屉里 3352 行 × 1.8 万文件是千万级比较，而这里一次写入零成本。
     indexRows();
-    if (state.appId !== ALL_ID && !state.apps.some((a) => a.app === state.appId)) state.appId = pickApp();
+    if (!isAll() && !isAudit() && !state.apps.some((a) => a.app === state.appId)) state.appId = pickApp();
     applyApp();
   } finally {
     if (request === scanRequest) { dropSkeleton(); setBusy(false); }
@@ -260,7 +260,7 @@ function pickApp() {
   const sorted = sortedApps();
   try {
     const last = localStorage.getItem(APP_KEY);
-    if (last === ALL_ID) return ALL_ID;
+    if (last === ALL_ID || last === AUDIT_ID) return last;
     if (last) {
       const hit = sorted.find((a) => a.app === last && a.totals.files > 0);
       if (hit) return hit.app;
@@ -273,6 +273,7 @@ function pickApp() {
 function applyApp() {
   viewEpoch++;
   allState.loading = false;
+  auditState.loading = false;
   setPanelBusy(false);
   // 「全部」与「安全审计」是长只读列表，走文档流滚动；单工具视图走
   // 100vh 框架（面板不出屏、列表在面板里滚）。CSS 看 body.mode-flow 分档。
@@ -617,7 +618,7 @@ const rowTitle = (f) => {
 /** 按 (app, 行) 取分类元信息：预建的 Map 查一次，不再逐行搜 catalog。 */
 function catOfRow(f) {
   return state.catById?.get(`${appIdOfRow(f)}\u0000${f.c}`)
-    || { id: f.c, label: f.c, status: 'warning', verdict: 'review' };
+    || { id: f.c, label: f.c, status: 'warning', verdict: 'never' };
 }
 
 function openDrawer() {
@@ -835,10 +836,15 @@ async function runClean() {
 async function revealPath(key) {
   const f = state.fileByKey?.get(key);
   if (!f) return;
-  await fetch('/api/reveal', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ app: appIdOfRow(f), target: f.t, path: f.p }),
-  });
+  try {
+    const res = await fetch('/api/reveal', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app: appIdOfRow(f), target: f.t, path: f.p }),
+    });
+    if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+  } catch (err) {
+    showToast(`无法显示文件：${esc(err.message)}`, { error: true });
+  }
 }
 
 /* ── 操作结果提示 ───────────────────────────────────────── */
@@ -955,7 +961,12 @@ async function loadAllSessions(refresh = false) {
 
 function renderAllSessions() {
   const d = allState.data;
-  if (!d) return;
+  if (!d) {
+    els.allTools.innerHTML = '';
+    els.allList.innerHTML = '';
+    els.allEmpty.hidden = true;
+    return;
+  }
 
   // 每个工具一个筛选钮。三种状态（有会话 / 零会话 / 真读不到）由 views/all.js 区分 ——
   // 后端的 problems 里既有真错误也有说明性提示，混成一句会把正常的工具显示成故障。
@@ -1031,7 +1042,12 @@ async function loadAudit(refresh = false) {
 
 function renderAudit() {
   const d = auditState.data;
-  if (!d) return;
+  if (!d) {
+    els.auditTools.innerHTML = '';
+    els.auditList.innerHTML = '';
+    els.auditEmpty.hidden = true;
+    return;
+  }
 
   const s = auditSummary(d);
   els.auditLede.innerHTML = auditLedeHtml(d, s);
@@ -1055,6 +1071,7 @@ function renderAudit() {
    非会话：日志、缓存、配置等，不属于任何会话。
    孤儿会话（会话库已无）是最干净可删的，单独高亮。 */
 function renderSplit() {
+  if (!state.index) return;
   const files = state.index?.files || [];
   const groups = { orphan: [], live: [], other: [] };
   for (const f of files) groups[groupOf(f)].push(f);
@@ -1387,6 +1404,7 @@ document.addEventListener('click', async (e) => {
     try {
       await load(true);
       if (isAll()) await loadAllSessions(true);
+      else if (isAudit()) await loadAudit(true);
       else await loadTasks(true);
     } catch (err) {
       showToast(`重新扫描失败：${esc(err.message)}`, { error: true });
@@ -1483,10 +1501,14 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Tab') {
     if (!els.drawer.hidden) { trapTab(e, els.drawer); return; }
     if (!tEls.drawer.hidden) { trapTab(e, tEls.drawer); return; }
+    if (!rEls.drawer.hidden) { trapTab(e, rEls.drawer); return; }
   }
 
   if (e.key === '/' && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
-    e.preventDefault(); els.search.focus(); els.search.select();
+    const search = isAll() ? els.allSearch : isAudit() ? null : els.search;
+    if (search && !document.body.classList.contains('is-modal')) {
+      e.preventDefault(); search.focus(); search.select();
+    }
   }
   if (e.key === 'Escape') {
     /* 由近及远一层层退：先关浮层，再撤搜索，最后撤筛选。
@@ -1572,6 +1594,7 @@ const taskState = {
      null = 还没算；{} = 算完了但没有数据。这个值要十几秒才出得来，
      所以是异步补上、并且只在 Cursor 下才有。 */
   exclusive: null,
+  exclusiveFailed: false,
 };
 
 /* Cursor 孤儿会话回灌。与上面的"清理"是两条完全不同的线：
@@ -1634,6 +1657,9 @@ async function loadTasks(refresh = false) {
   taskState.sel.clear();
   taskState.states.clear();
   taskState.open.clear();
+  taskState.exclusive = null;
+  taskState.exclusiveMeta = null;
+  taskState.exclusiveFailed = false;
   resetTaskPanel();
   if (!view || !view.canRecover) hideRecoverable();
 
@@ -1715,9 +1741,10 @@ async function loadExclusive(appIdAtCall) {
   const epoch = viewEpoch;
   const request = taskRequest;
   taskState.exclusive = null;
+  taskState.exclusiveFailed = false;
   try {
     const res = await fetch('/api/tasks/cursor/analyze');
-    if (!res.ok) return;
+    if (!res.ok) throw new Error('引用分析失败');
     const data = await res.json();
     if (epoch !== viewEpoch || request !== taskRequest || state.appId !== appIdAtCall) return;   // 切走了就丢掉
     const map = new Map();
@@ -1726,9 +1753,12 @@ async function loadExclusive(appIdAtCall) {
     taskState.exclusiveMeta = { blobs: data.blobs, blobBytes: data.blobBytes, orphanBlobs: data.orphanBlobs };
     renderTaskList();
     renderTaskFoot();
+    if (!tEls.drawer.hidden) renderTaskDrawerSummary();
   } catch {
     if (epoch !== viewEpoch || request !== taskRequest) return;
     taskState.exclusive = null;
+    taskState.exclusiveFailed = true;
+    if (!tEls.drawer.hidden) renderTaskDrawerSummary();
   }
 }
 
@@ -1833,7 +1863,7 @@ function syncRecoverWord() {
   const picked = (d?.sessions || []).filter((s) => recoverState.sel.has(s.id)).length;
   const running = Boolean(d?.app?.running || d?.app?.unknown);
   const ok = rEls.word.value === word;
-  rEls.go.disabled = running || picked === 0 || !ok;
+  rEls.go.disabled = running || d?.failed || picked === 0 || !ok;
   /* 两个条件都要说：
      ① 没勾任何会话 / Cursor 在跑 —— 这是**比输入**更前面的拦阻，
         说了它就不必再说"还差几个字"，那会让两件事挤在一行里互相盖住；
@@ -1845,11 +1875,16 @@ function syncRecoverWord() {
     rEls.msg.className = 'drawer-msg';
     return;
   }
+  if (d?.failed) {
+    rEls.msg.className = 'drawer-msg is-err';
+    rEls.msg.textContent = '扫描未完成，请先处理读取问题并重新扫描。';
+    return;
+  }
   if (running) {
     rEls.msg.className = 'drawer-msg is-warn';
     /* 输对了才把"退出 Cursor 就能点"说出来 —— 输错时说这句，等于告诉人
        "你已经准备好了"，而其实还差一个词。 */
-    rEls.msg.textContent = `Cursor 仍在运行，现在不能写入。` +
+    rEls.msg.textContent = (d?.app?.unknown ? '无法确认 Cursor 是否退出，现在不能写入。' : 'Cursor 仍在运行，现在不能写入。') +
       (ok ? `退出 Cursor 后重新打开本页即可点「${word}」。` : '');
     return;
   }
@@ -1899,7 +1934,7 @@ function renderRecoverDrawer() {
      否则一个长得跟删除抽屉一样的界面会让人以为要丢东西。 */
   rEls.note.innerHTML = running
     ? `<b>Cursor 仍在运行</b>，现在不能写入。请完全退出 Cursor 后重新打开本页。`
-    : `回灌只**新增**会话头与气泡，不动任何已有会话；重复的会被跳过。` +
+    : `回灌只<b>新增</b>会话头与气泡，不动任何已有会话；重复的会被跳过。` +
       `动手前会把 <code>state.vscdb</code> 完整备份到 ` +
       `<code>${esc(shortPath(d.backupDir || 'backups'))}</code>。`;
 
@@ -1924,6 +1959,7 @@ function renderRecoverDrawer() {
 }
 
 const closeRecoverDrawer = () => {
+  if (operationBusy) return;
   recoverState.open = false;
   rEls.msg.textContent = '';
   hideDrawer(rEls.drawer, rEls.scrim);
@@ -1964,6 +2000,7 @@ async function callRecover(dryRun) {
       const done = new Set((data.sessions || []).map((s) => s.id));
       if (d.sessions) d.sessions = d.sessions.filter((s) => !done.has(s.id));
       d.total = d.sessions?.length || 0;
+      d.orphanBytes = (d.sessions || []).reduce((sum, s) => sum + (s.bytes || 0), 0);
       recoverState.sel.clear();
       /* 与另外两条清理线同一条收尾规矩：动作已经完成了，抽屉就没有继续
          开着的理由 —— 先关抽屉，再把结果搬到屏幕上。 */
@@ -1973,6 +2010,7 @@ async function callRecover(dryRun) {
       showToast(`已回灌 <b>${data.imported ?? 0}</b> 个会话、<b>${data.bubbles ?? 0}</b> 条气泡。` +
         `${esc(backupTxt)}重启 Cursor 后，它们会出现在会话列表里。`);
       renderRecoverable();
+      void loadTasks(true);
     }
   } catch (err) {
     rEls.msg.className = 'drawer-msg is-err';
@@ -1981,7 +2019,12 @@ async function callRecover(dryRun) {
     // 收尾时按确认串的真实状态恢复 —— 无条件打开会绕过刚加的门控
     operationBusy = false;
     rEls.dryBtn.disabled = false;
+    const message = rEls.msg.textContent;
+    const messageClass = rEls.msg.className;
     syncRecoverWord();
+    // 恢复按钮状态不能擦掉刚得到的空跑结果或失败原因。
+    rEls.msg.textContent = message;
+    rEls.msg.className = messageClass;
   }
 }
 
@@ -2301,7 +2344,7 @@ function openTaskAsFiles() {
   openDrawer();
 }
 
-function openTaskDrawer() {
+function renderTaskDrawerSummary() {
   const d = taskState.data;
   const { count, bytes, children, rows, picked } = taskSelTotals(d, taskState.sel);
   if (!count) return;
@@ -2323,16 +2366,20 @@ function openTaskDrawer() {
     }
     return { bytes: b, blobs: n };
   })();
-  const exPending = taskState.exclusive === null && d.history === 'cursor-db';
+  const exPending = taskState.exclusive === null && !taskState.exclusiveFailed && d.history === 'cursor-db';
 
   // 抽屉的三块文案（读数 / 说明 / 待删清单）在 views/tasks.js，有契约测试
   tEls.stats.innerHTML = taskDrawerStatsHtml({
-    count, rows, bytes, exTotal, exPending, hasBodies: Boolean(d.db?.bodies),
+    count, rows, bytes, exTotal, exPending, exFailed: taskState.exclusiveFailed, hasBodies: Boolean(d.db?.bodies),
   });
   tEls.note.innerHTML = taskDrawerNoteHtml(d, { exB: exTotal?.bytes || 0, exN: exTotal?.blobs || 0 });
   tEls.listD.innerHTML = taskDrawerListHtml(picked, who);
   tEls.countD.textContent = `${count.toLocaleString()} 个`;
+  return true;
+}
 
+function openTaskDrawer() {
+  if (!renderTaskDrawerSummary()) return;
   tEls.dryWrap.hidden = true;
   tEls.word.value = '';
   tEls.confirmBox.hidden = false;
@@ -2382,14 +2429,14 @@ async function callPurge(dryRun) {
     if (!res.ok) throw new Error(data.error || res.statusText);
     operationBusy = false;
     if (dryRun) renderDryRun(data);
-    else await finishPurge(data);
+    else void finishPurge(data).catch(err => showToast(`无法显示清理结果：${esc(err.message)}`, { error: true }));
   } catch (err) {
     tEls.msg.className = 'drawer-msg is-err';
     tEls.msg.textContent = err.message;
   } finally {
     // 收尾时按确认串的真实状态恢复，不要无条件打开 —— 那会绕过刚加的门控
     operationBusy = false;
-    tEls.go.disabled = tEls.word.value !== TASK_PURGE_WORD();
+    tEls.go.disabled = taskWriteBlocked() || tEls.word.value !== TASK_PURGE_WORD();
     tEls.dryBtn.disabled = false;
     tEls.go.textContent = '删除';
   }
@@ -2419,9 +2466,8 @@ async function finishPurge(data) {
     `${esc(checkLine(data))}备份已经写好。`);
   // 两边的重扫都放到后台：库变小了，文件清单也要跟上
   try {
-    await loadTasks(true);
     await load(true);
-    renderTasks();
+    if (!isAll() && !isAudit()) await loadTasks(true);
   } catch (err) {
     showToast(`刷新视图失败：${esc(err.message)}（删除本身已经完成）`, { error: true });
   }
@@ -2531,10 +2577,15 @@ tEls.age.addEventListener('change', () => {
 
 tEls.search.addEventListener('input', () => { taskState.q = tEls.search.value.trim().toLowerCase(); renderTaskList(); });
 tEls.sort.addEventListener('change', () => { taskState.sort = tEls.sort.value; renderTaskList(); });
+function taskWriteBlocked() {
+  const d = taskState.data;
+  return !d || d.readOnly || d.app?.running || d.app?.unknown;
+}
+
 function syncTaskWord() {
   if (operationBusy) return;
   const ok = tEls.word.value === TASK_PURGE_WORD();
-  tEls.go.disabled = !ok;
+  tEls.go.disabled = taskWriteBlocked() || !ok;
   // 与文件清理同一份提示逻辑；无输入且未输对时不动消息（上一条提示可能还在）
   if (ok || tEls.word.value.length) {
     tEls.msg.className = 'drawer-msg';

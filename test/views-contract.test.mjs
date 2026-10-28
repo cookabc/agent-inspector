@@ -170,7 +170,9 @@ test('分组框：选中数按"能勾的行"算 —— 全勾上才是 checked',
 
 test('分组框：受保护分类整块禁用', () => {
   const html = groupBox(cat({ verdict: 'never' }), 0, 0);
-  assert.match(html, /disabled aria-label="受保护内容，不可清理"/);
+  assert.match(html, /\bdisabled\b/);
+  assert.match(html, /aria-label="受保护内容，不可清理"/);
+  assert.equal((html.match(/aria-label=/g) || []).length, 1);
 });
 
 /* ── 卡片 ─────────────────────────────────────────────────── */
@@ -584,9 +586,9 @@ test('taskSelTotals：合计只算勾选的行', () => {
 test('taskQuickSet：只勾已删除的，跳过近期与置顶', () => {
   const now = Date.now();
   const d = { tasks: [
-    trow({ id: 'old', state: 'deleted', updatedAt: now - 90 * 86400000 }),
-    trow({ id: 'recent', state: 'deleted', updatedAt: now - 3 * 86400000 }),
-    trow({ id: 'pinned', state: 'deleted', updatedAt: now - 90 * 86400000, pinned: true }),
+    trow({ id: 'old', state: 'deleted', reason: 'deleted', updatedAt: now - 90 * 86400000 }),
+    trow({ id: 'recent', state: 'deleted', reason: 'deleted', updatedAt: now - 3 * 86400000 }),
+    trow({ id: 'pinned', state: 'deleted', reason: 'deleted', updatedAt: now - 90 * 86400000, pinned: true }),
     trow({ id: 'live', state: 'active', updatedAt: now - 90 * 86400000 }),
   ] };
   const s = taskQuickSet(d, { ageDays: 30, skipPinned: true });
@@ -743,7 +745,7 @@ test('auditGroup：掩码证据转义，敏感读取只做背景说明', () => {
   assert.match(html, /AKIA\*\*\*\*/);
   assert.match(html, /另读过 6 个敏感文件/);
   // 列前四个之后交代还有更多，再接截断说明
-  assert.match(html, /、b 等；会话超长，只扫了前 32 MB/);
+  assert.match(html, /、b 等；部分内容因扫描上限被跳过，结果不完整/);
 });
 
 test('auditGroup：内嵌型命中的说法与外发型分开', () => {
@@ -1000,6 +1002,9 @@ test('taskDrawerStats：正文即文件的加"库里的条目"，Cursor 空跑�
   const cursor = taskDrawerStatsHtml({ count: 2, rows: 0, bytes: 1024, exTotal: null, exPending: true, hasBodies: false });
   assert.match(cursor, /dstat-pending/);
   assert.match(cursor, /正在算/);
+  const failed = taskDrawerStatsHtml({ count: 2, rows: 0, bytes: 1024, exTotal: null, exPending: false, exFailed: true, hasBodies: false });
+  assert.match(failed, /未能估算/);
+  assert.ok(!failed.includes('正在算'));
 
   const done = taskDrawerStatsHtml({
     count: 2, rows: 0, bytes: 1024,
@@ -1041,4 +1046,24 @@ test('taskDrawerList：按体积降序、截断说明、工具名做前缀', () 
   const many = Array.from({ length: 205 }, (_, i) => trow({ id: `k${i}`, title: `会话${i}`, bytes: i }));
   const cut = taskDrawerListHtml(many, 'ZCode');
   assert.match(cut, /…还有 5 个/);
+});
+
+test('确认词输错时要求重输，不能把等长错误说成已经输全', () => {
+  assert.equal(confirmWordHint('错误', '清理', '删除'), '请输入「清理」才能删除。');
+  assert.equal(confirmWordHint('清理其他', '清理', '删除'), '请输入「清理」才能删除。');
+});
+
+test('正文统计超过主库文件时体积条仍限制在 100%，保留磁盘分母', () => {
+  const result = dbBarSegments({ db: { total: 100 }, totals: { byState: [
+    { state: 'active', bytes: 120 }, { state: 'archived', bytes: 80 },
+  ] } });
+  assert.equal(result.total, 100);
+  assert.equal(result.floors.reduce((a, b) => a + b, 0), 100);
+  assert.deepEqual(result.floors, [60, 40]);
+});
+
+test('一键清理不能选中包含活跃后代的已删除任务', () => {
+  const data = { tasks: [trow({ id: 'blocked', state: 'deleted', reason: null, updatedAt: 1 }),
+    trow({ id: 'allowed', state: 'deleted', reason: 'deleted', updatedAt: 1 })] };
+  assert.deepEqual(taskQuickSet(data, { ageDays: 0, skipPinned: false }).tasks.map(t => t.id), ['allowed']);
 });
