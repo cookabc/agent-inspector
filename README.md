@@ -2,6 +2,16 @@
 
 在本机浏览 ZCode、Codex、Claude Code、Cursor 和 DeepSeek Harness 的磁盘占用与历史会话，核对清理后果，再选择要删除的内容；也可以只读地扫一遍会话正文，看凭据有没有外泄过。使用 Node.js 内置模块，无第三方运行依赖。
 
+<p align="center">
+  <img src="docs/images/overview.png" width="880" alt="总览：磁盘占用与可清理空间分级，左列文件清单，右列按工具分组的会话列表">
+</p>
+
+<p align="center">
+  <img src="docs/images/all-tools.png" width="880" alt="全部视图：五个工具共 319 个会话按文件夹聚合的只读汇总">
+</p>
+
+界面分两栏：左侧文件清单按「删了会怎样」分成可直接清理、谨慎清理、请勿删除三档；右侧会话管理按工具与文件夹折叠，逐条会话显示体积和最后使用时间。清理前必须勾选并确认，删除默认移入废纸篓。
+
 ## 启动
 
 需要 Node.js ≥ 22.5。macOS 支持全部操作；其他系统支持扫描与文件备份删除，数据库写入还要求可用的 `pgrep` 进程检查。
