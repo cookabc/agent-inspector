@@ -14,9 +14,8 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-15]
-        # 22.5 是 node:sqlite 的下限，24 是开发时用的版本，26 是当前主线 ——
-        # 三档都跑，免得下次"新版本 Node 上跑不起来"要等用户来报。
-        node: ['22.23.4', '24.22.1', '26.12.1']
+        # 同时覆盖声明的最低版本与各主版本的固定版本。
+        node: ['22.5.0', '22.23.4', '24.22.1', '26.12.1']
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:

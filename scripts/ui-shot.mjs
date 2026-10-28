@@ -48,5 +48,5 @@ try {
   await fs.writeFile(OUT, await b.screenshot());
   console.log('已保存', OUT);
 } finally {
-  b.close();
+  await b.close();
 }

@@ -15,6 +15,7 @@
  */
 
 import { launch } from './cdp.mjs';
+import { alphaOver, minimumContrast } from './ui-colors.mjs';
 
 const PORT = process.argv[2] || 4199;
 
@@ -23,7 +24,16 @@ const PORT = process.argv[2] || 4199;
 const PROBE = String.raw`(() => {
   const parse = (c) => {
     const m = c.match(/rgba?\(([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?\)/);
-    if (!m) return null;
+    if (!m) {
+      // color-mix() 的计算色可能是 color(srgb ...)，交给浏览器转换。
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 1;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = c;
+      ctx.fillRect(0, 0, 1, 1);
+      const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+      return { r, g, b, a: a / 255 };
+    }
     return { r: +m[1], g: +m[2], b: +m[3], a: m[4] === undefined ? 1 : +m[4] };
   };
   const lum = (c) => {
@@ -31,12 +41,8 @@ const PROBE = String.raw`(() => {
     return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
   };
   // 把带透明的颜色合成到不透明底上
-  const over = (fg, bg) => ({
-    r: fg.r * fg.a + bg.r * (1 - fg.a),
-    g: fg.g * fg.a + bg.g * (1 - fg.a),
-    b: fg.b * fg.a + bg.b * (1 - fg.a),
-    a: 1,
-  });
+  const over = ${alphaOver.toString()};
+  const minimum = ${minimumContrast.toString()};
   // 向上找第一个不透明背景
   const bgOf = (el) => {
     let cur = el, acc = null;
@@ -60,6 +66,7 @@ const PROBE = String.raw`(() => {
   };
 
   const measure = (el, label, kind) => {
+    if (!el) return null;
     const cs = getComputedStyle(el);
     const fg = parse(cs.color);
     if (!fg) return null;
@@ -71,8 +78,8 @@ const PROBE = String.raw`(() => {
       size: parseFloat(cs.fontSize),
       fg: cs.color,
       bg: 'rgb(' + Math.round(bg.r) + ', ' + Math.round(bg.g) + ', ' + Math.round(bg.b) + ')',
-      ratio: +r.toFixed(2),
-      min: kind === 'text' ? (parseFloat(cs.fontSize) >= 18.66 ? 3 : 4.5) : 3,
+      ratio: r,
+      min: minimum(kind, parseFloat(cs.fontSize), cs.fontWeight),
     };
   };
 
@@ -132,13 +139,14 @@ try {
     for (const it of d.items) {
       const ok = it.ratio >= it.min ? '✔' : '✖ 不足';
       console.log(
-        `${it.label.padEnd(16)}  ${String(it.ratio).padStart(5)}/${String(it.min).padEnd(3)}  ${ok.padEnd(5)}  ` +
+        `${it.label.padEnd(16)}  ${it.ratio.toFixed(2).padStart(5)}/${String(it.min).padEnd(3)}  ${ok.padEnd(5)}  ` +
         `${it.fg.padEnd(15)} ${it.bg}`,
       );
     }
     const bad = d.items.filter((x) => x.ratio < x.min);
+    if (bad.length) process.exitCode = 1;
     console.log(bad.length ? `\n  ${bad.length} 处不达标` : '\n  全部达标');
   }
 } finally {
-  b.close();
+  await b.close();
 }

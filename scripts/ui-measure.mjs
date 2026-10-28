@@ -126,5 +126,5 @@ try {
     }).join(''));
   }
 } finally {
-  b.close();
+  await b.close();
 }

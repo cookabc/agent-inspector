@@ -22,9 +22,6 @@
 import fs from 'node:fs/promises';
 import { launch } from './cdp.mjs';
 
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const PORT = 9333;
-
 /** 在页面里跑：取签名。这段代码是被 CDP 当 Expression 执行的。 */
 const PROBE = String.raw`(async () => {
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -166,7 +163,7 @@ async function capture(file) {
       console.log(`  ${id.padEnd(8)} shape=${String(v.shape).padStart(6)} geo=${Object.entries(v.geo).filter(([, g]) => g).map(([k, g]) => `${k}:${g.w}x${g.h}`).slice(0, 4).join(' ')}`);
     }
   } finally {
-    b.close();
+    await b.close();
   }
 }
 
@@ -183,6 +180,7 @@ async function diff(a, b) {
     if (!y) { console.log(`✖ ${id}: 视图消失了`); bad += 1; continue; }
     const notes = [];
     if (x.shape !== y.shape) notes.push(`shape 长度 ${x.shape} → ${y.shape}`);
+    if (x.shapeHash !== y.shapeHash) notes.push('DOM 结构签名变了');
     if (x.text !== y.text) notes.push('文本变了');
     for (const k of Object.keys(x.geo)) {
       const p = x.geo[k], q = y.geo[k];

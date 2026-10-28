@@ -94,5 +94,5 @@ try {
     console.log(`  视口 ${r.viewportW}: ` + r.tabs.map((t) => `${t.name}=${t.w}`).join('  '));
   }
 } finally {
-  b.close();
+  await b.close();
 }

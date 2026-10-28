@@ -157,5 +157,5 @@ try {
 
   console.log('完成');
 } finally {
-  b.close();
+  await b.close();
 }

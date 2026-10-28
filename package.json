@@ -27,7 +27,8 @@
   "scripts": {
     "start": "node --experimental-sqlite server.mjs",
     "test": "node --experimental-sqlite --test",
-    "check": "node scripts/check.mjs"
+    "check": "node scripts/check.mjs",
+    "test:ui": "node scripts/ui-regression.mjs"
   },
   "author": "cookabc"
 }
