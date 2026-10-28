@@ -747,10 +747,11 @@ const server = http.createServer(async (req, res) => {
       if (!MACOS) throw httpError(400, '在 Finder 中显示仅支持 macOS');
       const { app, target, path: rel } = await readBody(req);
       const abs = safeResolve(String(app || ''), target, rel);
-      execFile('open', ['-R', abs], (err) => {
-        // Finder 打不开多半是 abs 已在这瞬间消失 —— 接口已返回 ok，
-        // 至少在服务端日志里留下原因，别让失败完全无声。
-        if (err) console.error(`[reveal] open -R ${abs} 失败：${err.message}`);
+      await new Promise((resolve, reject) => {
+        execFile('open', ['-R', abs], { timeout: 10000 }, (err) => {
+          if (err) reject(httpError(500, `在 Finder 中显示失败：${err.message}`));
+          else resolve();
+        });
       });
       return await sendJSON(req, res, 200, { ok: true, path: abs });
     }

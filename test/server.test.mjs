@@ -46,7 +46,7 @@ const SAFE = {
   'cursor/ide': 'logs/window1/main.log',
 };
 
-async function fixture(t) {
+async function fixture(t, { openExit } = {}) {
   const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-inspector-test-'));
   const home = path.join(temp, 'home');
   await fs.mkdir(path.join(home, '.Trash'), { recursive: true });
@@ -61,8 +61,16 @@ async function fixture(t) {
   const port = listener.address().port;
   await new Promise(resolve => listener.close(resolve));
 
+  const childEnv = { ...process.env, HOME: home };
+  if (openExit !== undefined) {
+    const bin = path.join(temp, 'bin');
+    await fs.mkdir(bin);
+    await fs.writeFile(path.join(bin, 'open'), `#!/bin/sh\nexit ${openExit}\n`, { mode: 0o755 });
+    childEnv.PATH = `${bin}${path.delimiter}${process.env.PATH || ''}`;
+  }
+
   const child = spawn(process.execPath, ['--experimental-sqlite', 'server.mjs', '--port', String(port), '--backup-dir', path.join(temp, 'backups'), '--no-open'],
-    { cwd: project, env: { ...process.env, HOME: home }, stdio: ['ignore', 'pipe', 'pipe'] });
+    { cwd: project, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
   child.stdout.on('data', chunk => { output += chunk; });
   child.stderr.on('data', chunk => { output += chunk; });
@@ -619,6 +627,17 @@ test('静态文件：页面资源正常返回，源码从任何路径写法都�
   assert.ok(!normalized.text.includes('createWriteGuard'));
 });
 
+
+test('Finder 命令失败通过 HTTP 返回，成功后才返回 ok', { skip: process.platform !== 'darwin' }, async t => {
+  for (const openExit of [7, 0]) {
+    const f = await fixture(t, { openExit });
+    await f.write('codex', 'root', 'cache/test.txt', 'test');
+    const r = await f.post('/api/reveal', { app: 'codex', target: 'root', path: 'cache/test.txt' });
+    assert.equal(r.status, openExit ? 500 : 200);
+    if (openExit) assert.match(r.body.error, /Finder.*失败/);
+    else assert.equal(r.body.ok, true);
+  }
+});
 
 test('删除接口拒绝分页续段依赖的原始文件', async t => {
   const f = await fixture(t);
