@@ -19,6 +19,61 @@ import { createCache } from '../lib/cache.mjs';
 /** 让出若干轮事件循环，确保所有 await 都落地。 */
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
+function deferred() {
+  let resolve;
+  const promise = new Promise(r => { resolve = r; });
+  return { promise, resolve };
+}
+
+test('失效前的加载不能覆盖失效后的缓存', async () => {
+  const c = createCache({ ttlMs: 60_000 });
+  const old = deferred();
+  const pending = c.get({ load: () => old.promise });
+  c.invalidate();
+  await c.get({ load: async () => 'new' });
+  old.resolve('old');
+  await pending;
+  assert.equal(c.peek().data, 'new');
+});
+
+test('旧加载结束不能清除新加载的并发合流状态', async () => {
+  let epoch = 0;
+  const c = createCache({ ttlMs: 60_000, epoch: () => epoch });
+  const old = deferred(), current = deferred();
+  const first = c.get({ load: () => old.promise });
+  epoch++;
+  c.invalidate();
+  const second = c.get({ load: () => current.promise });
+  old.resolve('old');
+  await first;
+  let extraLoads = 0;
+  const third = c.get({ load: async () => { extraLoads++; return 'duplicate'; } });
+  current.resolve('new');
+  assert.deepEqual((await Promise.all([second, third])).map(r => r.data), ['new', 'new']);
+  assert.equal(extraLoads, 0);
+});
+
+test('同步加载失败后可以重试', async () => {
+  const c = createCache({ ttlMs: 60_000 });
+  await assert.rejects(c.get({ load: () => { throw Error('sync failure'); } }), /sync failure/);
+  assert.equal((await c.get({ load: () => 'recovered' })).data, 'recovered');
+});
+
+test('写代数变化后不返回旧缓存或合流到旧加载', async () => {
+  let epoch = 0;
+  const c = createCache({ ttlMs: 60_000, epoch: () => epoch });
+  await c.get({ load: () => 'cached' });
+  epoch++;
+  const gate = deferred();
+  const first = c.get({ load: () => gate.promise });
+  epoch++;
+  const second = await c.get({ load: () => 'current' });
+  gate.resolve('outdated');
+  await first;
+  assert.equal(second.data, 'current');
+  assert.equal(c.peek().data, 'current');
+});
+
 test('过期时间内命中缓存，load 只跑一次', async () => {
   const c = createCache({ ttlMs: 60_000 });
   let n = 0;
