@@ -101,3 +101,14 @@ test('顶层 backups/ 不会被当成配置文件或缓存', () => {
     assert.notEqual(id, 'unknown', `${app.id} 把 backups/ 归进了 unknown`);
   }
 });
+
+test('SQLite 的 WAL、SHM、回滚日志与主库一样禁止按文件删除', () => {
+  for (const app of APPS) {
+    const target = app.id === 'cursor' ? 'ide' : 'root';
+    const base = app.id === 'zcode' ? 'cli/db/db.sqlite' : app.id === 'cursor' ? 'User/workspaceStorage/ws/state.vscdb' : 'state.sqlite';
+    for (const suffix of ['-wal', '-shm', '-journal']) {
+      const id = app.classify(base + suffix, 100, { app: app.id, t: target });
+      assert.equal(app.CATEGORIES[id].locked, true, `${app.id} ${base + suffix}`);
+    }
+  }
+});

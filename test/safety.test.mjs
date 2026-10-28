@@ -30,6 +30,23 @@ function count(file) {
   finally { db.close(); }
 }
 
+for (const suffix of ['-wal', '-shm', '-journal']) {
+  test(`database writes reject a linked ${suffix} before SQLite opens it`, async t => {
+    const root = await fixture(t), file = path.join(root, 'data.sqlite');
+    seed(file);
+    const outside = path.join(root, 'outside');
+    await fs.writeFile(outside, 'must remain unchanged');
+    await fs.symlink(outside, file + suffix);
+    let entered = false;
+    await assert.rejects(writeDatabases([file], { root, backupDir: path.join(root, 'b'), label: 'test' }, () => {
+      entered = true;
+    }), /侧文件.*普通文件/);
+    assert.equal(entered, false);
+    assert.equal(await fs.readFile(outside, 'utf8'), 'must remain unchanged');
+    assert.equal(await fs.readlink(file + suffix), outside);
+  });
+}
+
 test('optional tables distinguish absent results across supported SQLite versions', () => {
   const db = new DatabaseSync(':memory:');
   try {
@@ -176,4 +193,12 @@ test('数据库写入必须声明目标根目录 —— 少它就不写', async 
     writeDatabases([file], { backupDir: path.join(root, 'b'), label: 'test' }, ([db]) => db.exec('DELETE FROM items')),
     /未指定写入根目录/);
   assert.equal(count(file), 1, '拒绝之后源库不得有任何改动');
+});
+
+test('database backup includes an existing rollback journal', async t => {
+  const root = await fixture(t), file = path.join(root, 'data.sqlite');
+  seed(file);
+  await fs.writeFile(file + '-journal', 'synthetic rollback journal');
+  const backup = await backupDatabases([file], path.join(root, 'backups'), 'journal');
+  assert.equal(await fs.readFile(path.join(backup, 'data.sqlite-journal'), 'utf8'), 'synthetic rollback journal');
 });
