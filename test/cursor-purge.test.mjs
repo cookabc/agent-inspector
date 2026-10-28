@@ -54,8 +54,8 @@ async function makeDb(t, spec) {
   for (const s of spec.sessions) {
     db.prepare(`INSERT INTO composerHeaders (composerId, workspaceId, createdAt, lastUpdatedAt,
       isArchived, isSubagent, recency, checkpointAt, subagentTypeName, value)
-      VALUES (?, ?, ?, ?, ?, 0, 0, 0, '', '{}')`)
-      .run(s.id, 'ws', 1, 1, s.archived ? 1 : 0);
+      VALUES (?, ?, ?, ?, ?, 0, 0, 0, '', ?)`)
+      .run(s.id, 'ws', 1, 1, s.archived ? 1 : 0, s.header || '{}');
     for (const [i, text] of (s.messages || []).entries()) {
       db.prepare('INSERT INTO cursorDiskKV (key, value) VALUES (?, ?)')
         .run(`bubbleId:${s.id}:${String(i).padStart(8, '0')}-0000-0000-0000-000000000000`, text);
@@ -308,4 +308,68 @@ test('a retained unowned blob keeps its referenced descendants', async t => {
   await purgeSessions(f.ide, ['A'], { backupDir: path.join(f.root, 'backups') });
   assert.ok(keysOf(f.dbPath).includes(`agentKv:blob:${hexOf(child)}`));
   assert.ok(keysOf(f.dbPath).includes(`agentKv:blob:${hexOf(parent)}`));
+});
+
+test('Cursor 头表查询失败时不推断库内孤儿', async t => {
+  const { scanTasks } = await import('../lib/tasks-cursor.mjs');
+  const { ide, dbPath } = await makeDb(t, { blobs: [], sessions: [{ id: '12345678-1234-1234-1234-123456789abc', messages: ['keep'] }] });
+  const db = new DatabaseSync(dbPath);
+  db.exec('ALTER TABLE composerHeaders RENAME COLUMN recency TO unsupported_recency');
+  db.close();
+  const r = scanTasks(ide);
+  assert.ok(r.problems.length > 0);
+  assert.equal(r.tasks.length, 0);
+});
+
+test('Cursor 库内孤儿仍走数据库删除，不能标成文件残骸', async t => {
+  const { scanTasks } = await import('../lib/tasks-cursor.mjs');
+  const id = '12345678-1234-1234-1234-123456789abc';
+  const { ide, dbPath } = await makeDb(t, { blobs: [], sessions: [{ id, messages: ['keep'] }] });
+  const db = new DatabaseSync(dbPath);
+  db.exec('DELETE FROM composerHeaders');
+  db.close();
+  const row = scanTasks(ide).tasks[0];
+  assert.equal(row.state, 'untracked');
+  assert.equal(row.residual, false);
+  assert.equal(row.bodyRel, null);
+});
+
+test('Cursor 非法十进制字节不应溢出并改变引用内容', () => {
+  const text = '999,256,300,100';
+  assert.equal(unframe(text).toString(), text);
+  assert.deepEqual(unframe(new Uint8Array([1, 2, 3])), Buffer.from([1, 2, 3]));
+});
+
+
+test('保留会话头独自引用的 blob 不能随另一会话删除', async (t) => {
+  const payload = Buffer.from('shared through header');
+  const { ide, dbPath, root } = await makeDb(t, {
+    blobs: [{ content: payload }],
+    sessions: [
+      { id: 'A', messages: [hexOf(payload)] },
+      { id: 'B', header: JSON.stringify({ checkpoint: hexOf(payload) }) },
+    ],
+  });
+  const analysis = analyzePurge(ide);
+  assert.equal(analysis.sessions.find(s => s.id === 'A').exclusiveBlobs, 0);
+  assert.ok(analysis.sessions.some(s => s.id === 'B'), '只有会话头也应参与分析');
+  const preview = await purgeSessions(ide, ['A'], { dryRun: true });
+  assert.equal(preview.blobs, 0);
+  await purgeSessions(ide, ['A'], { backupDir: path.join(root, 'backup') });
+  assert.ok(keysOf(dbPath).includes(`agentKv:blob:${hexOf(payload)}`));
+  const together = await purgeSessions(ide, ['B'], { dryRun: true });
+  assert.equal(together.blobs, 1, '删除最后一个头引用时才可清理');
+});
+
+test('默认独占分析包含缺少会话头的库内残骸', async (t) => {
+  const payload = Buffer.from('orphan session payload');
+  const { ide, dbPath } = await makeDb(t, {
+    blobs: [{ content: payload }], sessions: [{ id: 'A', messages: [hexOf(payload)] }],
+  });
+  const db = new DatabaseSync(dbPath);
+  db.exec('DELETE FROM composerHeaders'); db.close();
+  const analysis = analyzePurge(ide);
+  assert.equal(analysis.sessions.length, 1);
+  assert.equal(analysis.sessions[0].orphanSession, true);
+  assert.equal(analysis.sessions[0].exclusiveBlobs, 1);
 });
