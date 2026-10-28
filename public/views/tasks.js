@@ -307,9 +307,10 @@ export function taskRowHtml(t, ctx) {
     t.typeLabel,
     segNote,
   ].filter(Boolean).join('、');
-  const body = t.bodyRel
-    ? `<button class="btn btn-ghost btn-sm" type="button" data-locate="${esc(t.bodyRel)}">在文件清单中定位</button>`
-    : '';
+  /* 以前这里有一个「在文件清单中定位」按钮：正文还在文件清单里时，
+     跳过去能顺手勾选清理。会话正文移出清单之后，那个按钮只会把人带到
+     一个搜不出结果的搜索框 —— 按钮删了，正文的位置改由下面的
+     「所属内容」交代，删除也由会话抽屉的级联统一做。 */
   /* Cursor 的"连带回收"不进清单行 —— 行里那一行 meta 已经装了状态、
      最后使用、子会话、类型，右侧体积列也要留给主数字。它进**展开后的
      详情**：勾选和删除都是在看过详情之后做的决定，那个位置才是
@@ -352,7 +353,6 @@ export function taskRowHtml(t, ctx) {
         ${taskContentsHtml(t)}
         <div class="tdetail-acts">
           <button class="btn btn-ghost btn-sm" type="button" data-copy-id="${esc(t.id)}">复制会话 ID</button>
-          ${body}
         </div>
       </div>` : ''}
     </div>`;
@@ -404,13 +404,21 @@ export function recoverRowHtml(s, sel) {
  * 它报"会话行 + 连带 blob" —— 硬塞会造出一个不存在的表名。
  */
 export function dryRunHtml(data) {
-  const rows = Array.isArray(data.perDb)
+  /* 正文即文件的两家（Claude / DeepSeek）没有库行，perDb 是空的 ——
+     但级联会移走它们的正文文件。只显示"共 0 行"会让人以为什么都不会发生，
+     实际上要删的文件都在 data.cascade / data.files 里。 */
+  const fileRows = (data.files || []).map((f) => [f.rel, f.bytes]);
+  const rows = Array.isArray(data.perDb) && data.perDb.length
     ? data.perDb.map((x) => [`${x.table}（${x.name}）`, x.count ?? 0])
-    : [
-        ['会话条目（cursorDiskKV）', data.sessionRows ?? 0],
-        ['会话头（composerHeaders）', data.sessions ?? 0],
-        ['连带删除的工具结果 blob', data.blobs ?? 0],
-      ];
+    : Array.isArray(data.perDb) && fileRows.length
+      ? fileRows.map(([k, b]) => [k, fmtBytes(b)])
+      : Array.isArray(data.perDb)
+        ? [['（这个工具没有数据库行可删）', 0]]
+        : [
+            ['会话条目（cursorDiskKV）', data.sessionRows ?? 0],
+            ['会话头（composerHeaders）', data.sessions ?? 0],
+            ['连带删除的工具结果 blob', data.blobs ?? 0],
+          ];
   const totalRows = Array.isArray(data.perDb) ? rows.reduce((s, [, c]) => s + c, 0) : (data.sessionRows ?? 0);
   const bodies = data.bodyBytes
     ? `<br>另有 <b>${fmtBytes(data.bodyBytes)}</b> 正文在 rollout 文件里 —— 这里只删索引行，正文要等它们变成孤儿后走文件清理。`
@@ -419,7 +427,7 @@ export function dryRunHtml(data) {
         `会话正文 <b>${fmtBytes(data.sessionBytes || 0)}</b> + 只被它们引用的 blob <b>${fmtBytes(data.blobBytes)}</b>。`
       : '';
   return {
-    rowsHtml: rows.map(([k, c]) => `<li><span>${esc(k)}</span><span>${c.toLocaleString()}</span></li>`).join(''),
+    rowsHtml: rows.map(([k, c]) => `<li><span>${esc(k)}</span><span>${typeof c === 'number' ? c.toLocaleString() : esc(c)}</span></li>`).join(''),
     bodiesHtml: bodies,
     totalRows,
   };

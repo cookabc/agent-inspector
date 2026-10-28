@@ -476,6 +476,22 @@ function renderHero() {
   }
 }
 
+/**
+ * 总览的「磁盘占用」现在不含会话正文（它们归会话管理，不再进文件扫描）——
+ * 但用户拿 `du -sh ~/.codex` 一对，差出来的恰好是 1 GB 正文，会以为工具算错了。
+ * 会话数据到位后在这里补一句"另有 X 会话正文"，把账对上。
+ * 幂等：strip 掉上一次补的句子再追加，重扫/切工具都不会叠罗汉。
+ */
+function updateHeroBodiesNote(d) {
+  if (!els.heroSub) return;
+  // 先摘掉旧句子（含它前后的空格），无论这次要不要补
+  els.heroSub.innerHTML = els.heroSub.innerHTML.replace(/ ?<span class="hero-bodies">[\s\S]*?<\/span>/, '');
+  const bodies = d?.db?.bodies;
+  if (!bodies?.bytes) return;
+  els.heroSub.innerHTML +=
+    ` <span class="hero-bodies">另有 <b>${bytesB(bodies.bytes)}</b> 会话正文（${bodies.count.toLocaleString()} 个文件），列在下面的会话管理里。</span>`;
+}
+
 function groupOf(f) {
   if (!f.sid) return 'other';
   return f.orphan === true ? 'orphan' : 'live';
@@ -2136,6 +2152,7 @@ function renderTasks() {
   renderTaskList();
   renderTaskFoot();
   renderTaskQuick();
+  updateHeroBodiesNote(d);
   renderComposition();
 }
 
@@ -2247,15 +2264,6 @@ function renderTaskList() {
 }
 
 /** 从会话详情跳到文件清单：定位正文文件并让搜索框带着它。 */
-function locateBody(rel) {
-  const hit = state.index.files.find((f) => f.p === rel || f.p.endsWith('/' + rel));
-  const q = hit ? hit.p : rel;
-  state.q = q.toLowerCase();
-  els.search.value = q;
-  renderGroups();
-  document.getElementById('files').scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-
 /* 勾选合计（taskSelTotals）在 views/tasks.js —— 调用点传数据与选择集。 */
 
 function renderTaskFoot() {
@@ -2487,8 +2495,15 @@ function renderDryRun(data) {
   tEls.dryList.innerHTML = rowsHtml;
   tEls.dryWrap.hidden = false;
   tEls.msg.className = 'drawer-msg is-ok';
+  /* 正文即文件的两家没有"行"这个概念 —— 那句"共 0 行"是吓唬人。
+     有文件级联时改说文件：列表里列的就是将要移入废纸篓的那些。 */
+  const files = data.files || [];
+  const fileBytes = files.reduce((s, f) => s + (f.bytes || 0), 0);
+  const head = files.length
+    ? `空跑完成：将移入废纸篓 <b>${files.length}</b> 个文件（${fmtBytes(fileBytes)}）${totalRows ? `，另删 <b>${totalRows.toLocaleString()}</b> 行` : ''}，数据库没有任何改动。`
+    : `空跑完成：共 <b>${totalRows.toLocaleString()}</b> 行，数据库没有任何改动。`;
   tEls.msg.innerHTML =
-    `空跑完成：共 <b>${totalRows.toLocaleString()}</b> 行，数据库没有任何改动。${bodiesHtml}` +
+    `${head}${bodiesHtml}` +
     `确认无误后输入「${TASK_PURGE_WORD()}」再删除。`;
 }
 
@@ -2580,9 +2595,6 @@ document.addEventListener('click', (e) => {
     }).catch(() => {});
     return;
   }
-
-  const locate = t.closest('[data-locate]');
-  if (locate) { locateBody(locate.dataset.locate); return; }
 
   const box = t.closest('[data-task-box]');
 

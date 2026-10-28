@@ -1198,3 +1198,34 @@ test('所属内容：Cursor 的独占 blob 单独成行，与文件分开算', (
   assert.match(html, /12 个只被这条会话引用/);
   assert.match(html, /子 Agent 记录/);
 });
+
+test('会话详情不再有「在文件清单中定位」——正文已不在那里', () => {
+  /* 会话正文移出文件清单后，这个按钮只会把人带到一个搜不出结果的搜索框。
+     正文的去处由「所属内容」交代，删除由会话抽屉统一做。 */
+  const html = taskRowHtml(trow({
+    bodyRel: 'projects/x/sess-1.jsonl',
+    contents: contents({ files: [{ rel: 'projects/x/sess-1.jsonl', role: 'body', bytes: 10, removable: true, count: 1 }] }),
+  }), { sel: false, open: true });
+  assert.doesNotMatch(html, /在文件清单中定位/);
+  assert.doesNotMatch(html, /data-locate/);
+  assert.match(html, /所属内容/, '正文的去处改由内容清单交代');
+});
+
+test('空跑对正文即文件的工具列出将移入废纸篓的文件，而不是 0 行', () => {
+  /* Claude / DeepSeek 没有库行 —— 以前这里显示"共 0 行"，
+     看起来像什么都不会发生，实际上要删的是整批正文文件。 */
+  const r = dryRunHtml({
+    perDb: [],
+    files: [
+      { rel: 'projects/x/a.jsonl', role: 'body', bytes: 1024 },
+      { rel: 'projects/x/b.jsonl', role: 'body', bytes: 512 },
+    ],
+  });
+  assert.match(r.rowsHtml, /a\.jsonl/);
+  assert.match(r.rowsHtml, /b\.jsonl/);
+  assert.doesNotMatch(r.rowsHtml, /没有数据库行可删/, '有文件可删时不该显示空表');
+
+  // 有库行的工具维持原状：逐表列行数
+  const db = dryRunHtml({ perDb: [{ table: 'message', name: 'db.sqlite', count: 5 }] });
+  assert.match(db.rowsHtml, /message/);
+});
