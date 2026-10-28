@@ -13,6 +13,7 @@ const els = {
   skeleton: $('skeleton'),
   heroBytes: $('heroBytes'), heroSub: $('heroSub'),
   diagnosis: $('diagnosis'), diagLede: $('diagLede'), diagTitleText: $('diagTitleText'),
+  tasks: $('tasks'), extras: $('extras'), extrasNow: $('extrasNow'),
   rec: $('rec'),
   recName: $('recName'), recBtn: $('recBtn'), recScope: $('recScope'),
   recFigure: $('recFigure'), recSub: $('recSub'),
@@ -901,6 +902,28 @@ function renderAll() {
   renderSplit();
   renderGroups();
   renderActionbar();
+  renderExtrasNow();
+}
+
+/**
+ * 补充区收起时唯一可见的那行读数：「文件清单 2.35 GB · 1,196 项」。
+ *
+ * 收起不等于藏起来 —— 折起来以后什么都不说，人就不知道值不值得展开。
+ * 数字走 visibleCategories()（与文件清单里同一套筛选），展开后不会对不上。
+ */
+function renderExtrasNow() {
+  if (!els.extrasNow) return;
+  const vis = visibleCategories();
+  const rows = vis.flatMap((c) => c.files);
+  const bytes = rows.reduce((s, f) => s + (f.s || 0), 0);
+  const parts = [];
+  if (rows.length) {
+    parts.push(`文件清单 ${fmtBytes(bytes)} · ${rows.length.toLocaleString()} 项`);
+  } else {
+    parts.push('文件清单为空');
+  }
+  if (els.diagnosis && !els.diagnosis.hidden) parts.push('含失控日志诊断');
+  els.extrasNow.textContent = parts.join(' · ');
 }
 
 /* ── 「全部」：跨工具的会话一览 ──────────────────────────── */
@@ -915,11 +938,11 @@ const allState = {
 };
 
 function renderAllAll() {
-  // 常规那几块全部收起：这一屏只回答"我刚才在哪个工具里干活"
-  for (const id of ['overview', 'files', 'tasks', 'diagnosis']) {
-    const el = document.getElementById(id);
-    if (el) el.hidden = true;
-  }
+  /* 常规那几块全部收起：这一屏只回答"我刚才在哪个工具里干活"。
+     会话面板与补充区（文件清单/磁盘/诊断都在 #extras 里）整块让位，
+     不需要再逐个开关里面的子块 —— 它们在 details 里，随 #extras 一起走。 */
+  els.tasks.hidden = true;
+  els.extras.hidden = true;
   els.allView.hidden = false;
   els.auditView.hidden = true;
   if (!allState.data && !allState.loading) loadAllSessions();
@@ -929,11 +952,10 @@ function renderAllAll() {
 function hideAllView() {
   els.allView.hidden = true;
   els.auditView.hidden = true;
-  for (const id of ['overview', 'files', 'tasks']) {
-    const el = document.getElementById(id);
-    if (el) el.hidden = false;
-  }
+  els.tasks.hidden = false;
+  els.extras.hidden = false;
   // 诊断块由 renderHero 决定显隐，这里不强行打开
+  // 收起态是 details 自己的事：切回来时保持用户上次的开合（不强制展开）
 }
 
 async function loadAllSessions(refresh = false) {
@@ -1007,10 +1029,8 @@ const auditState = { data: null, loading: false };
 let auditRequest = 0;
 
 function renderAuditAll() {
-  for (const id of ['overview', 'files', 'tasks', 'diagnosis']) {
-    const el = document.getElementById(id);
-    if (el) el.hidden = true;
-  }
+  els.tasks.hidden = true;
+  els.extras.hidden = true;
   els.allView.hidden = true;
   els.auditView.hidden = false;
   if (!auditState.data && !auditState.loading) loadAudit();
@@ -1123,6 +1143,10 @@ function renderSplit() {
       xs: live, extra: sids(live) ? `，${sids(live).toLocaleString()} 个会话` : '', split: 'live', hit: vis(live), ...splitCtx }),
   ].join('')) + splitBlockHtml({ cls: 'is-other', title: '非会话文件', desc: '日志、缓存、配置等，不属于任何会话。',
     xs: other, extra: '', split: 'other', hit: vis(other), ...splitCtx });
+
+  /* 补充区收起时那行读数也在这里刷 —— 它是同一批筛选的产物，
+     放在这里就不用给每个筛选入口都补一次调用（漏一处就是一次不一致）。 */
+  renderExtrasNow();
 }
 
 /* 按钮上直接写出这批有多大，点之前就知道会发生什么。
@@ -1569,6 +1593,17 @@ document.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('resize', () => { hideTip(); renderSplit(); });
+
+/* 补充区开合 → 页面框架随之切换。
+   <details> 的 toggle 不冒泡，但可以在元素上直接听（capture 也不必）。
+   挂在 body 上的 class 让 CSS 决定 .wrap 是"钉死一屏"还是"按内容长高"。 */
+if (els.extras) {
+  els.extras.addEventListener('toggle', () => {
+    document.body.classList.toggle('extras-open', els.extras.open);
+    // 展开时要重新量一次：读数条与列表的实际高度都变了
+    renderSplit();
+  });
+}
 
 /* ════════════════════════════════════════════════════════════
    历史任务
@@ -2368,11 +2403,27 @@ function renderTaskDrawerSummary() {
   })();
   const exPending = taskState.exclusive === null && !taskState.exclusiveFailed && d.history === 'cursor-db';
 
+  /* 级联规模：把选中会话的「所属内容」加起来（同一份数据、与行内详情一致）。
+     非可删项与空路径不算 —— 抽屉里说"会删 N 个文件"，那 N 必须是真会删的。 */
+  const cascade = (() => {
+    let count = 0, bytes = 0;
+    const seen = new Set();
+    for (const t of picked) {
+      for (const f of t.contents?.files || []) {
+        if (!f.removable || !f.rel || seen.has(f.rel)) continue;
+        seen.add(f.rel);
+        count += 1;
+        bytes += f.bytes || 0;
+      }
+    }
+    return { count, bytes };
+  })();
+
   // 抽屉的三块文案（读数 / 说明 / 待删清单）在 views/tasks.js，有契约测试
   tEls.stats.innerHTML = taskDrawerStatsHtml({
     count, rows, bytes, exTotal, exPending, exFailed: taskState.exclusiveFailed, hasBodies: Boolean(d.db?.bodies),
   });
-  tEls.note.innerHTML = taskDrawerNoteHtml(d, { exB: exTotal?.bytes || 0, exN: exTotal?.blobs || 0 });
+  tEls.note.innerHTML = taskDrawerNoteHtml(d, { exB: exTotal?.bytes || 0, exN: exTotal?.blobs || 0, cascade });
   tEls.listD.innerHTML = taskDrawerListHtml(picked, who);
   tEls.countD.textContent = `${count.toLocaleString()} 个`;
   return true;
@@ -2460,10 +2511,18 @@ async function finishPurge(data) {
      这里原本要等 3 秒 —— 而 VACUUM 那一步人已经等过几十秒了，
      再干等三秒纯粹是让人对着一个已经没事可做的面板。 */
   closeTaskDrawer();
+
+  /* 级联之后"回收了多少"有两个来源：库 VACUUM 腾出的空间（freed），
+     和跟着删掉的会话文件（files）。只报前者会让人以为文件还在 ——
+     而文件正是以前完全没被清掉的那一半。 */
+  const { cascadeText, failedText } = purgeToastParts(data);
   showToast(
     `完成，回收 ${bytesWithExact(data.freed)}：` +
     `${bytesWithExact(data.before.total)} → ${bytesWithExact(data.after.total)}。` +
-    `${esc(checkLine(data))}备份已经写好。`);
+    `${esc(checkLine(data))}${cascadeText ? ` ${cascadeText}` : ''}` +
+    (failedText ? ` ${failedText}` : '') +
+    '备份已经写好。',
+    failedText ? { error: true } : {});
   // 两边的重扫都放到后台：库变小了，文件清单也要跟上
   try {
     await load(true);
@@ -2471,6 +2530,21 @@ async function finishPurge(data) {
   } catch (err) {
     showToast(`刷新视图失败：${esc(err.message)}（删除本身已经完成）`, { error: true });
   }
+}
+
+/** 级联结果的措辞。纯派生，单独放出来便于测试。 */
+function purgeToastParts(data) {
+  const files = data.files || [];
+  const failed = data.failed || [];
+  const fileBytes = files.reduce((s, f) => s + (f.bytes || 0), 0);
+  return {
+    cascadeText: files.length
+      ? `另有 ${files.length} 个会话文件已清理（${fmtBytes(fileBytes)}）。`
+      : '',
+    failedText: failed.length
+      ? `${failed.length} 个文件没删成，已备份在 ${data.backup || '备份目录'}。`
+      : '',
+  };
 }
 
 /* 会话面板事件 */

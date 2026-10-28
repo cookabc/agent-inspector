@@ -350,8 +350,15 @@ test('逐 app 的可清会话，过 /api/tasks/purge 的四道闸', async (t) =>
     assert.ok(pc.body.freed >= 0);
     const afterC = await f.get('/api/tasks?app=codex');
     assert.equal(afterC.body.tasks.filter((x) => x.state === 'archived').length, 0, '归档线程已清');
-    // 正文文件在磁盘上（Codex 的行级删除不碰文件 —— 那是文件线的活）
-    await fs.access(path.join(f.home, '.codex', wsBody));
+    /* 级联：会话删掉之后，它的 rollout 正文也不该留在盘上 ——
+       以前留着，于是"删了会话"在磁盘上等于什么都没发生，用户还得去
+       文件清单再清一遍。这条断言就是那个行为的守门人。 */
+    assert.equal(pc.body.files.length, 1, '正文文件应随会话一起删除');
+    assert.equal(pc.body.files[0].rel, wsBody);
+    await assert.rejects(fs.access(path.join(f.home, '.codex', wsBody)),
+      '正文文件删完就不该还在');
+    // 删之前必须备份过 —— 没有备份的级联删除是不可接受的
+    assert.ok(pc.body.backup, '级联删除必须给出备份位置');
   }
 });
 
@@ -564,4 +571,43 @@ test('全域删除边界：未知 app 与空 app 仍是客户端错误', async (
   assert.equal(ok.status, 200, JSON.stringify(ok));
   assert.equal(ok.body.deleted.length, 1);
   await assert.rejects(fs.access(path.join(f.home, '.zcode', 'v2', 'cache')));
+});
+
+test('ZCode 的级联把会话的四类文件也带走，而不只是库行', async (t) => {
+  /* 这一条守的是级联的**完整性**：ZCode 的会话正文在库里，但运行期会在
+     cli/ 下留四类文件（子 Agent transcript / 产物 / 贴图 / 命令日志）。
+     以前删会话只删库行，这些文件全留在盘上变成孤儿 —— 用户得去文件清单
+     再清一遍，而"我删了这条会话"在人的理解里就是"关于它的东西都没了"。 */
+  const f = await fixture(t);
+  seedZcode(f.home);
+  const sess = 'sess_a';
+  const files = {
+    transcript: path.join(f.home, '.zcode', 'cli', 'agents', sess, 'transcript.jsonl'),
+    artifact: path.join(f.home, '.zcode', 'cli', 'artifacts', sess, 'out.bin'),
+    media: path.join(f.home, '.zcode', 'cli', 'image-cache', sess, 'a.png'),
+    log: path.join(f.home, '.zcode', 'cli', 'exec', sess, 'call_1-stdout.log'),
+  };
+  for (const [name, p] of Object.entries(files)) {
+    await fs.mkdir(path.dirname(p), { recursive: true });
+    await fs.writeFile(p, name.repeat(10));
+  }
+
+  // 先看计划：列表里这一行的「所属内容」应该已经列出这四类
+  const before = await f.get('/api/tasks?app=zcode');
+  const row = before.body.tasks.find((x) => x.id === sess);
+  assert.ok(row, '这条会话要在列表里');
+  const roles = new Set((row.contents?.files || []).map((x) => x.role));
+  assert.deepEqual([...roles].sort(), ['artifact', 'log', 'media', 'transcript'],
+    '四类文件都要在设计清单里，少一类就是删完留孤儿');
+
+  const res = await f.post('/api/tasks/purge', { app: 'zcode', ids: [sess], confirm: '清理' });
+  if (res.status === 409) {
+    assert.match(res.body.error, /正在运行/);
+    return;   // 进程闸生效也算通过（这台机器可能开着 ZCode）
+  }
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body.files.length, 4, '四类文件都要被处理');
+  for (const [name, p] of Object.entries(files)) {
+    await assert.rejects(fs.access(p), `${name} 应该已经不在了`);
+  }
 });

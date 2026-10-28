@@ -41,13 +41,15 @@ import { validateIds, validateDryRun } from './lib/validation.mjs';
    而它是 Node 22.5 才有的。更早的版本上静态 import 会在任何提示之前直接崩掉，
    用户只看到一句 "Cannot find module 'node:sqlite'"。这里接住它，说人话。 */
 let APPS, getApp, planApps, refreshTargets, scanApps, appRunning, rowPurgeBlocked, CONFIRM, aggregateSessions;
+let runCascade, describeCascade, filesToRemove;
 try {
   [{ APPS, getApp, planApps, refreshTargets }, { scanApps }, { appRunning, rowPurgeBlocked, aggregateSessions },
-    { CONFIRM }] = await Promise.all([
+    { CONFIRM }, { runCascade, describeCascade, filesToRemove }] = await Promise.all([
     import('./lib/apps/index.mjs'),
     import('./lib/scan.mjs'),
     import('./lib/tasks.mjs'),
     import('./lib/confirm-words.mjs'),
+    import('./lib/cascade.mjs'),
   ]);
 } catch (err) {
   const msg = err?.message || String(err);
@@ -691,7 +693,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/tasks/purge' && req.method === 'POST') {
-      const { app: appId, ids = [], dryRun = false, confirm } = await readBody(req);
+      const { app: appId, ids = [], dryRun = false, confirm, cascade = true } = await readBody(req);
       const plan = planFor(String(appId || ''));
 
       // 静态能力先判：这个 app 有没有"行"可删，跟它在不在跑无关
@@ -703,10 +705,43 @@ const server = http.createServer(async (req, res) => {
       // 最要紧的一条：绝不能对正在被写入的数据库动手
       if (!dryRun && confirm !== CONFIRM.SESSION) throw httpError(400, `确认串不正确（应为「${CONFIRM.SESSION}」）`);
 
-      // 备份 + 删行 + VACUUM 全程在 worker 里跑，主线程始终保持响应
+      /* 级联要删的不只是库行 —— 还有这条会话在磁盘上的专属文件。
+         会话 id 到文件路径的映射由各家的 sessionContents() 给（与列表里
+         「所属内容」那块是同一份计划），所以预览和实际执行不会说两套话。
+         实测五家的级联路径全部落在主 target 内（多目标的 Claude/Cursor
+         那几个文件也都属于第一个 target），不需要跨 target 编排。 */
+      const key = plan.targets[0].key;
       const work = async () => {
         if (!dryRun) await assertAppStopped(plan.app);
-        return runDb('purge', plan.app.id, plan.targets.map(stripTarget), [ids, { backupDir: BACKUP_DIR, dryRun }]);
+
+        // dry-run 也要算内容计划 —— 它就是"将要删什么"的答案
+        const plan0 = cascade ? await sessionContentsOf(plan, ids) : { files: [] };
+        const files = filesToRemove(plan0);
+        if (dryRun) {
+          const dbPlan = await runDb('purge', plan.app.id, plan.targets.map(stripTarget),
+            [ids, { backupDir: BACKUP_DIR, dryRun: true }]);
+          return { ...dbPlan, cascade: describeCascade({ dbIds: ids, files }), files };
+        }
+
+        /* 文件这一半默认**移入废纸篓**（可撤销），与方案里"给退路"一致：
+           会话库行已经不可逆地删了，文件再直接抹掉就没有二次确认的机会。
+           非 macOS（没有 ~/.Trash）时才回退到"备份 + 彻底删除"，
+           并在结果里标明走的是哪条 —— 用户得知道自己能不能从废纸篓捞回来。 */
+        const useTrash = MACOS;
+        return runCascade({
+          dbIds: ids,
+          files,
+          purgeDb: (dbIds) => runDb('purge', plan.app.id, plan.targets.map(stripTarget),
+            [dbIds, { backupDir: BACKUP_DIR, dryRun: false }]),
+          // 走废纸篓不需要备份（rename 本身可撤销）；走 rm 必须先备份
+          backupFile: useTrash
+            ? async () => null
+            : (rel) => backupBeforeDelete(path.join(plan.targets[0].path, rel), plan.app.id, key, rel),
+          removeFile: useTrash
+            ? (rel) => moveToTrash(rel, plan.app.id, key)
+            : (rel) => purge(rel, plan.app.id, key),
+          trashed: useTrash,
+        });
       };
       const result = await (dryRun ? work() : mutate(work));
       return await sendJSON(req, res, 200, result);
@@ -772,6 +807,30 @@ async function assertAppStopped(app) {
   if (running.unknown) throw httpError(503, `无法确认 ${running.label} 是否退出：${running.error}。已放弃写入。`);
   if (running.running) throw appMustQuit(running);
 }
+
+/**
+ * 算这些会话在磁盘上的牵连（相对路径 + 体积）。
+ *
+ * 为什么不走 worker 并在 worker 里少算一次库：这一步只 stat 文件、不开数据库，
+ * 主线程上跑是毫秒级，不会卡住事件循环；而库行数那半边仍由 worker 的
+ * dry-run 给 —— 两半合起来才是完整计划。
+ */
+async function sessionContentsOf(plan, ids) {
+  const out = await runDb('scan', plan.app.id, plan.targets.map(stripTarget), []);
+  const wanted = new Set(ids);
+  const files = [];
+  for (const t of out.tasks || []) {
+    if (!wanted.has(t.id) || !t.contents) continue;
+    files.push(...t.contents.files);
+  }
+  const seen = new Set();
+  return {
+    files: files.filter((f) => (seen.has(f.rel) ? false : seen.add(f.rel))),
+    // 顺带把"这条会话根本不能按行删"的残骸情况带出去：它们只有文件没有行
+    residualOnly: (out.tasks || []).filter((t) => wanted.has(t.id)).every((t) => t.residual),
+  };
+}
+
 
 function appMustQuit(running) {
   const who = running.hits.map((h) => `${h.name}×${h.pids}`).join('、');

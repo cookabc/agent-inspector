@@ -194,7 +194,16 @@ test('清理成功后抽屉立刻关，结果交给 toast —— 不再靠延时
   );
 
   const purge = app.slice(app.indexOf('async function finishPurge'), app.indexOf('/* 会话面板事件 */'));
-  assert.match(purge, /closeTaskDrawer\(\);\s*\n\s*showToast\(/, '会话清理同样先关再报');
+  // 中间允许有结果措辞的派生（purgeToastParts），但顺序不能反：
+  // 先关抽屉 → 再 showToast → 最后才开始重扫。
+  const purgeCode = purge.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.ok(
+    purgeCode.indexOf('closeTaskDrawer()') >= 0
+    && purgeCode.indexOf('closeTaskDrawer()') < purgeCode.indexOf('showToast('),
+    '会话清理同样先关再报');
+  assert.ok(
+    purgeCode.indexOf('showToast(') < purgeCode.indexOf('load(true)'),
+    '重扫要在报结果之后才开始');
 });
 
 test('失败时保留抽屉，不吐成功 toast', () => {
