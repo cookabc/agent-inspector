@@ -497,23 +497,30 @@ test('0 个会话的工具不给筛选钮（点了必然空）', () => {
   assert.match(allSrc, /if \(t\.error && !t\.count\)/);
 });
 
-test('宽屏与单列的阅读顺序一致：会话管理在前，文件清单在后', () => {
-  /* 并排时靠 grid-template-areas 摆位置，落回单列时靠 DOM 顺序。
-     两边一不一致不会报错，只会让人在窄屏上读到一个不同的顺序 ——
-     宽屏"左会话右文件"，缩窄之后突然变成"文件在前"，同一页两个版本。
+test('会话是主体：DOM 顺序与宽屏布局都把它排在补充区之前', () => {
+  /* 这条不变量从「两栏阅读顺序一致」演进而来，判据换了但守的东西没变：
+     会话在页面更靠前的位置，补充信息在后 —— 宽屏窄屏都是这个次序，
+     不能宽屏会话在上、缩窄之后文件清单跑到前面去。
 
-     判据：DOM 里 #tasks 在 #files 之前，且 grid-template-areas 的第一行
-     内容行也是 tasks 在前。 */
+     现在的布局是：会话面板独占一行，补充区（磁盘/文件清单/诊断）在
+     下方一块可折叠的 <details> 里。因此要断言三件事：
+       1. DOM 里 #tasks 在 #extras 之前（单列时按它排）
+       2. #files 住在 #extras 里面（不再与 #tasks 并排）
+       3. grid-template-areas 也只有 tasks / extras 行，没有并列两栏 */
   const ti = html.indexOf('id="tasks"');
+  const ei = html.indexOf('id="extras"');
   const fi = html.indexOf('id="files"');
-  assert.ok(ti > 0 && fi > 0, '两块都要在页面上');
-  assert.ok(ti < fi, 'DOM 顺序：会话管理要在文件清单之前（单列时按它排）');
+  assert.ok(ti > 0 && ei > 0 && fi > 0, '三块都要在页面上');
+  assert.ok(ti < ei, 'DOM 顺序：会话管理要在补充区之前');
+  assert.ok(ei < fi, '文件清单住在补充区里，要排在 #extras 开标签之后');
+
+  const extrasOpen = html.indexOf('<details class="extras" id="extras"');
+  assert.ok(extrasOpen > 0 && extrasOpen < fi, '文件清单必须在 details 内部');
 
   const areas = css.match(/grid-template-areas:\s*\n\s*"([^"]+)"\s*\n\s*"([^"]+)"/);
   assert.ok(areas, '找不到 grid-template-areas 的定义');
-  const bodyRow = areas[2].split(/\s+/);
-  assert.deepEqual(bodyRow, ['tasks', 'files'],
-    `宽屏并排的两列也要会话在前：实际是 ${bodyRow.join(' | ')}`);
+  assert.deepEqual(areas[1].trim().split(/\s+/), ['tasks'], '第一行只放会话管理');
+  assert.deepEqual(areas[2].trim().split(/\s+/), ['extras'], '第二行只放补充区');
 });
 
 test('工具标识色不能借用状态色', () => {

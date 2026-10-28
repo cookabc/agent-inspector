@@ -134,74 +134,40 @@
     <p class="empty" id="auditEmpty" hidden></p>
   </section>
 
-  <!-- ── 总览：一行读数条 ─────────────────────────────────
-       这里不画面积图 —— 它给的信息（各分类占多少、三档占比）在别处都有：
-       分类体积在文件清单每张卡的头上，三档体积在
-       状态筛选钮上。它唯一独有的"按面积对比"在这个数据上读不出来：
-       最大块与最小块差几十倍，中间的块小到看不见标签。
-
-       所以压成一行：左边分母（这台机器上这个工具占多少），
-       右边分子（其中能清掉多少）+ 动作。两句本来就是一句话的两半。
-       高度从 380px 降到约 90px，会话管理与文件清单直接上到首屏。 -->
-  <section class="hero" id="overview" aria-labelledby="heroTitle">
-    <div class="hero-head">
-      <h2 class="eyebrow" id="heroTitle">磁盘占用</h2>
-      <p class="hero-figure" id="heroBytes" aria-live="polite">—</p>
-      <p class="hero-sub" id="heroSub">正在扫描 <code>~/.zcode</code> …</p>
-    </div>
-
-    <section class="clean" id="clean" aria-labelledby="cleanTitle">
-      <h2 class="section-title" id="cleanTitle">可以清理的</h2>
-
-      <div class="lanes">
-        <!-- 每条清理线两行：
-             第一行 名称 + 大数字 + 计数/警示 + 按钮（它们是同一句话的几半，
-             不各占一行）；
-             第二行 范围（推荐线是分类 chip，会话线是"跳过最近/跳过置顶"两个开关）。
-             名字不写死"文件与日志"：Cursor 的推荐项是已安装扩展，写死会让
-             标题和下面的范围对不上。由 renderRecommend 按实际范围填。 -->
-        <article class="lane" id="rec">
-          <div class="lane-line">
-            <span class="lane-name" id="recName">推荐清理</span>
-            <span class="lane-figure" id="recFigure">—</span>
-            <p class="lane-sub" id="recSub"></p>
-            <button class="btn btn-primary" id="recBtn" type="button">推荐清理</button>
-          </div>
-          <div class="lane-scope" id="recScope" role="group" aria-label="推荐清理包含哪些"></div>
-        </article>
-
-        <!-- 历史会话 -->
-        <article class="lane" id="taskQuick" hidden>
-          <div class="lane-line">
-            <span class="lane-name">历史会话</span>
-            <span class="lane-figure" id="tqFigure">—</span>
-            <p class="lane-sub" id="tqSub"></p>
-            <button class="btn btn-primary" id="taskQuickBtn" type="button">一键清理</button>
-          </div>
-          <div class="lane-scope">
-            <label class="mini-sel">
-              <span>跳过最近</span>
-              <select id="taskAge">
-                <option value="7">7 天</option>
-                <option value="30" selected>30 天</option>
-                <option value="90">90 天</option>
-                <option value="0">不跳过</option>
-              </select>
-            </label>
-            <button type="button" class="rec-chip st-warning is-on" id="taskSkipPinned" aria-pressed="true">
-              <span class="box" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span>
-              跳过置顶的
-            </button>
-          </div>
-        </article>
-      </div>
-    </section>
-  </section>
-
-  <!-- ── 会话管理 ───────────────────────────────────────── -->
+  <!-- ── 会话管理 ─────────────────────────────────────────
+       这一屏的主体。其他内容（磁盘构成、文件清单、诊断）都降为补充 ——
+       它们回答的是"盘上还有什么"，而打开这个工具第一想知道的是
+       "我那些会话在哪、占多少、能不能清"。
+       「历史会话」快捷清理 lane 原本长在上面那张总览卡里 —— 它是会话的事，
+       就该跟着会话面板走，不该挂在磁盘读数的下面。 -->
   <section class="panel" id="tasks" aria-labelledby="taskTitle">
     <h2 id="taskTitle">会话管理</h2>
+
+    <!-- 快捷清理：一条 lane，跟着会话面板 -->
+    <article class="lane lane--inline" id="taskQuick" hidden>
+      <div class="lane-line">
+        <span class="lane-name">历史会话</span>
+        <span class="lane-figure" id="tqFigure">—</span>
+        <p class="lane-sub" id="tqSub"></p>
+        <button class="btn btn-primary" id="taskQuickBtn" type="button">一键清理</button>
+      </div>
+      <div class="lane-scope">
+        <label class="mini-sel">
+          <span>跳过最近</span>
+          <select id="taskAge">
+            <option value="7">7 天</option>
+            <option value="30" selected>30 天</option>
+            <option value="90">90 天</option>
+            <option value="0">不跳过</option>
+          </select>
+        </label>
+        <button type="button" class="rec-chip st-warning is-on" id="taskSkipPinned" aria-pressed="true">
+          <span class="box" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg></span>
+          跳过置顶的
+        </button>
+      </div>
+    </article>
 
     <div class="app-warn" id="taskWarn" hidden></div>
 
@@ -269,64 +235,112 @@
     </div>
   </section>
 
-  <!-- ── 逐项清单（文件）────────────────────────────────── -->
-  <section class="panel" id="files" aria-labelledby="listTitle">
-    <h2 id="listTitle">文件清单</h2>
-    <p class="lede" id="splitLede"></p>
-    <div class="split" id="split"></div>
-
-    <div class="toolbar">
-      <label class="search">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
-          <circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>
-        </svg>
-        <input type="search" id="search" placeholder="搜索路径…（按 / 聚焦）" autocomplete="off" spellcheck="false">
-      </label>
-      <div class="chips" id="statusChips" role="group" aria-label="按可清理程度筛选"></div>
-      <div class="toolbar-end">
-        <label class="sort">
-          <span>排序</span>
-          <select id="sortSel">
-            <option value="size">体积</option>
-            <option value="time">修改时间</option>
-            <option value="name">名称</option>
-          </select>
-        </label>
-        <div class="btn-pair" role="group" aria-label="逐项清单的勾选快捷操作">
-          <button class="btn btn-ghost btn-sm btn-icon" id="fileSelAll" type="button" aria-label="全选可见文件" title="全选可见文件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8 12.2l2.6 2.6L16 9.4"/></svg></button>
-          <button class="btn btn-ghost btn-sm btn-icon" id="clearSelBtn" type="button" aria-label="取消文件勾选" title="取消文件勾选"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg></button>
+  <!-- ── 补充区：磁盘构成 / 文件清单 / 诊断 ────────────────
+       会话是这一屏的主体，这些内容降为补充：默认收起，标题行给出
+       "文件清单多大、多少项"的读数，展开后才是原来的完整界面。
+       为什么收进 <details> 而不是继续并排：会话行是长标题 + 长路径，
+       横向空间对它永远不够；而文件清单本身有几十个分类卡，展开后
+       更需要整宽。两块并排放着，两边都不够用。 -->
+  <details class="extras" id="extras">
+    <summary class="extras-head">
+      <span class="extras-caret" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+          stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+      </span>
+      <span class="extras-title">磁盘与其他</span>
+      <span class="extras-now" id="extrasNow"></span>
+    </summary>
+    <div class="extras-body">
+      <section class="hero" id="overview" aria-labelledby="heroTitle">
+        <div class="hero-head">
+          <h2 class="eyebrow" id="heroTitle">磁盘占用</h2>
+          <p class="hero-figure" id="heroBytes" aria-live="polite">—</p>
+          <p class="hero-sub" id="heroSub">正在扫描 <code>~/.zcode</code> …</p>
         </div>
-      </div>
+
+        <section class="clean" id="clean" aria-labelledby="cleanTitle">
+          <h2 class="section-title" id="cleanTitle">可以清理的</h2>
+
+          <div class="lanes">
+            <!-- 每条清理线两行：
+                 第一行 名称 + 大数字 + 计数/警示 + 按钮（它们是同一句话的几半，
+                 不各占一行）；
+                 第二行 范围（推荐线是分类 chip，会话线是"跳过最近/跳过置顶"两个开关）。
+                 名字不写死"文件与日志"：Cursor 的推荐项是已安装扩展，写死会让
+                 标题和下面的范围对不上。由 renderRecommend 按实际范围填。 -->
+            <article class="lane" id="rec">
+              <div class="lane-line">
+                <span class="lane-name" id="recName">推荐清理</span>
+                <span class="lane-figure" id="recFigure">—</span>
+                <p class="lane-sub" id="recSub"></p>
+                <button class="btn btn-primary" id="recBtn" type="button">推荐清理</button>
+              </div>
+              <div class="lane-scope" id="recScope" role="group" aria-label="推荐清理包含哪些"></div>
+            </article>
+          </div>
+        </section>
+      </section>
+
+      <!-- ── 逐项清单（文件）────────────────────────────────── -->
+      <section class="panel" id="files" aria-labelledby="listTitle">
+        <h2 id="listTitle">文件清单</h2>
+        <p class="lede" id="splitLede"></p>
+        <div class="split" id="split"></div>
+
+        <div class="toolbar">
+          <label class="search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+              <circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/>
+            </svg>
+            <input type="search" id="search" placeholder="搜索路径…（按 / 聚焦）" autocomplete="off" spellcheck="false">
+          </label>
+          <div class="chips" id="statusChips" role="group" aria-label="按可清理程度筛选"></div>
+          <div class="toolbar-end">
+            <label class="sort">
+              <span>排序</span>
+              <select id="sortSel">
+                <option value="size">体积</option>
+                <option value="time">修改时间</option>
+                <option value="name">名称</option>
+              </select>
+            </label>
+            <div class="btn-pair" role="group" aria-label="逐项清单的勾选快捷操作">
+              <button class="btn btn-ghost btn-sm btn-icon" id="fileSelAll" type="button" aria-label="全选可见文件" title="全选可见文件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8 12.2l2.6 2.6L16 9.4"/></svg></button>
+              <button class="btn btn-ghost btn-sm btn-icon" id="clearSelBtn" type="button" aria-label="取消文件勾选" title="取消文件勾选"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg></button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 空态提示紧贴在工具栏下面：离得远了，人看不出是哪个条件筛空的。 -->
+        <p class="empty" id="emptyHint" hidden>没有匹配的条目。</p>
+
+        <div class="groups" id="groups"></div>
+      </section>
+
+      <!-- ── 诊断 ───────────────────────────────────────────── -->
+      <section class="note" id="diagnosis" aria-labelledby="diagTitle">
+        <details class="note-fold">
+          <summary class="note-title" id="diagTitle">
+            <span class="dot dot-serious" aria-hidden="true"></span>
+            <span class="note-title-text" id="diagTitleText">失控日志</span>
+            <span class="note-hint">展开看原因与复现命令</span>
+          </summary>
+          <p class="note-lede" id="diagLede"></p>
+          <div class="diag-body">
+            <p>Agent 会把每条命令的 stdout 完整落盘到 <code>&lt;root&gt;/cli/exec/&lt;会话&gt;/call_&lt;id&gt;-stdout.log</code>。这个路径就在被审计的目录里面，于是它自己也会成为搜索的目标。</p>
+            <p>真实发生过的一次：某个只读的 Explore 子 Agent 执行了下面这样一条命令（搜索模式已脱敏）——</p>
+            <pre><code>grep -RIn --exclude-dir=.git \
+         -E '&lt;某个内部指标名&gt;' \
+         ~/.zcode/cli/exec</code></pre>
+            <p>它搜索的目录里，正躺着这条命令自己的输出文件。grep 一边读、一边匹配到 harness 正在写入的内容，输出被下一轮再次匹配 —— 于是每转一圈就嵌套一层。证据是日志的结尾，同一条路径被层层套住，行号以 8 递减：</p>
+            <pre><code>…/call_&lt;id&gt;-stdout.log:19977:…/call_&lt;id&gt;-stdout.log:19969:…:19961:…</code></pre>
+            <p>另一种放大不需要自引用：搜的是 <code>cli/agents/**/transcript.jsonl</code>，而每条记录都保存了发给模型的完整请求体，单行就有几百 KB，匹配一次就是几百 KB 的输出。</p>
+            <p><strong>要避免复发</strong>：别让 Agent 把 <code>~</code>、<code>~/.zcode</code>、<code>~/.claude</code> 当 <code>grep -R</code> 的搜索根。</p>
+          </div>
+        </details>
+      </section>
     </div>
-
-    <!-- 空态提示紧贴在工具栏下面：离得远了，人看不出是哪个条件筛空的。 -->
-    <p class="empty" id="emptyHint" hidden>没有匹配的条目。</p>
-
-    <div class="groups" id="groups"></div>
-  </section>
-
-  <!-- ── 诊断 ───────────────────────────────────────────── -->
-  <section class="note" id="diagnosis" aria-labelledby="diagTitle">
-    <details class="note-fold">
-      <summary class="note-title" id="diagTitle">
-        <span class="dot dot-serious" aria-hidden="true"></span>
-        <span class="note-title-text" id="diagTitleText">失控日志</span>
-        <span class="note-hint">展开看原因与复现命令</span>
-      </summary>
-      <p class="note-lede" id="diagLede"></p>
-      <div class="diag-body">
-        <p>Agent 会把每条命令的 stdout 完整落盘到 <code>&lt;root&gt;/cli/exec/&lt;会话&gt;/call_&lt;id&gt;-stdout.log</code>。这个路径就在被审计的目录里面，于是它自己也会成为搜索的目标。</p>
-        <p>真实发生过的一次：某个只读的 Explore 子 Agent 执行了下面这样一条命令（搜索模式已脱敏）——</p>
-        <pre><code>grep -RIn --exclude-dir=.git \
-     -E '&lt;某个内部指标名&gt;' \
-     ~/.zcode/cli/exec</code></pre>
-        <p>它搜索的目录里，正躺着这条命令自己的输出文件。grep 一边读、一边匹配到 harness 正在写入的内容，输出被下一轮再次匹配 —— 于是每转一圈就嵌套一层。证据是日志的结尾，同一条路径被层层套住，行号以 8 递减：</p>
-        <pre><code>…/call_&lt;id&gt;-stdout.log:19977:…/call_&lt;id&gt;-stdout.log:19969:…:19961:…</code></pre>
-        <p>另一种放大不需要自引用：搜的是 <code>cli/agents/**/transcript.jsonl</code>，而每条记录都保存了发给模型的完整请求体，单行就有几百 KB，匹配一次就是几百 KB 的输出。</p>
-        <p><strong>要避免复发</strong>：别让 Agent 把 <code>~</code>、<code>~/.zcode</code>、<code>~/.claude</code> 当 <code>grep -R</code> 的搜索根。</p>
-      </div>
-    </details>
-  </section>
+  </details>
 
   </div><!-- /#single -->
 

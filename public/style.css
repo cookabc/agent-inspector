@@ -237,6 +237,14 @@ p { margin: 0; }
     min-height: 100vh;
     padding-bottom: 120px;
   }
+  /* 补充区展开后会长过一屏（文件清单几十张卡）：这时 .wrap 必须能长高、
+     页面出滚动条，否则内容被 100vh 裁掉且滚不到。收起时仍走上面的
+     100vh 框架（面板不出屏、列表在面板内滚）。 */
+  body.extras-open .wrap {
+    height: auto;
+    min-height: 100vh;
+    padding-bottom: 120px;
+  }
 }
 
 /* 会话管理在左、文件清单在右：两块都是"一长串可筛可勾的条目"，
@@ -252,52 +260,44 @@ p { margin: 0; }
 
 @media (min-width: 1024px) {
   .single {
-    /* 会话管理在左，文件清单在右。
-       宽度仍按"内容有多少"分，不按左右：文件清单是长的那一栏
-       （几百上千行），会话通常只有个位数到几十条，给窄的一边反而让它
-       在左侧拖出一大片空白。1 : 1.12 让长的那一栏拿到更多横向空间。 */
-    grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr);
+    /* 会话是主体：独占一行、吃满整宽与剩余高度。
+       下面是补充区（磁盘/文件清单/诊断），默认折起，只留一条读数。
+       为什么不再并排：会话行是长标题 + 长路径，文件清单里又是几十个
+       分类卡 —— 两块都要横宽，并排的结果是两边都不够用。 */
+    grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
-      "hero  hero"
-      "tasks files"
-      "diag  diag";
-    /* 占满 .wrap 的高度，多出来的塞给 tasks/files 两行 */
+      "tasks"
+      "extras";
     flex: 1;
     min-height: 0;
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    /* 收起时：会话吃掉剩余高度（minmax(0,1fr)），extras 只是那条摘要。
+       展开时：extras 会长到几千像素，此时若还让会话抢 1fr，两行会互相挤压
+       并重叠（实测摘要行压在"会话管理"标题上）。所以收/开两态分开定义：
+       展开态把会话钉成固定高度（它自己的列表内部滚），extras 用 auto
+       撑开，由 .wrap 出滚动条。 */
+    grid-template-rows: minmax(0, 1fr) auto;
     align-items: stretch;
   }
-  .single > .hero    { grid-area: hero; }
-  .single > #files   { grid-area: files; }
+  .single:has(> #extras[open]) {
+    grid-template-rows: minmax(240px, 42vh) auto;
+  }
   .single > #tasks   { grid-area: tasks; }
-  .single > .note    { grid-area: diag; }
-  /* 「全部」视图占满整行：它不属于 files/tasks 任何一栏，
-     不指定会落在第一列，右边空掉一大块。别的块在全部模式下都 hidden，
-     所以它自然落在第一行，不需要再写 grid-row。 */
-  .single > .all-view { grid-column: 1 / -1; }
+  .single > #extras  { grid-area: extras; }
+  /* 「全部」视图占满整行 */
+  .single > .all-view { grid-area: tasks; }
 
-  /* 两栏都是"一屏一滚区"：面板高度被 grid 行钉住（不超过屏幕），
-     面板内部 flex 布局里只有清单可滚，其余（标题/说明/工具栏）钉住不动。
-     之前 #files 的 sticky + max-height 只约束自己，tasks 列照样伸出屏幕。
-     #files 的头部（三张选择卡 + 工具栏）在 ≤1500px 窄两栏里可能超过
-     面板高度 —— overflow:auto 让整块面板内部滚，底边仍然不出屏；
-     #tasks 的头部都是小块，钉死不滚，只有会话列表滚。 */
+  /* 面板高度被 grid 行钉住（不超过屏幕）：标题/说明/工具栏钉住不动，
+     只有会话列表滚。 */
   .single > #tasks {
     display: flex;
     flex-direction: column;
     min-height: 0;
     overflow: hidden;
+    /* 主体面板比补充区更紧凑：它是每天看的地方，上下各 26px 的 padding
+       加六个 14px 的间隙要吃掉 84px，那 84px 全是列表高度。 */
+    padding: clamp(14px, 1.6vw, 18px);
+    gap: 10px;
   }
-  .single > #files {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
-  /* 面板里的滚动子项：文件清单的分组列表、会话管理的会话列表。
-     列表自己拿走全部剩余高度并出滚动条；面板其余部分纹丝不动。 */
-  .single > #files > .groups,
   .single > #tasks > .task-list {
     flex: 1;
     min-height: 120px;
@@ -305,24 +305,14 @@ p { margin: 0; }
     overflow-y: auto;
     overscroll-behavior: contain;
   }
-  /* 列表自己是 flex 容器，子项默认 flex-shrink:1 —— 内容比可视区高时
-     浏览器会等比压缩每个子项，组的标题/说明被压扁叠在一起（实测 104px
-     的行压到 61px）。滚动容器里的行必须保持自然高度，压缩交给滚动。 */
-  .single > #files > .groups > *,
+  /* 列表是 flex 容器，子项默认 flex-shrink:1 —— 内容比可视区高时浏览器
+     会等比压缩每一行（实测 104px 的行压到 61px，标题与说明叠在一起）。
+     滚动容器里的行必须保持自然高度，压缩交给滚动。 */
   .single > #tasks > .task-list > * { flex: none; }
-  /* 会话列表原先的 520px 上限撤掉：任务列表区现在钉在视口内，
-     高度由"屏幕底部到工具栏底"决定，比旧上限高得多 —— 会话一屏看得更多。 */
-  .single > #tasks > .task-list { max-height: none; }
-
-  /* 右栏的"头部三件"（标题+说明、三张选择卡、工具栏）在面板 flex 里
-     默认可收缩 —— 清单一多它们被压到 120px 下限，选择卡被裁一半。
-     头部是筛选与勾选的入口，宁可整块滚动也不能压。 */
-  .single > #files > :not(.groups) { flex: none; }
-  /* 左栏同理：警示条 / 说明 / 构成图 / 工具栏全部钉住，只有会话列表滚。 */
+  /* 面板头部全部钉住，只有列表滚 */
   .single > #tasks > :not(.task-list) { flex: none; }
-  /* Codex 的说明文案两三行就够，但某些工具能写到六行以上（外加构成图），
-     全钉住会把列表挤回一小条。给这两块一个滚动上限：
-     内容多时自己滚，不侵占列表高度。 */
+  /* Codex 的说明文案两三行就够，某些工具能写到六行以上（外加构成图）：
+     这两块给滚动上限，内容多时自己滚，不侵占列表高度。 */
   .single > #tasks .app-warn,
   .single > #tasks .tcomp {
     max-height: 26vh;
@@ -330,17 +320,20 @@ p { margin: 0; }
     overscroll-behavior: contain;
   }
 
-  /* 1440 窄两栏实测：警示条 + 说明长文案把清单挤到 120px 下限。
-     这两块长文案参与滚动（max-height 钳制），别的仍钉住。
-     （.split 的窄屏分档不在这里 —— 它会被文件后面的基础 .split 规则
-     按源码顺序盖掉，媒体查询不加特异性；放在基础规则之后才生效。） */
-  @media (max-width: 1500px) {
-    .single > #tasks .app-warn,
-    .single > #tasks > .lede { max-height: 9em; overflow-y: auto; overscroll-behavior: contain; }
+  /* 补充区：默认收起。展开后它自己要能滚 —— 文件清单有几十个分类卡，
+     整块撑开会把会话挤没。 */
+  .single > #extras[open] {
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
-
-  /* 总览卡在框架顶部，不参与滚动 */
-  .single > .hero { flex: none; }
+  .single > #extras .extras-body {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding-top: 4px;
+  }
+  /* 展开后的文件清单不再需要自己的 sticky/内部滚动：外层 #extras 已经在滚 */
+  .single > #extras #files { overflow: visible; }
 }
 
 /* 布局落回单列时不许吸顶：那时它是一整块，吸住会把页面盖住。 */
@@ -911,6 +904,59 @@ p { margin: 0; }
   gap: 14px;
   min-width: 0;
 }
+
+/* ── 补充区（磁盘构成 / 文件清单 / 诊断）────────────────────
+   会话是页面主体，这些都是"盘上还有什么"的补充信息。默认收起，
+   标题行给一条读数（文件清单多大、多少项），要细节再展开。
+   用 <details> 而不是自己写折叠：键盘可达、屏幕阅读器认得、不依赖 JS。 */
+.extras {
+  border: 0.5px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  min-width: 0;
+}
+.extras-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px clamp(16px, 2vw, 22px);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  border-radius: var(--r-lg);
+}
+.extras-head::-webkit-details-marker { display: none; }
+.extras-head:hover { background: var(--surface-2); }
+.extras-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.extras-caret {
+  display: grid;
+  place-items: center;
+  width: 14px; height: 14px;
+  color: var(--muted);
+  flex: none;
+  transition: transform var(--dur) var(--ease-out);
+}
+.extras-caret svg { width: 12px; height: 12px; }
+.extras[open] .extras-caret { transform: rotate(90deg); }
+.extras-title { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
+.extras-now {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.extras-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 0 clamp(16px, 2vw, 22px) clamp(16px, 2vw, 22px);
+}
+/* extras 里的两个面板不再各自带边框 —— 外层已经有框了，双层框看起来像嵌套错误 */
+.extras .hero,
+.extras .panel,
+.extras .note { border: 0; padding: 0; }
 
 .panel > h2 {
   font-size: 14px;
@@ -1829,6 +1875,63 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
 }
 .tdetail-grid dd code { font-size: 12px; color: var(--ink); }
 .tdetail-acts { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ── 会话详情里的「所属内容」清单 ─────────────────────────
+   这是"删这条会话到底牵动什么"的唯一出口：五种工具的级联范围差得极远
+   （ZCode 四类目录 + 18 张表，Claude 就一个文件），差别必须在这里看见，
+   否则"清理"这个词在五个工具里意味着五件不同的事。 */
+.tcontents {
+  margin-top: 4px;
+  padding: 10px 0 2px;
+  border-top: 0.5px solid color-mix(in oklab, var(--line) 70%, transparent);
+}
+.tcontents-title {
+  display: block;
+  font-size: 12px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 7px;
+}
+.tcontents-grid { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 5px 14px; margin: 0; }
+.tcontents-grid > .tcontent-row { display: contents; }
+.tcontents-grid dt { font-size: 12px; color: var(--ink-2); font-weight: 550; }
+.tcontents-grid dd {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-2);
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  /* 路径可能很长（rollout 文件名带毫秒时间戳 + GUID），允许折行 —
+     这里不像行内 meta 那样有"必须一行"的理由，看全比对齐重要。 */
+  flex-wrap: wrap;
+}
+.tcontents-grid dd code {
+  font-size: 12px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.tcontent-n { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.tcontent-size { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tcontent-note { color: var(--muted); font-size: 12px; }
+.tcontents-total {
+  margin-top: 9px;
+  font-size: 12px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.tcontents-total b { color: var(--ink); font-weight: 650; }
+.tcontent-notes { margin: 7px 0 0; padding-inline-start: 16px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.tcontent-notes li + li { margin-top: 3px; }
+.tcontent-notes li.is-warn { color: var(--st-serious); }
+
+@media (max-width: 620px) {
+  /* 窄屏一行放不下 96px 的标签列：改成上下两行 */
+  .tcontents-grid { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }
+  .tcontents-grid dd { margin-bottom: 6px; }
+}
 
 /* 分组时工作区已经在组头上，行内的元信息就不再重复它 */
 .task-list { overflow: hidden auto; }
