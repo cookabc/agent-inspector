@@ -216,3 +216,23 @@ test('五个工具的枚举函数签名一致，且只产出 CONTENT_ROLES 里�
     assert.equal(removableBytes(c), c.files.filter((f) => f.removable).reduce((s, f) => s + f.bytes, 0));
   }
 });
+
+test('五种工具里凡是「会话正文」分类都必须标 sessionOnly', async () => {
+  /* 会话正文不进文件清单，判据是这个标记 —— 所以它必须五家一致。
+     漏一家，那家的会话正文就会以可勾条目的形式出现在「磁盘与其他」里，
+     而"在清单里挑几个正文文件删掉"正是会留下残骸的做法。 */
+  const apps = ['zcode', 'codex', 'claude', 'dsh', 'cursor'];
+  const { getApp } = await import('../lib/apps/index.mjs');
+  const found = [];
+  for (const id of apps) {
+    const app = getApp(id);
+    for (const meta of Object.values(app.CATEGORIES)) {
+      // 只认这三档：普通正文、归档正文、分页续段
+      if (['transcript', 'archivedSession', 'transcriptSegment'].includes(meta.id)) {
+        assert.equal(meta.sessionOnly, true, `${id} 的 ${meta.id} 没标 sessionOnly —— 它会漏进文件清单`);
+        found.push(`${id}:${meta.id}`);
+      }
+    }
+  }
+  assert.ok(found.length >= 5, `至少要覆盖五家的正文类，实际 ${found.length}：${found.join(',')}`);
+});

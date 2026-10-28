@@ -349,12 +349,12 @@ test('没有 sessions/ 时给空表 + 一句人话', async (t) => {
   assert.ok(d.problems.some((p) => p.includes('sessions/')), '缺目录要说出来');
 });
 
-test('bodyRel 是相对扫描根的路径 —— 前端拿它去文件清单里找那一行', async (t) => {
-  /* bodyRel 若相对 sessions/ 拼，而文件清单相对 ~/.dsh，
-     差一层 `sessions/`。界面上点「按文件清理…」会弹
-     "勾上的会话在文件清单里找不到对应正文 —— 目录大概在这期间变了"，
-     看着像磁盘被改过，其实只是路径拼错。
-     判据：每条会话的 bodyRel 必须能在这家 app 自己扫出来的文件清单里找到。 */
+test('bodyRel 从扫描根起算，且正文只归会话管理、不进文件清单', async (t) => {
+  /* bodyRel 若相对 sessions/ 拼，而根是 ~/.dsh，就差一层 —— 那是拼错。
+     但"能在文件清单里找到"这条旧判据已经过时：会话正文现在整体移出清单，
+     归会话管理。所以判据换成两条，一起证明"路径对得上、归属也对"：
+       1. bodyRel 与真实文件路径一致（用真扫描交叉验证，不只比字符串）
+       2. 它不出现在文件清单里，但出现在该会话的「所属内容」里 */
   const id = 'session-99990000-0000-0000-0000-000000000099';
   const root = await makeRoot(t, { sessions: [{ id, projection: proj('路径要对上') }] });
 
@@ -366,13 +366,23 @@ test('bodyRel 是相对扫描根的路径 —— 前端拿它去文件清单里�
     'bodyRel 必须从 ~/.dsh 起算',
   );
 
-  // 用真实的文件扫描交叉验证，而不是只比字符串
-  const dshApp = (await import('../lib/apps/dsh.mjs')).default;
+  const dshAppMod = (await import('../lib/apps/dsh.mjs')).default;
   const { scanTarget } = await import('../lib/scan.mjs');
-  const scan = await scanTarget(dshApp, { key: 'root', kind: 'dir', path: root });
+  const scan = await scanTarget(dshAppMod, { key: 'root', kind: 'dir', path: root });
   assert.ok(
-    scan.files.some((f) => f.p === row.bodyRel),
-    `bodyRel 在文件清单里找不到：${row.bodyRel}`,
+    !scan.files.some((f) => f.p === row.bodyRel),
+    `会话正文不该出现在文件清单里：${row.bodyRel}`,
+  );
+
+  /* contents 由**路由器**挂上（lib/tasks.mjs 的 scanTasks），
+     适配器自己那份 scanTasks 只管读、不负责归属。所以要验「所属内容」
+     必须走路由器 —— 这正是界面上真正用的那条路径。 */
+  const { scanTasks: scanViaRouter } = await import('../lib/tasks.mjs');
+  const routed = await scanViaRouter(dshAppMod, [{ key: 'root', kind: 'dir', path: root }]);
+  const routedRow = routed.tasks.find((x) => x.id === id);
+  assert.ok(
+    (routedRow?.contents?.files || []).some((f) => f.role === 'body'),
+    '会话的「所属内容」要把它列出来 —— 否则它既不在清单里也没人负责',
   );
 });
 

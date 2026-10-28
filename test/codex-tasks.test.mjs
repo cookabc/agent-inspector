@@ -118,7 +118,11 @@ const ORIG_ID = '01aa0000-0000-0000-0000-0000000000ff';
  * 看起来像别处坏了，几乎不可能联想到"自己删了个文件"。
  * 所以续段必须是 locked（请勿删除），只有原始段可以按文件清。
  */
-test('续段（首行带 history_base）被锁住，原始段仍可清', async (t) => {
+test('续段（首行带 history_base）不进文件清单，归会话管理', async (t) => {
+  /* 会话正文（含分页续段）已经整体移出文件清单：删法只有一种是对的 ——
+     删掉那条会话，由级联把同一会话的全部段落一起带走。留在文件清单里
+     让人挑着删，正是会留下 "missing source rollout" 残骸的做法。
+     所以这里断言的是「它不出现在清单里」，而不是「它在清单里被锁住」。 */
   const { root } = await fixture(t);
   const seg = path.join(root, 'sessions/2026/10/04/rollout-2026-10-04T00-00-00-' + SEG_ID + '.jsonl');
   await fs.mkdir(path.dirname(seg), { recursive: true });
@@ -138,16 +142,16 @@ test('续段（首行带 history_base）被锁住，原始段仍可清', async (
   const { scanTarget } = await import('../lib/scan.mjs');
   const scan = await scanTarget(app, { key: 'root', kind: 'dir', path: root });
   const segFile = scan.files.find((f) => f.p.endsWith(`${SEG_ID}.jsonl`));
-  assert.ok(segFile, '续段文件要被扫到');
-  assert.equal(segFile.c, 'transcriptSegment', '续段要单独一档');
+  assert.equal(segFile, undefined, '续段不该出现在文件清单里');
 
-  const cat = scan.catalog.find((c) => c.id === 'transcriptSegment');
-  assert.ok(cat, '分类表里要有 transcriptSegment');
-  assert.equal(cat.verdict, 'never', '续段不能按文件删 —— 删了整条会话就废了');
-  assert.equal(cat.locked, true, '要锁住勾选框');
+  // 分类本身仍在 catalog 之外可用（它有 sessionOnly 标记），但不参与清单
+  assert.ok(app.CATEGORIES.transcriptSegment.sessionOnly, 'transcriptSegment 要标 sessionOnly');
+  assert.equal(app.CATEGORIES.transcriptSegment.locked, true, '它仍然不能被单独删除');
+  assert.equal(scan.catalog.find((c) => c.id === 'transcriptSegment'), undefined,
+    'catalog 里也不该有它 —— 免得前端画出一张永远是 0 的卡');
 });
 
-test('原始段（首行没有 history_base）保持可清', async (t) => {
+test('原始段（首行没有 history_base）同样是会话正文，不进文件清单', async (t) => {
   const { root } = await fixture(t);
   const orig = path.join(root, 'sessions/2026/10/05/rollout-2026-10-05T00-00-00-' + ORIG_ID + '.jsonl');
   await fs.mkdir(path.dirname(orig), { recursive: true });
@@ -160,7 +164,7 @@ test('原始段（首行没有 history_base）保持可清', async (t) => {
   const { scanTarget } = await import('../lib/scan.mjs');
   const scan = await scanTarget(app, { key: 'root', kind: 'dir', path: root });
   const f = scan.files.find((x) => x.p.endsWith(`${ORIG_ID}.jsonl`));
-  assert.equal(f.c, 'transcript', '原始段仍是普通会话正文');
+  assert.equal(f, undefined, '会话正文一律不进文件清单');
 });
 
 test('rolloutLineage 判不出时返回 null，绝不猜', async (t) => {
@@ -275,7 +279,10 @@ test('索引结构读取失败时不得把磁盘正文当作可清理残骸', as
   assert.equal(r.tasks.length, 0);
 });
 
-test('分页续段引用的原始 rollout 同样受保护', async t => {
+test('分页续段引用的原始 rollout：清单里不出现，但会话行仍标明它被引用', async t => {
+  /* 文件清单不再列会话正文，所以"锁住"这件事从清单层挪到了会话层：
+     会话行上必须仍然标出「这段被别的续段引用」，因为会话详情要据此
+     告诉用户"删它会连带毁掉整条会话"。 */
   const { root } = await fixture(t);
   const base = path.join(root, 'sessions/2026/10/05');
   await fs.mkdir(base, { recursive: true });
@@ -288,8 +295,10 @@ test('分页续段引用的原始 rollout 同样受保护', async t => {
   const app = (await import('../lib/apps/codex.mjs')).default;
   const { scanTarget } = await import('../lib/scan.mjs');
   const scan = await scanTarget(app, { key: 'root', kind: 'dir', path: root });
-  assert.equal(scan.files.find(f => f.p.endsWith(original)).c, 'transcriptSegment');
+  assert.equal(scan.files.find(f => f.p.endsWith(original)), undefined,
+    '会话正文不进文件清单');
+
   const rows = scanTasks(root).tasks;
   const source = rows.find(t => t.bodyRel?.endsWith(original));
-  assert.equal(source.lineage.referenced, true);
+  assert.equal(source.lineage.referenced, true, '会话行仍要标出它被续段引用');
 });

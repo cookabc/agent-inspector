@@ -160,16 +160,25 @@ test('process checks distinguish no match from failed detection', async () => {
   }
 });
 
-test('Claude body paths join the scan index and symlinks are not read as sessions', async t => {
+test('Claude 会话路径对得上，且正文归会话管理、软链接不算会话', async t => {
   const root = await fixture(t), rel = 'projects/demo/session.jsonl';
   await fs.mkdir(path.dirname(path.join(root, rel)), { recursive: true });
   await fs.writeFile(path.join(root, rel), JSON.stringify({ type: 'user', cwd: root, message: { content: '测试' } }) + '\n');
   await fs.symlink('session.jsonl', path.join(root, 'projects/demo/link.jsonl'));
   const tasks = await scanClaude(root);
   const scan = await scanApp({ app: claude, targets: [{ key: 'home', kind: 'dir', path: root, exists: true }] });
+  // 软链接不被当成会话：只有真实文件那一条
   assert.equal(tasks.tasks.length, 1);
   assert.equal(tasks.tasks[0].bodyRel, rel);
-  assert.ok(scan.files.some(f => f.p === tasks.tasks[0].bodyRel));
+  /* 会话正文已整体移出文件清单（归会话管理），所以断言反向：
+     清单里没有它。contents 由路由器挂上，因此「所属内容」要在路由器那条
+     路径上验 —— 适配器的 scanTasks 只管读。 */
+  assert.ok(!scan.files.some(f => f.p === tasks.tasks[0].bodyRel),
+    '会话正文不该进文件清单');
+  const { scanTasks: scanViaRouter } = await import('../lib/tasks.mjs');
+  const routed = await scanViaRouter(claude, [{ key: 'home', kind: 'dir', path: root, exists: true }]);
+  assert.ok((routed.tasks[0].contents?.files || []).some(f => f.role === 'body'),
+    '会话的「所属内容」要列着它');
 });
 
 test('scan observes targets created after startup', async t => {
