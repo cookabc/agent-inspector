@@ -236,3 +236,13 @@ test('五种工具里凡是「会话正文」分类都必须标 sessionOnly', as
   }
   assert.ok(found.length >= 5, `至少要覆盖五家的正文类，实际 ${found.length}：${found.join(',')}`);
 });
+
+test('ZCode：exec 命令日志认得出会话归属（单条能到 34 GB 的那类垃圾）', async (t) => {
+  const root = await tmpRoot(t, 'zcode-exec');
+  const id = 'sess_exec-1';
+  await writeFile(root, `cli/exec/${id}/call_1-stdout.log`, 700);
+  const { sessionIdOf } = await import('../lib/apps/zcode.mjs');
+  assert.equal(sessionIdOf(`cli/exec/${id}/call_1-stdout.log`), id, 'exec 目录要能归到会话');
+  const c = zcodeContents(root, [{ id }]).get(id);
+  assert.equal(c.files.find((f) => f.role === 'log')?.bytes, 700);
+});

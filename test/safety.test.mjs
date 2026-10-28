@@ -229,3 +229,17 @@ test('database backup includes an existing rollback journal', async t => {
   const backup = await backupDatabases([file], path.join(root, 'backups'), 'journal');
   assert.equal(await fs.readFile(path.join(backup, 'data.sqlite-journal'), 'utf8'), 'synthetic rollback journal');
 });
+
+test('Claude 的活跃会话给 manual：会话管理是它们唯一的删除入口', async t => {
+  /* 正文移出文件清单之后，如果活跃会话还是 reason:null（不可勾），
+     大多数 Claude 会话就没有任何删除入口了。删一个 .jsonl 是自包含操作
+     （/resume 读的就是这些文件本身），与 DSH 的 manual 同理；
+     运行中的 Claude Code 由进程闸拦。 */
+  const root = await fixture(t), rel = 'projects/demo/live.jsonl';
+  await fs.mkdir(path.dirname(path.join(root, rel)), { recursive: true });
+  await fs.writeFile(path.join(root, rel), JSON.stringify({ type: 'user', cwd: root, message: { content: '在用' } }) + '\n');
+  const tasks = await scanClaude(root);
+  const row = tasks.tasks[0];
+  assert.equal(row.state, 'active');
+  assert.equal(row.reason, 'manual', '活跃会话必须可勾，否则这家就没有删除入口了');
+});
