@@ -30,9 +30,22 @@ test('空跑逐库清点，在没有 threads 表的库里也不会炸', async (t
   assert.deepEqual([...seen].sort(), ['logs_2.sqlite', 'state_5.sqlite', 'thread_history_1.sqlite']);
   assert.equal(r.perDb.find((x) => x.name === 'logs_2.sqlite').count, 5);
   assert.equal(r.bodyBytes, 4096);
+  assert.equal(r.perDb.find(x => x.table === 'thread_spawn_edges')?.count, 1);
   // 空跑不改任何东西
   assert.equal(count(path.join(f.root, 'state_5.sqlite'), 'SELECT count(*) c FROM threads'), 2);
   await fs.access(path.join(f.root, f.rel.archivedBody));
+});
+
+test('multiple Codex index versions cannot silently classify or delete from the wrong index', async t => {
+  const f = await fixture(t);
+  await fs.copyFile(path.join(f.root, 'state_5.sqlite'), path.join(f.root, 'state_6.sqlite'));
+  const db = new DatabaseSync(path.join(f.root, 'state_6.sqlite'));
+  db.prepare('UPDATE threads SET archived=0 WHERE id=?').run(ARCHIVED_ID);
+  db.close();
+  const scanned = scanTasks(f.root);
+  assert.equal(scanned.tasks.length, 0);
+  assert.ok(scanned.problems.some(p => p.includes('多个线程索引')));
+  await assert.rejects(purgeTasks(f.root, [ARCHIVED_ID], { dryRun: true }), /多个线程索引/);
 });
 
 test('删除跨三个库清干净，正文文件留给文件那条线', async (t) => {
@@ -251,3 +264,32 @@ const count = (dbFile, sql) => {
   const db = new DatabaseSync(dbFile, { readOnly: true });
   try { return db.prepare(sql).get().c; } finally { db.close(); };
 }
+
+test('索引结构读取失败时不得把磁盘正文当作可清理残骸', async t => {
+  const f = await fixture(t);
+  const db = new DatabaseSync(path.join(f.root, 'state_5.sqlite'));
+  db.exec('ALTER TABLE threads RENAME COLUMN preview TO unsupported_preview');
+  db.close();
+  const r = scanTasks(f.root);
+  assert.ok(r.problems.length > 0);
+  assert.equal(r.tasks.length, 0);
+});
+
+test('分页续段引用的原始 rollout 同样受保护', async t => {
+  const { root } = await fixture(t);
+  const base = path.join(root, 'sessions/2026/10/05');
+  await fs.mkdir(base, { recursive: true });
+  const original = `rollout-original-${ORIG_ID}.jsonl`;
+  await fs.writeFile(path.join(base, original), JSON.stringify({ type: 'session_meta', payload: { session_id: ORIG_ID } }) + '\n');
+  await fs.writeFile(path.join(base, `rollout-next-${SEG_ID}.jsonl`), JSON.stringify({
+    type: 'session_meta', payload: { session_id: SEG_ID,
+      history_base: { thread_id: ORIG_ID, end_ordinal_exclusive: 12 } },
+  }) + '\n');
+  const app = (await import('../lib/apps/codex.mjs')).default;
+  const { scanTarget } = await import('../lib/scan.mjs');
+  const scan = await scanTarget(app, { key: 'root', kind: 'dir', path: root });
+  assert.equal(scan.files.find(f => f.p.endsWith(original)).c, 'transcriptSegment');
+  const rows = scanTasks(root).tasks;
+  const source = rows.find(t => t.bodyRel?.endsWith(original));
+  assert.equal(source.lineage.referenced, true);
+});

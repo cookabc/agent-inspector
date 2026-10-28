@@ -47,6 +47,24 @@ for (const suffix of ['-wal', '-shm', '-journal']) {
   });
 }
 
+test('scan reports inaccessible targets instead of treating them as absent', async t => {
+  const root = await fixture(t);
+  await fs.writeFile(path.join(root, 'parent'), 'not a directory');
+  const result = await scanApp({ app: claude, targets: [{ key: 'root', kind: 'dir', path: path.join(root, 'parent', 'child') }] });
+  assert.ok(result.problems.some(p => p.error === 'ENOTDIR'));
+});
+
+test('Codex live session detection includes all index versions', async t => {
+  const root = await fixture(t);
+  for (const version of [5, 6]) {
+    const db = new DatabaseSync(path.join(root, `state_${version}.sqlite`));
+    db.exec('CREATE TABLE threads (id TEXT)');
+    db.prepare('INSERT INTO threads VALUES (?)').run(`thread-${version}`);
+    db.close();
+  }
+  assert.deepEqual(await codex.liveSessions(root), new Set(['thread-5', 'thread-6']));
+});
+
 test('optional tables distinguish absent results across supported SQLite versions', () => {
   const db = new DatabaseSync(':memory:');
   try {
