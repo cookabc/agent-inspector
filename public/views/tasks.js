@@ -165,12 +165,13 @@ function commonDir(a, b) {
   return joined;
 }
 
-/** 为什么这家只能按文件删 —— 文案由适配器给（每家正文放在哪不一样），
- *  缺了就退回一句通用的，不按 app 名硬编码。 */
+/** 正文即文件的那两家（Claude Code / DeepSeek）的说明。
+ *  文案由适配器给（每家正文放在哪不一样），缺了退回通用的 —— 不按 app 名硬编码。
+ *  口径要点：它们从**会话管理**删，不是去文件清单挑文件。 */
 export const fileBasedNote = (d) =>
   `${icon('doc')}<div>${d?.fileBasedNote ||
     `${esc(d?.appLabel || '这个工具')} 的会话正文就是文件本身，没有数据库行可删。` +
-    `勾选后走<b>文件清理</b>那条线：默认进废纸篓，可随时恢复。`}</div>`;
+    `勾选后在<b>这里</b>清理：会先备份，再把那些正文文件移入废纸篓（可随时恢复）。`}</div>`;
 
 /* ── 选区与快捷范围的派生 ─────────────────────────────────── */
 
@@ -476,8 +477,8 @@ export function taskLedeHtml(d) {
       (untitledNote ? ` ${untitledNote}` : '')
     : d.fileBased
       ? `${esc(who)} 的会话正文就是 <b>${d.db.bodies?.count || 0}</b> 个正文文件，` +
-        `共 ${bytesB(d.db.bodies?.bytes || 0)}；本机没有会话数据库 —— 清理走文件那条线。` +
-        `读到 <b>${d.totals.count}</b> 个会话。` +
+        `共 ${bytesB(d.db.bodies?.bytes || 0)}；本机没有会话数据库。` +
+        `读到 <b>${d.totals.count}</b> 个会话，清理时正文文件会一并移入废纸篓。` +
         (purgeNote ? ` ${purgeNote}` : '')
       : d.db.bodies
         ? `${esc(who)} 的会话分两处存：索引库 ${bytesB(d.db.total)}，` +

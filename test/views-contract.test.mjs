@@ -930,7 +930,10 @@ test('taskLede：四种形态各说各的，不把 A 工具的说法安到 B 头
 
   const fb = taskLedeHtml(panel({ fileBased: true, db: { total: 0, bodies: { count: 5, bytes: 2048 } } }));
   assert.match(fb, /正文文件/);
-  assert.match(fb, /清理走文件那条线/);
+  /* 会话正文已归会话管理，所以这里要说的不是"去文件那条线"，
+     而是"清理时正文文件会一并移入废纸篓" —— 它现在就在这个面板里发生。 */
+  assert.match(fb, /一并移入废纸篓/);
+  assert.doesNotMatch(fb, /走文件那条线/, '旧口径（去文件清单清）已不成立');
 
   const two = taskLedeHtml(panel({ db: { total: 4096, bodies: { count: 2, bytes: 1024 } } }));
   assert.match(two, /分两处存/);
@@ -972,7 +975,10 @@ test('taskWarn：五分支各自的能力前提，problems 一律压过 is-ok', 
   assert.match(ro.html, /IDE 独占写入/);
 
   const fb = taskWarnHtml(panel({ fileBased: true }));
-  assert.match(fb.html, /文件清理/);
+  // 文案里嵌着 <b> 标签，正则别去匹配标签本身 —— 只查"在这里清理"这个说法
+  assert.match(fb.html, /在[\s\S]{0,14}这里[\s\S]{0,8}清理/,
+    '正文即文件的两家也从会话管理删，不再指向文件清单');
+  assert.doesNotMatch(fb.html, /走<b>文件清理/);
 
   // 有读取问题时必须上屏，且"绿色安全"的调子不能再挂着
   const withProblem = taskWarnHtml(panel({ problems: ['db.sqlite 打不开（只读）'] }));
@@ -982,7 +988,7 @@ test('taskWarn：五分支各自的能力前提，problems 一律压过 is-ok', 
 
 test('taskEmptyWarn：空面板说明文件型与读取问题，无可说时为 null', () => {
   const fb = taskEmptyWarnHtml(panel({ fileBased: true }));
-  assert.match(fb.html, /文件清理/);
+  assert.match(fb.html, /在[\s\S]{0,14}这里[\s\S]{0,8}清理/);
   assert.equal(fb.className, 'app-warn is-ok');
 
   const problem = taskEmptyWarnHtml(panel({ problems: ['读不到'] }));

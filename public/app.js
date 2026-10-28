@@ -2276,16 +2276,17 @@ function renderTaskFoot() {
   tEls.tfCount.textContent = count.toLocaleString();
   tEls.tfBytes.textContent = fmtBytes(bytes);
   tEls.tfBytes.title = bytesTip(bytes);
-  tEls.purgeBtn.textContent = d?.fileBased ? '按文件清理…' : '清理…';
+  /* 所有工具都从会话抽屉走：正文即文件的那两家也走级联（备份 + 移入废纸篓）。
+     「按文件清理」这个入口已经取消 —— 会话正文不再出现在文件清单里，
+     而"挑几个正文文件删掉"正是会留下残骸的做法。 */
+  tEls.purgeBtn.textContent = '清理…';
 
   // 这个按钮永远可点 —— 它只是打开抽屉。空跑核对是只读的，应用开着也安全，
   // 拦住用户看清单没有任何好处。真正被拦的是抽屉里那个「删除」。
   const running = d?.app?.running;
-  tEls.purgeBtn.title = d?.fileBased
-    ? `把这 ${count} 个会话的正文文件交给文件清理：默认移入废纸篓`
-    : running
-      ? `${d?.appLabel || '应用'} 正在运行：可以先空跑核对，但要完全退出它才能删除`
-      : `清理这 ${count} 个会话；动手前会自动备份`;
+  tEls.purgeBtn.title = running
+    ? `${d?.appLabel || '应用'} 正在运行：可以先空跑核对，但要完全退出它才能删除`
+    : `清理这 ${count} 个会话；动手前会自动备份${d?.fileBased ? '，正文文件默认移入废纸篓' : ''}`;
 }
 
 /* ── 首屏的会话快捷项 ───────────────────────────────────── */
@@ -2348,35 +2349,21 @@ function openTaskAction() {
   if (!d || d.readOnly) return;
   const picked = d.tasks.filter((t) => taskState.sel.has(t.id));
   if (!picked.length) return;
+  /* 会话正文已经从文件清单里移走（它是会话本身，删法只有"删掉那条会话"是
+     对的），所以「按文件清理」这条逃生口不再存在 —— Claude / DeepSeek 也一样
+     从会话抽屉走，由级联负责备份与移走那些正文文件。 */
   const residual = picked.filter((t) => t.residual);
-  if (d.fileBased || residual.length === picked.length) return openTaskAsFiles();
-  if (residual.length) {
+  if (residual.length && !d.fileBased) {
+    // 混合批次里既有库行又有纯文件残骸：仍按会话级联处理，
+    // 残骸那部分没有行可删，但它的文件会跟着走。
     tEls.warn.className = 'app-warn';
     tEls.warn.innerHTML = `${icon('alert')}<div>这一批里混了 <b>${residual.length}</b> 个只剩文件的残骸` +
       `（${fmtBytes(residual.reduce((s, t) => s + t.bytes, 0))}）。它们索引里已经没有行，` +
-      `按行删除碰不到 —— 请单独勾选它们走文件清理，或先把它们从这批里取消。</div>`;
+      `清理时只删它们的文件 —— 确认清单里会把两半分开列。</div>`;
+    openTaskDrawer();
     return;
   }
   openTaskDrawer();
-}
-
-function openTaskAsFiles() {
-  const rootKey = state.index.targets[0].key;
-  const byRel = new Map(state.index.files.filter((f) => f.t === rootKey).map((f) => [f.p, f]));
-  state.selection.clear();
-  for (const x of taskState.data.tasks.filter((t) => taskState.sel.has(t.id))) {
-    const f = byRel.get(x.bodyRel);
-    // 会话正文正常都是普通文件；万一它被换成了软链接，同样不能选 ——
-    // 否则这一批又会被服务端整批拒绝。
-    if (f && canPick(f)) state.selection.add(keyOf(f));
-  }
-  if (!state.selection.size) {
-    tEls.warn.className = 'app-warn';
-    tEls.warn.innerHTML = `${icon('alert')}<div>勾上的会话在文件清单里找不到对应正文 —— 目录大概在这期间变了。请点「重新扫描」再来一次。</div>`;
-    return;
-  }
-  renderGroups(); renderActionbar(); renderSplit();
-  openDrawer();
 }
 
 function renderTaskDrawerSummary() {
