@@ -305,6 +305,11 @@ p { margin: 0; }
     overflow-y: auto;
     overscroll-behavior: contain;
   }
+  /* 列表自己是 flex 容器，子项默认 flex-shrink:1 —— 内容比可视区高时
+     浏览器会等比压缩每个子项，组的标题/说明被压扁叠在一起（实测 104px
+     的行压到 61px）。滚动容器里的行必须保持自然高度，压缩交给滚动。 */
+  .single > #files > .groups > *,
+  .single > #tasks > .task-list > * { flex: none; }
   /* 会话列表原先的 520px 上限撤掉：任务列表区现在钉在视口内，
      高度由"屏幕底部到工具栏底"决定，比旧上限高得多 —— 会话一屏看得更多。 */
   .single > #tasks > .task-list { max-height: none; }
