@@ -48,6 +48,123 @@ export const STATUS_CLASS_TONE = { 'st-serious': 'st-serious', 'st-warning': 'st
 export const stateLabel = (t) => t.reason ? REASON_LABEL[t.reason] : STATE_META_CN[t.state];
 export const stateTone = (t) => t.reason ? REASON_TONE[t.reason] : STATE_TONE[t.state];
 
+/* ── 会话的「所属内容」 ─────────────────────────────────────
+ * 后端为每条会话枚举出"删掉它会带走什么"（lib/session-contents.mjs），
+ * 这里把它翻成人话。为什么要分角色：五种工具的级联范围差得极远 ——
+ * ZCode 牵连四类目录，Claude 就一个文件。看着同一行"清理"，实际后果不同，
+ * 用户在下手前必须看得见差别。
+ *
+ * 角色的值域与后端 CONTENT_ROLES 一一对应，测试双向锁死。 */
+export const CONTENT_ROLE_LABEL = {
+  body:       '正文',
+  segment:    '分页续段',
+  media:      '会话贴图',
+  transcript: '子 Agent 记录',
+  log:        '命令日志',
+  artifact:   '会话产物',
+  projection: '投影缓存',
+  lock:       '会话锁',
+  index:      '索引行',
+};
+
+/** 这类内容为什么必须跟着会话一起删 —— 只在有话说的时候出现。 */
+export const CONTENT_ROLE_NOTE = {
+  segment: '分页段必须整组删除：留一段残骸，恢复时会报 missing source rollout',
+  projection: '投影不删的话，下次启动还会显示一个没有正文的空壳',
+};
+
+/**
+ * 会话详情里的「所属内容」清单。
+ *
+ * 三块：库行（会走事务删除）、文件（会进废纸篓）、提示（不可删或需知会）。
+ * 空清单整块不出现 —— 显示一个"0 项"的假清单比不显示更让人困惑。
+ */
+export function taskContentsHtml(t) {
+  const c = t.contents;
+  if (!c) return '';
+  const files = mergeByRole(c.files || []);
+  const rows = rowTotal(c.dbRows);
+  const blobBytes = c.blobs?.bytes || 0;
+  if (!files.length && !rows && !blobBytes) {
+    return c.notes?.length ? noteList(c.notes) : '';
+  }
+
+  const lines = files.map((f) => {
+    const where = f.count > 1
+      ? `<code>${esc(f.rel)}/</code><span class="tcontent-n">${f.count.toLocaleString()} 个文件</span>`
+      : `<code>${esc(f.rel)}</code>`;
+    const note = CONTENT_ROLE_NOTE[f.role];
+    return `<div class="tcontent-row">
+      <dt>${esc(CONTENT_ROLE_LABEL[f.role] || f.role)}</dt>
+      <dd title="${esc(f.rel)}${f.removable ? '' : '（不随会话删除）'}">
+        ${where}
+        <span class="tcontent-size">${f.removable ? bytesB(f.bytes) : '不删'}</span>
+        ${note && f.role !== 'projection' ? '' : ''}
+      </dd>
+    </div>`;
+  });
+
+  const dbLine = rows
+    ? `<div class="tcontent-row">
+        <dt>数据库</dt>
+        <dd><span class="tcontent-n">${c.dbRows.length} 张表 · ${rows.toLocaleString()} 行</span>
+          <span class="tcontent-note">由事务删除，删前自动备份</span></dd>
+      </div>`
+    : '';
+  const blobLine = blobBytes
+    ? `<div class="tcontent-row">
+        <dt>独占内容</dt>
+        <dd><span class="tcontent-n">${(c.blobs.count || 0).toLocaleString()} 个只被这条会话引用的工具结果</span>
+          <span class="tcontent-size">${bytesB(blobBytes)}</span></dd>
+      </div>`
+    : '';
+
+  const total = files.filter((f) => f.removable).reduce((s, f) => s + f.bytes, 0) + blobBytes;
+  return `<div class="tcontents">
+    <span class="tcontents-title">所属内容</span>
+    <dl class="tcontents-grid">${dbLine}${blobLine}${lines.join('')}</dl>
+    ${total ? `<p class="tcontents-total">删除这条会话共回收 <b>${bytesB(total)}</b>${rows ? `，并从库里删 ${rows.toLocaleString()} 行` : ''}</p>` : ''}
+    ${noteList(c.notes || [])}
+  </div>`;
+}
+
+function rowTotal(dbRows) {
+  return (dbRows || []).reduce((s, r) => s + (r.count || 0), 0);
+}
+
+function noteList(notes) {
+  if (!notes.length) return '';
+  return `<ul class="tcontent-notes">${notes.map((n) =>
+    `<li class="${n.tone === 'warn' ? 'is-warn' : ''}">${esc(n.text)}</li>`).join('')}</ul>`;
+}
+
+/** 展示层压缩：同一个角色的多条路径合成一行（数据层仍保留逐条）。 */
+export function mergeByRole(files) {
+  const out = [];
+  for (const f of files) {
+    const hit = out.find((x) => x.role === f.role && x.removable === f.removable);
+    if (!hit) { out.push({ ...f }); continue; }
+    hit.bytes += f.bytes;
+    hit.count += f.count;
+    hit.rel = commonDir(hit.rel, f.rel);
+  }
+  return out;
+}
+
+function commonDir(a, b) {
+  if (!a || !b) return '';
+  const pa = a.split('/');
+  const pb = b.split('/');
+  const out = [];
+  for (let i = 0; i < Math.min(pa.length, pb.length); i += 1) {
+    if (pa[i] !== pb[i]) break;
+    out.push(pa[i]);
+  }
+  const joined = out.join('/');
+  if (joined === a || joined === b) return out.slice(0, -1).join('/');
+  return joined;
+}
+
 /** 为什么这家只能按文件删 —— 文案由适配器给（每家正文放在哪不一样），
  *  缺了就退回一句通用的，不按 app 名硬编码。 */
 export const fileBasedNote = (d) =>
@@ -231,6 +348,7 @@ export function taskRowHtml(t, ctx) {
               <span class="tdetail-note">（${ex.exclusiveBlobs.toLocaleString()} 个只被这条会话引用的工具结果）</span>
             </dd></div>` : ''}
         </dl>
+        ${taskContentsHtml(t)}
         <div class="tdetail-acts">
           <button class="btn btn-ghost btn-sm" type="button" data-copy-id="${esc(t.id)}">复制会话 ID</button>
           ${body}
@@ -460,7 +578,7 @@ export function taskDrawerStatsHtml({ count, rows, bytes, exTotal, exPending, ex
  *  ① 它只写 state.vscdb —— conversation-search.db 是搜索索引，这里不碰，
  *     把两个库都写成"会从里面移除"是在暗示一件不会发生的事；
  *  ② 回收量有一大半来自"连带删掉的工具结果 blob"，不说清楚数字会显得虚高。 */
-export function taskDrawerNoteHtml(d, { exB = 0, exN = 0 }) {
+export function taskDrawerNoteHtml(d, { exB = 0, exN = 0, cascade = null }) {
   const who = d.appLabel;
   // 会写到哪几个库，由后端报的路径决定 —— 各工具不一样，前端不硬编码文件名
   const dbsTxt = (d.db.dbs || []).map((x) => `<code>${esc(shortPath(x.path))}</code>`).join(' 和 ');
@@ -472,18 +590,26 @@ export function taskDrawerNoteHtml(d, { exB = 0, exN = 0 }) {
       `只被它们引用的会一起删掉；仍被其它会话引用的会保留。`
     : `另：只被这些会话引用的工具结果 blob 会一起删掉，共享的保留。`;
 
+  /* 级联之后，会话在磁盘上的专属文件（rollout 正文、贴图、transcript、
+     命令日志、投影）也随这次删除一起走。以前它们会留下变孤儿 ——
+     抽屉里原本写的是"文件要去文件清单再清一遍"，那句现在过时了。
+     数字用**实际将要删的**清单算，不是估算。 */
+  const fileTxt = cascade && cascade.count
+    ? `另有 <b>${cascade.count.toLocaleString()}</b> 个会话文件（共 <b>${fmtBytes(cascade.bytes)}</b>）` +
+      `会一起移入废纸篓；这些文件同样会先备份。`
+    : '';
+
   return d.app.running
     ? `<b>${esc(who)} 仍在运行</b>，现在不能删除。请完全退出 ${esc(who)} 后重新打开本页。`
     : d.history === 'cursor-db'
       ? `删除会把这些会话的行从 ${cursorDbsTxt} 里彻底移除，` +
-        `随后 <code>VACUUM</code> 重建数据库把空间真正交还给磁盘。${backupTxt}${cursorTxt}`
+        `随后 <code>VACUUM</code> 重建数据库把空间真正交还给磁盘。${backupTxt}${cursorTxt}${fileTxt}`
       : `删除会把这些会话的行从 ${dbsTxt} 里彻底移除，` +
-        `随后 <code>VACUUM</code> 重建数据库把空间真正交还给磁盘。${backupTxt}` +
-        // Codex 的正文是磁盘上的 rollout 文件，行级删除碰不到它 —— 不说清楚，
-        // 用户会以为回收的数字偏小是工具没干活。
-        (d.db.bodies
-          ? `但 <b>Codex 的正文不在这些库里</b>：它存在 <code>sessions/</code> 的 rollout 文件里，` +
-            `这里只抹索引行。文件要等索引里再也没有它们，才会变成孤儿、归「文件清单」那条线清理。`
+        `随后 <code>VACUUM</code> 重建数据库把空间真正交还给磁盘。${backupTxt}${fileTxt}` +
+        // 正文在库外的工具（Codex 的 rollout、Claude/DSH 的正文文件）：
+        // 有了级联之后它们会被一并带走，但"库回收量"这个数字仍然只算库。
+        (fileTxt
+          ? `「回收」那个数字只算数据库收缩的部分，不含上面这些文件。`
           : `<b>正文合计只是下限</b> —— 实际回收通常更多，因为索引也会一起收缩。`);
 }
 

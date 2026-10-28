@@ -459,6 +459,7 @@ import {
   taskSelTotals, taskQuickSet, visibleTasks, groupTasksByWorkspace,
   dbBarSegments, taskRowHtml, taskGroupHtml, recoverRowHtml, dryRunHtml, checkLine,
   fileBasedNote, REASON_LABEL, REASON_TONE,
+  CONTENT_ROLE_LABEL, taskContentsHtml, mergeByRole,
 } from '../public/views/tasks.js';
 import { auditSummary, auditLedeHtml, auditToolHtml, auditHitGroups, auditGroupHtml } from '../public/views/audit.js';
 
@@ -875,7 +876,7 @@ test('confirmWordHint：三条路径共用同一句式，输对与空输入都�
    （views/tasks.js）是它们的人话。后端加一档而前端字典没跟上时，
    缺的那个值会以 undefined 一路画到界面上 —— 在这里锁住对齐。 */
 
-import { STATES, REASONS } from '../lib/tasks-shape.mjs';
+import { STATES, REASONS, CONTENT_ROLES } from '../lib/tasks-shape.mjs';
 
 test('后端每个 state 在前端都有文案与色档，反之亦然', () => {
   for (const s of STATES) {
@@ -893,6 +894,17 @@ test('后端每个 reason 在前端都有文案与色档', () => {
   }
   assert.deepEqual(Object.keys(REASON_LABEL).sort(), [...REASONS].sort(),
     '前端 reason 字典与后端值域不一致');
+});
+
+test('会话内容的角色前后端双向对齐', () => {
+  /* 「所属内容」按 role 分组。后端枚举出的每个 role 前端都必须有中文名 ——
+     少一个就会在界面上直接印出英文标识（"projection" 这种不该给人看）。
+     反向也要查：前端多写一个后端不会产出的 role，那是死字典。 */
+  for (const role of CONTENT_ROLES) {
+    assert.ok(CONTENT_ROLE_LABEL[role], `后端 role「${role}」在前端缺中文名`);
+  }
+  assert.deepEqual(Object.keys(CONTENT_ROLE_LABEL).sort(), [...CONTENT_ROLES].sort(),
+    '前端 role 字典与后端值域不一致（多出或缺少键）');
 });
 
 /* ── 面板文案矩阵（views/tasks.js 第二批）─────────────────── */
@@ -1028,9 +1040,19 @@ test('taskDrawerNote：运行中 / Cursor / Codex 两段式 / 默认各说各的
   assert.ok(!cursor.includes('search.db'), '搜索索引不该被说成"会从里面移除"');
   assert.match(cursor, /3<\/b> 个工具结果 blob/);
 
-  const codex = taskDrawerNoteHtml(
+  /* 以前这里断言的是"正文不在库里，文件要去文件清单再清一遍" ——
+     级联之后那句话过时了：会话文件会随这次删除一起走。
+     现在守两件事：没有级联数据时不吹牛；给了规模就要把口径说清。 */
+  const codexPlain = taskDrawerNoteHtml(
     panel({ db: { total: 4096, dbs: [{ path: '/x/state_5.sqlite', role: 'chat' }], bodies: { count: 1, bytes: 10 } } }), {});
-  assert.match(codex, /正文不在这些库里/);
+  assert.match(codexPlain, /正文合计只是下限/, '没有级联数据时不能承诺会删文件');
+
+  const codexCascade = taskDrawerNoteHtml(
+    panel({ db: { total: 4096, dbs: [{ path: '/x/state_5.sqlite', role: 'chat' }], bodies: { count: 1, bytes: 10 } } }),
+    { cascade: { count: 3, bytes: 2048 } });
+  assert.match(codexCascade, /3<\/b> 个会话文件/, '要给出将一起删除的文件数与体积');
+  assert.match(codexCascade, /回收.*只算数据库收缩/, '口径必须说清：回收数字不含文件');
+  assert.match(codexCascade, /先备份/, '文件也要先备份');
 
   const plain = taskDrawerNoteHtml(panel(), {});
   assert.match(plain, /正文合计只是下限/);
@@ -1066,4 +1088,107 @@ test('一键清理不能选中包含活跃后代的已删除任务', () => {
   const data = { tasks: [trow({ id: 'blocked', state: 'deleted', reason: null, updatedAt: 1 }),
     trow({ id: 'allowed', state: 'deleted', reason: 'deleted', updatedAt: 1 })] };
   assert.deepEqual(taskQuickSet(data, { ageDays: 0, skipPinned: false }).tasks.map(t => t.id), ['allowed']);
+});
+
+/* ── 会话的「所属内容」清单（views/tasks.js 第三批）───────────
+ * 这块回答的问题只有一个：「删掉这条会话，到底带走什么」。
+ * 五种工具的级联范围差得极远，所以判据是**差别要看得见**：
+ * 每类内容都要有中文名和体积，不可删的要明说「不删」，
+ * 会在恢复时出问题的（分页段）要单独警告。 */
+
+const contents = (over = {}) => ({
+  dbRows: [], files: [], blobs: null, notes: [], ...over,
+});
+
+test('所属内容：清单为空时整块不出现，不留一个 0 项的空壳', () => {
+  const t = trow({ contents: contents() });
+  assert.equal(taskContentsHtml(t), '');
+  assert.equal(taskContentsHtml(trow({ contents: null })), '', '没有 contents 字段也不该画');
+});
+
+test('所属内容：库行与文件分别成行，体积与条目数都要在', () => {
+  const t = trow({ contents: contents({
+    dbRows: [{ db: 'db.sqlite', table: 'message', count: 312 }, { db: 'db.sqlite', table: 'part', count: 88 }],
+    files: [
+      { rel: 'cli/image-cache/sess_x', role: 'media', bytes: 3 * 1024 * 1024, removable: true, count: 6 },
+      { rel: 'cli/rollout/model-io-sess_x.jsonl', role: 'body', bytes: 1024 * 1024, removable: true, count: 1 },
+    ],
+  }) });
+  const html = taskContentsHtml(t);
+  assert.match(html, /所属内容/);
+  assert.match(html, /2 张表 · 400 行/, '库行要给出表数与行数');
+  assert.match(html, /会话贴图/, 'role 要翻成中文');
+  assert.match(html, /6 个文件/, '目录型条目要写清里面几个文件');
+  assert.match(html, /3\.0 MB|3 MB/, '贴图体积要显示');
+  assert.match(html, /共回收/, '要有一句总量结论');
+});
+
+test('所属内容：同一角色的多条路径在展示层合成一行，但条目数累加', () => {
+  const files = [
+    { rel: 'sessions/a', role: 'body', bytes: 100, removable: true, count: 1 },
+    { rel: 'sessions/b', role: 'body', bytes: 200, removable: true, count: 1 },
+  ];
+  const merged = mergeByRole(files);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].bytes, 300);
+  assert.equal(merged[0].count, 2);
+  const html = taskContentsHtml(trow({ contents: contents({ files }) }));
+  assert.match(html, /正文/);
+  assert.match(html, /300 B|2 个文件/);
+});
+
+test('所属内容：不可删的条目写「不删」，不能让人以为会一起清掉', () => {
+  const t = trow({ contents: contents({
+    files: [{ rel: 'User/globalStorage/conversation-search.db', role: 'index', bytes: 4096, removable: false, count: 1 }],
+  }) });
+  const html = taskContentsHtml(t);
+  assert.match(html, /不删/, '不可删必须显式标出');
+  assert.doesNotMatch(html, /共回收/, '一项都删不掉时不该有"共回收"结论');
+});
+
+test('所属内容：分页段与投影的专用提醒只在有这类内容时出现', () => {
+  const withSeg = trow({ contents: contents({
+    files: [{ rel: 'sessions/x', role: 'segment', bytes: 10, removable: true, count: 2 }],
+  }) });
+  assert.match(taskContentsHtml(withSeg), /分页续段/);
+
+  const plain = trow({ contents: contents({
+    files: [{ rel: 'a.jsonl', role: 'body', bytes: 10, removable: true, count: 1 }],
+  }) });
+  assert.doesNotMatch(taskContentsHtml(plain), /分页续段/);
+});
+
+test('所属内容：notes 原样呈现，warn 档带独立样式', () => {
+  const t = trow({ contents: contents({
+    files: [{ rel: 'a.jsonl', role: 'body', bytes: 10, removable: true, count: 1 }],
+    notes: [
+      { text: '这是普通说明', tone: 'info' },
+      { text: '这是要当心的', tone: 'warn' },
+    ],
+  }) });
+  const html = taskContentsHtml(t);
+  assert.match(html, /这是普通说明/);
+  assert.match(html, /class="is-warn"[^>]*>这是要当心的/, 'warn 档要有独立 class');
+});
+
+test('所属内容：路径与标题里的尖括号会被转义', () => {
+  const t = trow({ contents: contents({
+    files: [{ rel: '<script>alert(1)</script>', role: 'body', bytes: 1, removable: true, count: 1 }],
+    notes: [{ text: '<img onerror=x>', tone: 'info' }],
+  }) });
+  const html = taskContentsHtml(t);
+  assert.doesNotMatch(html, /<script>/, '路径必须转义');
+  assert.doesNotMatch(html, /<img onerror/, '说明文字必须转义');
+  assert.match(html, /&lt;script&gt;/);
+});
+
+test('所属内容：Cursor 的独占 blob 单独成行，与文件分开算', () => {
+  const t = trow({ contents: contents({
+    blobs: { count: 12, bytes: 5 * 1024 * 1024 },
+    files: [{ rel: 'projects/x/agent-transcripts/y/y.jsonl', role: 'transcript', bytes: 1024, removable: true, count: 1 }],
+  }) });
+  const html = taskContentsHtml(t);
+  assert.match(html, /独占内容/);
+  assert.match(html, /12 个只被这条会话引用/);
+  assert.match(html, /子 Agent 记录/);
 });
