@@ -45,11 +45,11 @@ npm start -- --app codex --root /absolute/path/to/codex-copy --no-open
 
 | 工具 | 默认扫描位置 | 会话清理方式 |
 |---|---|---|
-| ZCode | `~/.zcode` | 删除正文库与任务索引中的目标及后代，随后 VACUUM |
-| Codex | `~/.codex` | 删除线程索引、历史投影和日志中的关联行；rollout 正文另走文件清理 |
-| Claude Code | `~/.claude`、`~/.claude.json` | 正文是 `projects/` 下的 JSONL 文件 |
+| ZCode | `~/.zcode` | 删除正文库与任务索引中的目标及后代（含 `cli/` 下该会话的子 Agent 记录、产物、贴图、命令日志），随后 VACUUM |
+| Codex | `~/.codex` | 删除线程索引、历史投影和日志中的关联行；同线程的 rollout 正文（含分页续段）一并移入废纸篓 |
+| Claude Code | `~/.claude`、`~/.claude.json` | 正文是 `projects/` 下的 JSONL 文件；在会话管理里按会话删（备份后移入废纸篓） |
 | Cursor | `~/.cursor`、`~/Library/Application Support/Cursor` | 删除会话及仅由该批会话引用的 blob；支持孤儿 transcript 回灌 |
-| DeepSeek Harness | `~/.dsh` | 删除会话正文文件；投影缓存优先提供列表元数据 |
+| DeepSeek Harness | `~/.dsh` | 删除整个会话目录（含 lock）与投影缓存；投影缓存同时提供列表元数据 |
 
 工具标签用于查看单个工具；「全部」按项目聚合会话，供查找和浏览，不提供混合删除。「安全审计」扫各工具会话正文里的凭据外泄模式，只读、不给删除入口。
 
