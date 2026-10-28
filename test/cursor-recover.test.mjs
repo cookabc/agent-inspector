@@ -118,6 +118,41 @@ function counts(dbPath) {
   return out;
 }
 
+test('recovery refuses an unreadable header index rather than reporting zero imports', async t => {
+  const f = await fixture(t);
+  const db = new DatabaseSync(f.dbPath);
+  db.exec('ALTER TABLE composerHeaders RENAME COLUMN composerId TO incompatibleId');
+  db.close();
+  await assert.rejects(reimportOrphans(f.cli, f.ide, [ORPHAN], { dryRun: true }), /扫描失败/);
+  assert.deepEqual(await fs.readdir(f.backupDir), []);
+});
+
+test('recovery preview excludes orphan transcripts whose database body already exists', async t => {
+  const f = await fixture(t);
+  const db = new DatabaseSync(f.dbPath);
+  db.prepare('INSERT INTO cursorDiskKV VALUES (?,?)').run(`bubbleId:${ORPHAN}:existing`, '{"text":"keep"}');
+  db.close();
+  const result = await reimportOrphans(f.cli, f.ide, [ORPHAN], { dryRun: true });
+  assert.equal(result.imported, 0);
+  assert.equal(result.skipped, 1);
+});
+
+test('recovery reports traversal errors instead of a successful empty import', async t => {
+  const f = await fixture(t);
+  await fs.rm(path.join(f.cli, 'projects'), { recursive: true });
+  await fs.writeFile(path.join(f.cli, 'projects'), 'not a directory');
+  await assert.rejects(reimportOrphans(f.cli, f.ide, [ORPHAN], { dryRun: true }), /扫描失败/);
+});
+
+test('recovery does not follow transcript symlinks outside the scan root', async t => {
+  const f = await fixture(t);
+  const body = path.join(f.cli, 'projects', SLUG, 'agent-transcripts', ORPHAN, `${ORPHAN}.jsonl`);
+  const outside = path.join(f.temp, 'outside.jsonl');
+  await fs.rename(body, outside);
+  await fs.symlink(outside, body);
+  assert.equal((await scanOrphans(f.cli, f.ide)).sessions.length, 0);
+});
+
 /* ── 扫描 ─────────────────────────────────────────────────── */
 
 test('scanOrphans lists only transcripts without a composerHeader', async (t) => {
@@ -313,4 +348,61 @@ test('empty recovery selections never mean recover everything', async t => {
   const f = await fixture(t);
   await assert.rejects(reimportOrphans(f.cli, f.ide, [], { backupDir: f.backupDir }), { statusCode: 400 });
   assert.equal(counts(f.dbPath).headers, 1);
+});
+
+test('同一会话 id 出现在不同工作区时拒绝猜测恢复来源', async t => {
+  const f = await fixture(t);
+  const dir = path.join(f.cli, 'projects', 'another-workspace', 'agent-transcripts', ORPHAN);
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, `${ORPHAN}.jsonl`), TRANSCRIPT);
+  const scan = await scanOrphans(f.cli, f.ide);
+  assert.equal(scan.failed, true);
+  assert.ok(scan.problems.some(p => p.includes('重复')));
+  await assert.rejects(reimportOrphans(f.cli, f.ide, [ORPHAN], { dryRun: true }), /扫描失败/);
+});
+
+test('恢复混合批次的跳过数与实际请求一致，忽略重复 id', async t => {
+  const f = await fixture(t);
+  const ids = [ORPHAN, KNOWN, ORPHAN];
+  const preview = await reimportOrphans(f.cli, f.ide, ids, { dryRun: true });
+  assert.equal(preview.imported, 1);
+  assert.equal(preview.skipped, 1);
+  const result = await reimportOrphans(f.cli, f.ide, ids, { backupDir: f.backupDir });
+  assert.equal(result.imported, 1);
+  assert.equal(result.skipped, 1);
+});
+
+test('已有无效会话头不应阻止其他会话恢复', async t => {
+  const f = await fixture(t);
+  const db = new DatabaseSync(f.dbPath);
+  db.prepare('INSERT INTO composerHeaders(composerId, value) VALUES (?, ?)').run('invalid-header', 'null');
+  db.close();
+  const result = await reimportOrphans(f.cli, f.ide, [ORPHAN], { backupDir: f.backupDir });
+  assert.equal(result.imported, 1);
+});
+
+test('工作区 slug 对应多个真实目录时不自动选择', async t => {
+  const f = await fixture(t);
+  await fs.mkdir(path.join(f.home, 'a-b'), { recursive: true });
+  await fs.mkdir(path.join(f.home, 'a', 'b'), { recursive: true });
+  const slug = path.join(f.home, 'a-b').replace(/^\/+/, '').replace(/\//g, '-');
+  assert.equal(workspacePath(slug, f.home), null);
+});
+
+test('恢复时间戳支持半小时与四十五分钟时区', async t => {
+  const f = await fixture(t);
+  const file = path.join(f.cli, 'projects', SLUG, 'agent-transcripts', ORPHAN, `${ORPHAN}.jsonl`);
+  for (const [offset, expected] of [['+5:30', Date.UTC(2026, 4, 19, 10, 13)], ['-3:45', Date.UTC(2026, 4, 19, 19, 28)]]) {
+    await fs.writeFile(file, TRANSCRIPT.replace('UTC+8', `UTC${offset}`));
+    const result = await scanOrphans(f.cli, f.ide);
+    assert.equal(result.sessions[0].date, expected);
+  }
+});
+
+test('回灌空跑也验证实际写入所需的表和模板', async t => {
+  const f = await fixture(t);
+  const db = new DatabaseSync(f.dbPath);
+  db.exec('DROP TABLE ItemTable'); db.close();
+  await assert.rejects(reimportOrphans(f.cli, f.ide, [ORPHAN], { dryRun: true }), /ItemTable/);
+  assert.deepEqual(await fs.readdir(f.backupDir), []);
 });
