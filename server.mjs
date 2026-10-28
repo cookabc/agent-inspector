@@ -34,14 +34,15 @@ import { Worker } from 'node:worker_threads';
 import { createBackupDirectory, copyVerified } from './lib/backup.mjs';
 import { createWriteGuard } from './lib/write-guard.mjs';
 import { createCache } from './lib/cache.mjs';
+import { SessionAudit } from './lib/audit.mjs';
 import { validateIds, validateDryRun } from './lib/validation.mjs';
 
 /* 自己的模块用动态 import：本地这几个都依赖内置的 node:sqlite，
    而它是 Node 22.5 才有的。更早的版本上静态 import 会在任何提示之前直接崩掉，
    用户只看到一句 "Cannot find module 'node:sqlite'"。这里接住它，说人话。 */
-let APPS, getApp, planApps, scanApps, appRunning, rowPurgeBlocked, CONFIRM, aggregateSessions;
+let APPS, getApp, planApps, refreshTargets, scanApps, appRunning, rowPurgeBlocked, CONFIRM, aggregateSessions;
 try {
-  [{ APPS, getApp, planApps }, { scanApps }, { appRunning, rowPurgeBlocked, aggregateSessions },
+  [{ APPS, getApp, planApps, refreshTargets }, { scanApps }, { appRunning, rowPurgeBlocked, aggregateSessions },
     { CONFIRM }] = await Promise.all([
     import('./lib/apps/index.mjs'),
     import('./lib/scan.mjs'),
@@ -247,9 +248,10 @@ function planFor(appId) {
 }
 
 function targetOf(plan, key) {
+  refreshTargets(plan);
   const t = plan.targets.find((x) => x.key === (key || plan.targets[0].key));
   if (!t) throw httpError(400, `${plan.app.id} 没有名为 ${key} 的扫描目标`);
-  if (!t.exists) throw httpError(400, `${t.short} 在这台机器上不存在`);
+  if (!t.exists) throw httpError(400, t.problem || `${t.short} 在这台机器上不存在`);
   return t;
 }
 
@@ -327,6 +329,7 @@ async function deletablePath(appId, targetKey, rel) {
   const target = targetOf(plan, targetKey);
   // realpath 还原 macOS 不区分大小写文件系统上的实际名称。
   const normalized = path.relative(targetRoot(target), abs);
+  const refinement = plan.app.refinementContext?.(target.path);
   async function inspect(file, relative) {
     const st = await fsp.lstat(file);
     /* 传绝对路径进去：有些分类光看路径判不出来，得读文件本身
@@ -335,7 +338,7 @@ async function deletablePath(appId, targetKey, rel) {
        删除路径这里却没走同一套 —— 于是"显示请勿删除"和"实际能删"对不上。
        实测后果：删整个 sessions/ 目录时，里面锁住的续段被一起 rm 掉了。
        判定必须只有一条路径。 */
-    if (isProtected(plan, target, relative, st.isDirectory(), st.isFile() ? file : null)) {
+    if (isProtected(plan, target, relative, st.isDirectory(), st.isFile() ? file : null, refinement)) {
       throw httpError(403, `受保护内容不能删除：${target.short}/${relative}`);
     }
     // rm/rename 不跟随目录内的链接；检查也不进入其目标。
@@ -434,7 +437,7 @@ async function backupBeforeDelete(abs, appId, targetKey, rel) {
  *   containerDirs  纯容器目录，自己不保护，由后代决定（如 ZCode 的 v2/）
  * Cursor 的 state.vscdb 已经在规则里归到 database（locked），不需要特判。
  */
-function isProtected(plan, target, rel, directory = false, abs = null) {
+function isProtected(plan, target, rel, directory = false, abs = null, refinement = null) {
   const { app } = plan;
   for (const dir of app.protectedDirs || []) {
     if (rel === dir || rel.startsWith(`${dir}/`)) return true;
@@ -444,7 +447,7 @@ function isProtected(plan, target, rel, directory = false, abs = null) {
   /* 与扫描视图同一条补判。少了这一段，界面说"请勿删除"的东西在删除时仍会被放行 ——
      两个地方各判一次、判得还不一样，是最难查的那类 bug。 */
   if (app.refineCategory && abs && !directory) {
-    const refined = app.refineCategory(rel, abs, cat);
+    const refined = app.refineCategory(rel, abs, cat, refinement);
     if (refined) cat = refined;
   }
   /* 分类查不到时**不放行**。若按 Boolean(...?.locked) 处理，规则表产出一个
@@ -605,6 +608,7 @@ const server = http.createServer(async (req, res) => {
        顺序也重要：getTasks 内部走缓存（60 秒），所以切过一次工具之后
        这里几乎不花时间；但 Cursor 的库要读 445 MB，第一次会慢几秒。 */
     if (p === '/api/tasks/all' && req.method === 'GET') {
+      plans.forEach(refreshTargets);
       const refresh = url.searchParams.get('refresh') === '1';
       const data = await aggregateSessions(plans, (app, targets) => getTasks(app.id, refresh));
       return await sendJSON(req, res, 200, { ...data, appId: 'all', readOnly: true });
@@ -617,7 +621,9 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/tasks/cursor/analyze' && req.method === 'GET') {
       const plan = planFor('cursor');
       const fresh = url.searchParams.get('refresh') === '1';
+      refreshTargets(plan);
       if (!plan.targets.some((t) => t.exists)) {
+        if (plan.targets.some(t => t.problem)) throw httpError(500, plan.targets.map(t => t.problem).filter(Boolean).join('；'));
         return await sendJSON(req, res, 200, { sessions: [], blobs: 0, blobBytes: 0, orphanBlobs: 0, scanMs: 0, absent: true });
       }
       const { data, cached } = await cursorAnalyzeCache.get({
@@ -637,18 +643,21 @@ const server = http.createServer(async (req, res) => {
         /* 响应形状是 { apps: [...] }，不是裸数组 —— 前端按 d.apps 取值。
            缓存层只负责"存什么、还什么"，所以包装必须放在这一层，
            交给缓存的是带包装的 Promise，不是裸数组。 */
-        load: async () => ({ apps: await Promise.all(plans.map(async ({ app, targets }) => {
+        load: async () => ({ apps: await Promise.all(plans.map(async (plan) => {
+          refreshTargets(plan);
+          const { app, targets } = plan;
           if (!targets.some((t) => t.exists)) {
-            return { app: app.id, label: app.label, supported: true, absent: true,
+            return { app: app.id, label: app.label, supported: true,
               sessionsScanned: 0, bytesScanned: 0, truncatedSessions: 0, hits: [], hitsDropped: 0,
-              totals: { high: 0, medium: 0, info: 0 }, ms: 0, problems: [] };
+              totals: { high: 0, medium: 0, info: 0 }, ms: 0,
+              problems: targets.map(t => t.problem).filter(Boolean).map(p => new SessionAudit().redact(p)), absent: !targets.some(t => t.problem) };
           }
           try {
             return { app: app.id, label: app.label, ...await runDb('audit', app.id, targets.map(stripTarget)) };
           } catch (err) {
             return { app: app.id, label: app.label, supported: true,
               sessionsScanned: 0, bytesScanned: 0, truncatedSessions: 0, hits: [], hitsDropped: 0,
-              totals: { high: 0, medium: 0, info: 0 }, ms: 0, problems: [err.message || String(err)] };
+              totals: { high: 0, medium: 0, info: 0 }, ms: 0, problems: [new SessionAudit().redact(err.message || String(err))] };
           }
         })) }),
       });

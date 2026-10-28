@@ -618,3 +618,32 @@ test('静态文件：页面资源正常返回，源码从任何路径写法都�
   assert.equal(normalized.status, 404);
   assert.ok(!normalized.text.includes('createWriteGuard'));
 });
+
+
+test('删除接口拒绝分页续段依赖的原始文件', async t => {
+  const f = await fixture(t);
+  const source = '11111111-2222-3333-4444-555555555555';
+  const next = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const rel = `sessions/rollout-source-${source}.jsonl`;
+  await f.write('codex', 'root', rel, JSON.stringify({ payload: { session_id: source } }) + '\n');
+  await f.write('codex', 'root', `sessions/rollout-next-${next}.jsonl`, JSON.stringify({ payload: {
+    history_base: { thread_id: source, end_ordinal_exclusive: 10 },
+  } }) + '\n');
+  const r = await f.post('/api/purge', { app: 'codex', target: 'root', paths: [rel], confirm: '彻底删除' });
+  assert.equal(r.status, 403);
+  await fs.access(f.absOf('codex', 'root', rel));
+});
+
+test('汇总和审计刷新能发现启动后新增的工具目录', async t => {
+  const f = await fixture(t);
+  const dir = path.join(f.home, '.dsh', 'sessions', 'ws', 'session-new');
+  await fs.mkdir(dir, { recursive: true });
+  await fs.writeFile(path.join(dir, 'session.v4.jsonl.zstd'), 'synthetic invalid body');
+  const list = await f.get('/api/tasks/all?refresh=1');
+  assert.equal(list.status, 200);
+  assert.ok(list.body.tasks.some(row => row.app === 'dsh' && row.id === 'session-new'));
+  const audit = await f.get('/api/audit?refresh=1');
+  const dsh = audit.body.apps.find(a => a.app === 'dsh');
+  assert.notEqual(dsh.absent, true);
+  assert.ok(dsh.problems.length > 0, '解压失败应报告，不能当成未安装');
+});
