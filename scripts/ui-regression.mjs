@@ -126,7 +126,7 @@ try {
     await wait(`document.querySelector('#rdrawerMsg').textContent.includes('写入被拒绝')`);
     assert.equal(await evaluate(`document.querySelector('#rdryBtn').disabled`), false);
     assert.equal(await evaluate(`document.querySelector('#rdrawerMsg').classList.contains('is-err')`), true);
-    await screenshot('/tmp/zcode-inspector-ui-recovery-error.png');
+    await screenshot('/tmp/agent-inspector-ui-recovery-error.png');
   });
   await check('busy recovery cannot be closed and keeps its selection', async () => {
     await evaluate(`__ui.holdRecover=true; document.querySelector('#rdryBtn').click(); document.querySelector('#rdrawerClose').click()`);
@@ -146,11 +146,11 @@ try {
     await evaluate(`document.querySelector('#apptab-all').click()`);
     await wait(`!document.querySelector('#allView').hidden`);
     assert.ok(await evaluate(`document.documentElement.scrollWidth <= innerWidth`));
-    await screenshot('/tmp/zcode-inspector-ui-narrow.png');
+    await screenshot('/tmp/agent-inspector-ui-narrow.png');
     await evaluate(`document.querySelector('#apptab-cursor').click()`);
     await wait(`Boolean(document.querySelector('[data-task-box]'))`);
     assert.ok(await evaluate(`document.documentElement.scrollWidth <= innerWidth`));
-    await screenshot('/tmp/zcode-inspector-ui-narrow-cursor.png');
+    await screenshot('/tmp/agent-inspector-ui-narrow-cursor.png');
   });
   await check('running application cannot enable deletion by typing confirmation', async () => {
     await evaluate(`__ui.appRunning=true; document.querySelector('#rescanBtn').click()`);

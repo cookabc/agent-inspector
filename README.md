@@ -17,8 +17,8 @@
 需要 Node.js ≥ 22.5。macOS 支持全部操作；其他系统支持扫描与文件备份删除，数据库写入还要求可用的 `pgrep` 进程检查。
 
 ```bash
-git clone https://github.com/cookabc/zcode-inspector.git
-cd zcode-inspector
+git clone https://github.com/cookabc/agent-inspector.git
+cd agent-inspector
 npm start
 ```
 

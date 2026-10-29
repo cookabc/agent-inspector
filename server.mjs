@@ -117,7 +117,7 @@ if (argv.includes('--help') || argv.includes('-h')) {
     Node >= 22.5（node:sqlite 从这个版本起才有）
 
   文档
-    https://github.com/cookabc/zcode-inspector
+    https://github.com/cookabc/agent-inspector
 `);
   process.exit(0);
 }
