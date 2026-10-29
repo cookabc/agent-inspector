@@ -354,7 +354,6 @@ p { margin: 0; }
    这些元素改成往里描（负 offset），边线仍然贴着元素自己。 */
 .group-head:focus-visible,
 .group-more:focus-visible,
-.tgroup-head:focus-visible,
 .trow:focus-visible,
 .trow-caret:focus-visible { outline-offset: -2px; }
 
@@ -1802,22 +1801,44 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
 /* 按工作区分组：组头是一行可折叠的小标题，组内是任务行 */
 .tgroup { border-bottom: 0.5px solid var(--line); }
 .tgroup:last-child { border-bottom: 0; }
+/* 组头排三个东西：折叠按钮（含名称与条数）、体积、整组勾选框。
+   整块 header 不再是 role=button —— 那样要把复选框塞进按钮里，
+   嵌套交互控件在键盘与读屏下会被当成按钮的一部分（点框同时把组收起）。
+   折叠与勾选各占一个独立控件，各自可达。 */
 .tgroup-head {
   position: sticky;
   top: 0;
   z-index: 2;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
   padding: 10px 13px;
   background: var(--surface-2);
+}
+.tgroup-head:hover { background: var(--surface-3); }
+/* 折叠三角是一真的 button：键盘能走到、能回车 —— 整块裸 click 的组头键盘用户进不去。
+   视觉上还是那一行（名称+条数照旧跟着它走），所以重置掉按钮的默认外壳。 */
+.tgroup-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin: -6px;
+  padding: 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
   cursor: pointer;
   user-select: none;
 }
-.tgroup-head:hover { background: var(--surface-3); }
+.tgroup-toggle:focus-visible { outline-offset: 2px; }
 .tgroup-caret {
   width: 12px; height: 12px;
+  flex: none;
   color: var(--muted);
   transition: transform var(--dur) var(--ease-out);
 }
@@ -1844,8 +1865,11 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   white-space: nowrap;
   min-width: 0;
 }
-.tgroup-n { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.tgroup-n { font-size: 12px; color: var(--muted); white-space: nowrap; margin-inline-start: auto; }
 .tgroup-size { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* 组头复选框走全局 input[type=checkbox] 的样式（尺寸、勾选、半选、禁用都在那儿）。
+   这里只补一条：它在 flex 行里不能被压扁。 */
+.tgroup-head > input[type="checkbox"] { flex: none; }
 .tgroup-body .trow { border-bottom: 0.5px solid color-mix(in oklab, var(--line) 55%, transparent); }
 .tgroup-body .tsession:last-child .trow { border-bottom: 0; }
 

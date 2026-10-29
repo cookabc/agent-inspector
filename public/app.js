@@ -86,7 +86,7 @@ import {
 /* 点击动作的状态变更逻辑（纯函数，有单测）。渲染与副作用仍在这里。 */
 import {
   toggleSplitGroup, selectAllVisible, clearSelection, selectRecommended,
-  toggleGroupBox, toggleRow, toggleStatus, toggleExplain,
+  toggleGroupBox, toggleTaskGroup, toggleRow, toggleStatus, toggleExplain,
   toggleCategory, toggleRecommendItem, toggleAllGroup, toggleToolFilter, nextTheme,
 } from './actions.js';
 /* 会话面板的模板与派生：状态文案、行/分组模板、清理数字（纯函数，有契约测试）。
@@ -1600,13 +1600,9 @@ document.addEventListener('keydown', (e) => {
     }
   }
 
-  // 分组头是 role=button，回车 / 空格要能折叠，和点击行为一致
-  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('[data-ws-toggle]')) {
-    e.preventDefault();
-    e.target.click();
-  }
-
-  // 会话分块也是 role=button
+  // 会话分块是 role=button（不是真 <button>），回车 / 空格要手动接上点击。
+  // 分组头的折叠三角已经换成真 <button>，原生就管键盘 —— 这里不能再替它
+  // click() 一次，否则 Enter/空格 = 原生点击 + 这次补的点击 = 展开又收起。
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('[data-split]')) {
     e.preventDefault();
     e.target.click();
@@ -1680,6 +1676,12 @@ const taskState = {
   exclusiveFailed: false,
 };
 
+/* 上一次画出去的分组（groupTasksByWorkspace 的结果）。
+   组头复选框点击时要拿它当"当前可见的这批"，不能按 workspace 反查全量 ——
+   反查会把搜索/状态筛选挡掉的行一起勾上，那是偷偷扩大删除范围。
+   与 renderedGroups 同源的是渲染，所以每次 renderTaskList 都重写它。 */
+let renderedGroups = [];
+
 /* Cursor 孤儿会话回灌。与上面的"清理"是两条完全不同的线：
    这里只新增行，不删任何东西；选中集合也单独放，避免和清理勾选串台。 */
 const rEls = {
@@ -1743,6 +1745,7 @@ async function loadTasks(refresh = false) {
   taskState.exclusive = null;
   taskState.exclusiveMeta = null;
   taskState.exclusiveFailed = false;
+  renderedGroups = [];
   resetTaskPanel();
   if (!view || !view.canRecover) hideRecoverable();
 
@@ -2282,17 +2285,26 @@ function renderTaskList() {
 
   if (!taskState.group) {
     tEls.list.innerHTML = list.map(rowOf).join('');
+    renderedGroups = [];   // 不分组时没有组头复选框，别让上一次的分组残留可点
     return;
   }
 
   // 按工作区聚合。组按正文合计降序；组内保持当前排序（list 已经排好了）。
   const groups = groupTasksByWorkspace(list);
+  /* 记住这次画出去的组：组头复选框要用**同一批可见行**做勾选。
+     点击时再按 workspace 反查会把被搜索/状态筛掉的行一起勾上 ——
+     与文件清单"只勾当前看得见的"是同一条规矩，判据只能有一份。 */
+  renderedGroups = groups;
 
   tEls.list.innerHTML = groups.map((g) => taskGroupHtml(g, {
     folded: taskState.foldedWs.has(g.ws),
     selCount: g.tasks.filter((t) => taskState.sel.has(t.id)).length,
+    // 整组勾选的状态只按**能清的**算 —— 和单行复选框的禁用判据同源
+    pickCount: g.tasks.filter(isPurgeable).length,
     rowsHtml: taskState.foldedWs.has(g.ws) ? '' : g.tasks.map(rowOf).join(''),
   })).join('');
+  // 半选态是 property 不是 attribute，innerHTML 画不出来，只能回填
+  tEls.list.querySelectorAll('[data-indeterminate]').forEach((el) => { el.indeterminate = true; });
 }
 
 /** 从会话详情跳到文件清单：定位正文文件并让搜索框带着它。 */
@@ -2614,12 +2626,23 @@ document.addEventListener('click', (e) => {
     renderTaskChips(); renderTaskList(); return;
   }
 
-  // 分组头：折叠 / 展开（放在行处理之前，免得被 .trow 的勾选逻辑吞掉）
+  // 分组头：折叠 / 展开
   const wsHead = t.closest('[data-ws-toggle]');
   if (wsHead) {
     const ws = wsHead.dataset.wsToggle;
     taskState.foldedWs.has(ws) ? taskState.foldedWs.delete(ws) : taskState.foldedWs.add(ws);
     renderTaskList();
+    return;
+  }
+
+  // 整组勾选：点组头的复选框，一次勾上/取消这一组里能清的全部会话
+  const wsBox = t.closest('[data-ws-box]');
+  if (wsBox) {
+    const ws = wsBox.dataset.wsBox;
+    // 只动这次画出去的组（渲染时记下），不反查全量 —— 见 renderedGroups 注释
+    const group = (renderedGroups.find((g) => g.ws === ws) || { tasks: [] }).tasks;
+    toggleTaskGroup(taskState, group, wsBox.checked, { canPick: isPurgeable, idOf: (x) => x.id });
+    renderTaskList(); renderTaskFoot();
     return;
   }
 

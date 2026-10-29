@@ -15,7 +15,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   toggleSplitGroup, selectAllVisible, clearSelection, selectRecommended,
-  toggleGroupBox, toggleRow, toggleStatus, toggleExplain,
+  toggleGroupBox, toggleTaskGroup, toggleRow, toggleStatus, toggleExplain,
   toggleCategory, toggleRecommendItem, toggleAllGroup, toggleToolFilter, nextTheme,
 } from '../public/actions.js';
 
@@ -281,4 +281,31 @@ test('主题三态循环：跟随系统 → 深 → 浅 → 跟随系统', () =>
   assert.equal(nextTheme(''), 'dark');
   assert.equal(nextTheme('dark'), 'light');
   assert.equal(nextTheme('light'), '', '从浅色回到跟随系统（读出来是空串）');
+});
+
+/* ── 会话分组整组勾选 ─────────────────────────────────────── */
+
+/** 一条会话：id 是主键，reason 非空表示可清。 */
+const s = (id, reason = 'manual') => ({ id, reason, title: id, bytes: 10 });
+
+test('会话分组框：勾上时把这一组里能清的全勾，不可清的跳过', () => {
+  const st = { sel: new Set() };
+  const group = [s('a'), s('b'), s('c', null)];   // c 不可清
+  const r = toggleTaskGroup(st, group, true, { canPick: (t) => t.reason != null, idOf: (t) => t.id });
+  assert.deepEqual([...st.sel].sort(), ['a', 'b'], '不可清的 c 不该进选区');
+  assert.equal(r.count, 2, '计数要与"实际会删的条数"一致');
+});
+
+test('会话分组框：取消时只从这一组里删，别组不动', () => {
+  const st = { sel: new Set(['a', 'b', 'other']) };
+  toggleTaskGroup(st, [s('a'), s('b')], false, { canPick: (t) => t.reason != null, idOf: (t) => t.id });
+  assert.deepEqual([...st.sel], ['other'], '别组选中的要留着');
+});
+
+test('会话分组框：一组里一条都不可清时什么都不做，返回 0', () => {
+  const st = { sel: new Set() };
+  const r = toggleTaskGroup(st, [s('a', null), s('b', null)], true,
+    { canPick: (t) => t.reason != null, idOf: (t) => t.id });
+  assert.equal(st.sel.size, 0);
+  assert.equal(r.count, 0);
 });

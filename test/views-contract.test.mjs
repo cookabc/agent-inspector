@@ -1321,3 +1321,42 @@ test('抽屉里提示要输的词必须就是真正要输的那个（不能一�
   assert.match(hintLine, /以确认/);
   assert.doesNotMatch(hintLine, /<code>清理<\/code>/, '不许把「清理」写死在提示里');
 });
+
+/* ── 分组头的整组勾选框 ─────────────────────────────────────
+ * 判据是"用户能一眼看出这一组勾了多少"：全选 / 半选 / 未选 / 一条都不能勾。
+ * 半选态必须能被区分出来，否则"勾了两条、还差三条"这件事在界面上看不见。 */
+
+test('分组头：未选 / 全选 / 半选三种状态各自不同', () => {
+  const g = { ws: '/p/x', tasks: [trow(), trow(), trow()], bytes: 3 };
+  const none = taskGroupHtml(g, { folded: false, selCount: 0, pickCount: 3, rowsHtml: '' });
+  assert.doesNotMatch(none, /checked/, '一条没选时不该勾上');
+  assert.doesNotMatch(none, /data-indeterminate/, '也不该是半选');
+
+  const all = taskGroupHtml(g, { folded: false, selCount: 3, pickCount: 3, rowsHtml: '' });
+  assert.match(all, /checked/, '全选时复选框要勾上');
+  assert.doesNotMatch(all, /data-indeterminate/, '全选不是半选');
+
+  const some = taskGroupHtml(g, { folded: false, selCount: 2, pickCount: 3, rowsHtml: '' });
+  assert.match(some, /data-indeterminate="1"/, '选了一部分要能表示半选');
+  assert.doesNotMatch(some, /checked(?!=)/, '半选时不该同时是"已勾满"');
+});
+
+test('分组头：一条都不能勾时复选框禁用，并说清为什么', () => {
+  const g = { ws: '/p/x', tasks: [trow({ reason: null }), trow({ reason: null })], bytes: 2 };
+  const html = taskGroupHtml(g, { folded: false, selCount: 0, pickCount: 0, rowsHtml: '' });
+  assert.match(html, /disabled/, '没有可清项时不该让人点');
+  assert.match(html, /没有可清理的会话/, '要说明为什么点不了');
+});
+
+test('分组头：折叠三角是真按钮，整组勾选是独立控件（不嵌套在按钮里）', () => {
+  /* 组头曾经是整块 role=button。加上复选框之后那样就变成"按钮里嵌复选框"，
+     键盘与读屏会把它当按钮的一部分：点框的同时把组收起来。 */
+  const g = { ws: '/p/x', tasks: [trow()], bytes: 1 };
+  const html = taskGroupHtml(g, { folded: false, selCount: 0, pickCount: 1, rowsHtml: '' });
+  assert.match(html, /<button[^>]*data-ws-toggle/, '折叠要是一个真的 button');
+  assert.match(html, /aria-expanded="true"/, '按钮要报展开状态');
+  // 复选框不能出现在那个 button 内部
+  const btn = html.slice(html.indexOf('<button'), html.indexOf('</button>'));
+  assert.doesNotMatch(btn, /data-ws-box/, '复选框不许嵌在折叠按钮里');
+  assert.match(html.slice(html.indexOf('</button>')), /data-ws-box/, '复选框在按钮之后');
+});

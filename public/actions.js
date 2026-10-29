@@ -134,6 +134,39 @@ export function toggleRow(state, key, checked) {
   return { changed: true };
 }
 
+/* ── 会话分组整组勾选 ─────────────────────────────────────── */
+
+/**
+ * 点一个工作区分组头上的复选框：把这一组里**能清的那些**整组勾上或取消。
+ *
+ * 与文件侧的 groupBox 同一条规矩，判据由调用方注入、只有一份：
+ *   ① 只动传进来的这批 —— 它们已经是 visibleTasks 筛过 + 按工作区分好的，
+ *      所以"只勾当前看得见的"天然成立，不会偷偷扩到别的组或筛掉的行。
+ *   ② canPick 为假（reason 为空、当前不可清）的行不进选区 —— 选了服务端也会拒，
+ *      白选；组上那句"已选 N"也就对不上实际会删的条数了。
+ *   ③ checked 是复选框**点完之后**的状态（true=要全勾，false=要全撤），
+ *      所以不需要"是否已经全选"的嗅探，交给原生三态。
+ *
+ * state 这里传的是 taskState（用它的 sel），与文件清单的 state.selection
+ * 是两套选区 —— 两条线各管各的勾选，从不同时亮。
+ *
+ * @param {{sel: Set}} state
+ * @param {Array} tasks        这一组里的会话（可见、已分组）
+ * @param {boolean} checked
+ * @param {{canPick: Function, idOf: Function}} deps
+ * @returns {{changed: boolean, count: number}}
+ */
+export function toggleTaskGroup(state, tasks, checked, deps) {
+  const { canPick, idOf } = deps;
+  let n = 0;
+  for (const t of tasks) {
+    if (!canPick(t)) continue;
+    checked ? state.sel.add(idOf(t)) : state.sel.delete(idOf(t));
+    n += 1;
+  }
+  return { changed: true, count: n };
+}
+
 /* ── 筛选 ─────────────────────────────────────────────────── */
 
 /** 切一个状态档位的筛选（多选）。 */

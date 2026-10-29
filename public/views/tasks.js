@@ -370,20 +370,42 @@ export function taskRowHtml(t, ctx) {
 }
 
 /** 一个工作区分组：组头始终可见，折叠时不画行。 */
-export function taskGroupHtml(g, { folded, selCount, rowsHtml }) {
+/**
+ * 一个工作区分组：组头始终可见，折叠时不画行。
+ *
+ * 组头**不是**一个整块的 role=button —— 它同时容纳两个独立控件：
+ * 折叠三角（button）与整组勾选（checkbox）。做成一个按钮就意味着要把
+ * 复选框塞进 button 里，那是嵌套交互控件，键盘与读屏都会把它当按钮的
+ * 一部分（点了复选框同时把组收起来）。两件事各有一个控件，各自可达。
+ *
+ * 复选框的状态只按**能勾的行**算（pickCount），理由与文件清单那边同一句：
+ * 用全部行算的话，不可清的那些永远勾不上，框会一直停在半选，看起来像坏了。
+ */
+export function taskGroupHtml(g, { folded, selCount, pickCount = 0, rowsHtml }) {
   const named = g.ws === '(未知工作区)';
   const base = named ? g.ws : (g.ws.split('/').filter(Boolean).pop() || g.ws);
+  const allOn = pickCount > 0 && selCount === pickCount;
+  const some = selCount > 0 && selCount < pickCount;
+  const disabled = pickCount === 0;
+  const box = `<input type="checkbox" data-ws-box="${esc(g.ws)}"
+    ${disabled ? 'disabled' : ''}
+    ${allOn ? 'checked' : ''}
+    ${some ? 'data-indeterminate="1"' : ''}
+    aria-label="${disabled ? `${esc(base)}：这一组没有可清理的会话` : `选择 ${esc(base)} 的全部 ${pickCount.toLocaleString()} 条可清理会话`}">`;
   return `<section class="tgroup ${folded ? 'is-folded' : ''}" data-ws="${esc(g.ws)}">
-      <header class="tgroup-head" data-ws-toggle="${esc(g.ws)}" role="button" tabindex="0"
-        aria-expanded="${!folded}" title="${esc(g.ws)}">
-        <svg class="tgroup-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-          stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
-        <span class="tgroup-name">
-          <b>${esc(base)}</b>
-          <code>${esc(shortPath(g.ws))}</code>
-        </span>
-        <span class="tgroup-n">${g.tasks.length} 个会话${selCount ? `，已选 ${selCount}` : ''}</span>
+      <header class="tgroup-head">
+        <button class="tgroup-toggle" type="button" data-ws-toggle="${esc(g.ws)}"
+          aria-expanded="${!folded}" title="${esc(g.ws)}">
+          <svg class="tgroup-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+          <span class="tgroup-name">
+            <b>${esc(base)}</b>
+            <code>${esc(shortPath(g.ws))}</code>
+          </span>
+          <span class="tgroup-n">${g.tasks.length} 个会话${selCount ? `，已选 ${selCount}` : ''}</span>
+        </button>
         <span class="tgroup-size" title="${bytesTip(g.bytes)}">${fmtBytes(g.bytes)}</span>
+        ${box}
       </header>
       ${folded ? '' : `<div class="tgroup-body">${rowsHtml}</div>`}
     </section>`;
