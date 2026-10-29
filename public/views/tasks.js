@@ -13,8 +13,8 @@ import { fmtBytes } from '../logic.js';
 
 /**
  * 可清理 = 后端给出了 reason。判定只在服务端做一次，前端照着用。
- * 各 app 给出的 reason 不完全一样（ZCode 有"界面已删除"，Codex 没有；
- * Cursor 一条都不给 —— 它按可达性分析删，删活跃会话是自洽的）。
+ * reason 的语义见 lib/tasks-shape.mjs 的 REASONS 注释 —— 关键是
+ * manual 现在五家通用：表示"这条还挂在应用主列表里，可清是用户明确点的头"。
  */
 export const isPurgeable = (t) => t.reason != null;
 
@@ -25,15 +25,18 @@ export const REASON_LABEL = {
   untracked:   '界面不可见',
   bodyMissing: '正文已丢失',
   empty:       '空文件',
-  /* Cursor 专属：会话本身正常，可清理是因为它按可达性分析删 —— 删一条活跃
-     会话是自洽的，不留下任何悬空引用。别的工具没有这个档。 */
-  manual:      '可手动清理',
+  /* 活跃会话（还挂在应用主列表里）。标签必须说出后果，不能只说"可清理" ——
+     删掉它，下次打开那个应用历史就少一项，这是唯一会改变"应用里看起来
+     什么样子"的一类删除。行上空间不够放下整句，这里给最短的诚实说法，
+     完整后果由抽屉里的红条与升级确认串承担。 */
+  manual:      '仍在用·可删',
 };
 
 export const REASON_TONE = {
   deleted: 'st-serious', archived: 'st-warning', wsMissing: 'st-serious',
   untracked: 'st-serious', bodyMissing: 'st-serious', empty: 'st-serious',
-  manual: 'st-warning',
+  // 活跃会话用最重的一档：它是唯一会改变"应用里看起来什么样子"的删除
+  manual: 'st-serious',
 };
 
 export const STATE_TONE = { deleted: 'st-serious', archived: 'st-warning', active: 'st-good', untracked: 'st-warning', empty: 'st-serious' };
@@ -194,18 +197,24 @@ export function taskSelTotals(d, sel) {
  * 近期还在用的（cutoff 之后）、置顶的，按开关跳过。
  */
 export function taskQuickSet(d, tq) {
-  if (!d) return { tasks: [], bytes: 0, total: 0, totalBytes: 0, skippedRecent: 0, skippedPinned: 0 };
+  if (!d) return { tasks: [], bytes: 0, total: 0, totalBytes: 0, skippedRecent: 0, skippedPinned: 0, skippedActiveDesc: 0 };
+  /* 一键清理只碰"已删除"的会话 —— 它本来就是"清掉我在应用里删过、
+     但磁盘还占着的那些"。活跃会话永远不该被一键带走：那是逐个点的决定。
+     已删除的父任务如果还挂着活跃后代，也不碰 —— 删父会级联带走那些
+     还挂在主列表里的子会话，那不是"清废料"。 */
   const base = d.tasks.filter((t) => t.state === 'deleted' && isPurgeable(t));
+  const safe = base.filter((t) => !t.activeDescendants);
   const cutoff = tq.ageDays > 0 ? Date.now() - tq.ageDays * 86400000 : 0;
-  const picked = base.filter((t) =>
+  const picked = safe.filter((t) =>
     (!tq.skipPinned || !t.pinned) && (!cutoff || t.updatedAt < cutoff));
   return {
     tasks: picked,
     bytes: picked.reduce((s, t) => s + t.bytes, 0),
     total: base.length,
     totalBytes: base.reduce((s, t) => s + t.bytes, 0),
-    skippedRecent: cutoff ? base.filter((t) => t.updatedAt >= cutoff).length : 0,
-    skippedPinned: base.filter((t) => t.pinned).length,
+    skippedRecent: cutoff ? safe.filter((t) => t.updatedAt >= cutoff).length : 0,
+    skippedPinned: safe.filter((t) => t.pinned).length,
+    skippedActiveDesc: base.length - safe.length,
   };
 }
 
@@ -304,6 +313,8 @@ export function taskRowHtml(t, ctx) {
     `${fmtDate(t.updatedAt)} 最后使用`,
     t.model ? t.model : '',
     t.children ? `${t.children} 子会话` : '',
+    // 这条的子会话里还有几条仍在主列表：删父会连它们一起删，行上必须提
+    t.activeDescendants ? `${t.activeDescendants} 个子会话仍在用` : '',
     t.typeLabel,
     segNote,
   ].filter(Boolean).join('、');
@@ -626,7 +637,43 @@ export function taskDrawerNoteHtml(d, { exB = 0, exN = 0, cascade = null }) {
  *  会话行上没有 appLabel，取不到就印出 "undefined，标题"。 */
 export function taskDrawerListHtml(picked, who) {
   const sorted = picked.slice().sort((a, b) => b.bytes - a.bytes);
-  return sorted.slice(0, 200).map((t) =>
-    `<li title="${esc(t.title)}"><span>${esc(who)}，${esc(t.title)}</span><span>${fmtBytes(t.bytes)}</span></li>`).join('')
+  return sorted.slice(0, 200).map((t) => {
+    /* 活跃会话在待删清单里单独标出来 —— 这一列是"最后看一眼要删什么"的地方，
+       如果"仍在用"和"早就删了"长得一样，那一眼就白看了。 */
+    const tag = t.reason === 'manual'
+      ? '<b class="dlist-tag">仍在用</b>'
+      : '';
+    return `<li title="${esc(t.title)}"><span>${esc(who)}，${esc(t.title)}${tag}</span>` +
+      `<span>${fmtBytes(t.bytes)}</span></li>`;
+  }).join('')
     + (sorted.length > 200 ? `<li><span>…还有 ${(sorted.length - 200).toLocaleString()} 个</span><span></span></li>` : '');
+}
+
+/**
+ * 抽屉里的活跃会话警示条。返回 null 表示这批没有活跃会话（不摆空条）。
+ *
+ * 这是全工具唯一会改变"应用里看起来什么样子"的删除，所以它必须：
+ *   ① 说清有几条、占多少、具体是哪些（点名，最多列 3 个）；
+ *   ② 说清后果：删掉后打开那个应用，历史列表里就少这几项；
+ *   ③ 说清怎么避免：想留着就在应用里归档而不是在这里删（归档不影响磁盘）。
+ */
+export function taskActiveWarnHtml({ picked, appLabel }) {
+  const active = (picked || []).filter((t) => t.reason === 'manual');
+  if (!active.length) return null;
+  const bytes = active.reduce((s, t) => s + (t.bytes || 0), 0);
+  const names = active.slice(0, 3).map((t) => `<b>${esc(t.title || t.id)}</b>`).join('、');
+  const more = active.length > 3 ? ` 等 ${active.length} 条` : '';
+  const total = (picked || []).length;
+  const mixed = active.length < total;
+  return {
+    className: 'drawer-alert is-danger',
+    html: `${icon('alert')}<div>
+      <p><b>其中 ${active.length} 条还在 ${esc(appLabel)} 的主列表里</b>（共 ${fmtBytes(bytes)}）：${names}${more}。</p>
+      <p>删掉之后，下次打开 ${esc(appLabel)}，它的历史列表里就<b>不再有这几条</b> —— 这是本次操作唯一会改变"应用里看起来什么样子"的地方。
+      ${mixed ? `另外 ${total - active.length} 条本来就已经不在主列表里，删它们不影响界面。` : ''}</p>
+      <p>想留着它们、只是想腾磁盘：去 ${esc(appLabel)} 里<b>归档</b>（归档只是从主列表移走，正文照旧占着 —— 所以真要省空间还是得在这里删）。</p>
+    </div>`,
+    // 确认词要在抽屉里一并交代，别让人输错了才被服务端拒
+    needWord: '删除活跃会话',
+  };
 }

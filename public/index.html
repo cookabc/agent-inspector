@@ -427,6 +427,9 @@
 
   <div class="drawer-body">
     <div class="drawer-stats" id="tdrawerStats"></div>
+    <!-- 活跃会话警示：批次里含仍挂在应用主列表里的会话时出现。
+         它说的是"删掉后应用里会少几项"，是这套界面里最重的一条后果。 -->
+    <div class="drawer-alert" id="tdrawerAlert" role="alert" hidden></div>
     <p class="tdrawer-note" id="tdrawerNote"></p>
 
     <div class="drawer-list-head">
@@ -441,7 +444,9 @@
     </div>
 
     <label class="purge-confirm" id="tConfirmBox" hidden>
-      <span>删除不可撤销（会先自动备份）。请输入 <code>清理</code> 以确认：</span>
+      <!-- 要输的词由 JS 按批次填（含活跃会话时是「删除活跃会话」）：
+           写死「清理」会让人照着提示输却永远对不上。 -->
+      <span>删除不可撤销（会先自动备份）。请输入 <code id="tWordHint">清理</code> 以确认：</span>
       <input type="text" id="tWord" placeholder="清理" autocomplete="off">
     </label>
   </div>

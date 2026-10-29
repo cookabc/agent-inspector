@@ -96,7 +96,7 @@ import {
   taskSelTotals, taskQuickSet, visibleTasks, groupTasksByWorkspace,
   dbBarSegments, taskRowHtml, taskGroupHtml, recoverRowHtml, dryRunHtml, checkLine,
   taskLedeHtml, taskWarnHtml, taskEmptyWarnHtml, taskQuickTexts,
-  taskDrawerStatsHtml, taskDrawerNoteHtml, taskDrawerListHtml,
+  taskDrawerStatsHtml, taskDrawerNoteHtml, taskDrawerListHtml, taskActiveWarnHtml,
 } from './views/tasks.js';
 /* 安全审计视图的模板与汇总（纯函数，有契约测试）。 */
 import {
@@ -1508,11 +1508,41 @@ document.addEventListener('change', (e) => {
 /* 确认串由服务端随 /api/scan 下发（lib/confirm-words.mjs 是唯一来源）。
    前端不自己写这几个字 —— 两边各写一份，改一处忘另一处，
    界面就会放行一个服务端必然拒绝的请求。
-   三个词分别对应三条路径，词本身说出那一步在做什么。 */
+   每条路径一个词，词本身说出那一步在做什么。 */
 const confirmWords = () => state.scan?.confirm || {};
 const PURGE_WORD = () => confirmWords().FILES || '彻底删除';
-const TASK_PURGE_WORD = () => confirmWords().SESSION || '清理';
 const RECOVER_WORD = () => confirmWords().RECOVER || '回灌';
+
+/**
+ * 会话清理该用哪个词 —— 取决于**这批里有没有还挂在主列表里的活跃会话**。
+ *
+ * 判据与服务端完全同源：reason === 'manual' 就是"活跃且在主列表"，
+ * 五家统一定义（tasks-shape 的 REASONS 注释）。所以界面与后端不会出现
+ * "这边要输重词、那边只认轻词"的错位。
+ *
+ * 为什么升级：删掉活跃会话，下次打开那个应用它的历史就少几项 ——
+ * 这是唯一会改变"应用里看起来的样子"的一类删除。轻词（清理）在
+ * 删已归档/残骸时已经足够；这里必须让人多敲几个字，不能靠肌肉记忆滑过去。
+ */
+const activePicked = () => {
+  const d = taskState.data;
+  if (!d) return [];
+  return d.tasks.filter((t) => taskState.sel.has(t.id) && t.reason === 'manual');
+};
+const TASK_PURGE_WORD = () => {
+  const w = confirmWords();
+  const word = activePicked().length ? w.SESSION_ACTIVE : w.SESSION;
+  /* 缺值不兜底成写死的字面量 —— 那会让"两边必须同源"这条规矩失效：
+     服务端改了词、前端还按旧的兜底字面量校验，人照着界面输就永远输不对。
+     返回一个**永远对不上**的占位串：按钮会一直按不动，同时把原因写到
+     控制台。比起猜一个词，这是更安全的失败方式（猜错了会放行一个
+     服务端必然拒绝的请求，白撞一次墙）。 */
+  if (!word) {
+    console.error('确认串没从服务端下发（confirm.SESSION / SESSION_ACTIVE），界面与服务端不同步');
+    return '\u0000missing-confirm-word';
+  }
+  return word;
+};
 
 /* 彻底删除的确认串：输对之前按钮按不动 —— 按钮状态直接反映"这句话你
    确认了没有"，顺带把还差几个字告诉人。可点然后报错等于让人白撞一次墙。 */
@@ -1633,9 +1663,11 @@ const tEls = {
   list: $('taskList'), empty: $('taskEmpty'), foot: $('taskFoot'),
   tfCount: $('tfCount'), tfBytes: $('tfBytes'), purgeBtn: $('taskPurgeBtn'),
   scrim: $('tscrim'), drawer: $('tdrawer'), close: $('tdrawerClose'), cancel: $('tdrawerCancel'),
-  stats: $('tdrawerStats'), note: $('tdrawerNote'), listD: $('tdrawerList'), countD: $('tdrawerCount'),
+  stats: $('tdrawerStats'), alert: $('tdrawerAlert'), note: $('tdrawerNote'),
+  listD: $('tdrawerList'), countD: $('tdrawerCount'),
   dryWrap: $('tdryWrap'), dryList: $('tdryList'), dryBtn: $('tdryBtn'),
-  confirmBox: $('tConfirmBox'), word: $('tWord'), msg: $('tdrawerMsg'), go: $('tdrawerGo'),
+  confirmBox: $('tConfirmBox'), word: $('tWord'), wordHint: $('tWordHint'),
+  msg: $('tdrawerMsg'), go: $('tdrawerGo'),
 };
 
 const taskState = {
@@ -2292,9 +2324,15 @@ function renderTaskFoot() {
   // 这个按钮永远可点 —— 它只是打开抽屉。空跑核对是只读的，应用开着也安全，
   // 拦住用户看清单没有任何好处。真正被拦的是抽屉里那个「删除」。
   const running = d?.app?.running;
+  /* 选中里有活跃会话时，按钮先把这件事说出来 —— 别等人打开抽屉才发现
+     "哦这些还在用"。底栏是一眼扫过的地方，值得占这几个字。 */
+  const activeN = activePicked().length;
+  const activeHint = activeN
+    ? `其中 ${activeN} 条仍在 ${d?.appLabel || '应用'} 主列表里，删掉后它的历史会少几项；`
+    : '';
   tEls.purgeBtn.title = running
     ? `${d?.appLabel || '应用'} 正在运行：可以先空跑核对，但要完全退出它才能删除`
-    : `清理这 ${count} 个会话；动手前会自动备份${d?.fileBased ? '，正文文件默认移入废纸篓' : ''}`;
+    : `${activeHint}清理这 ${count} 个会话；动手前会自动备份${d?.fileBased ? '，正文文件默认移入废纸篓' : ''}`;
 }
 
 /* ── 首屏的会话快捷项 ───────────────────────────────────── */
@@ -2414,10 +2452,21 @@ function renderTaskDrawerSummary() {
     return { count, bytes };
   })();
 
-  // 抽屉的三块文案（读数 / 说明 / 待删清单）在 views/tasks.js，有契约测试
+  // 抽屉的四块文案（读数 / 活跃警示 / 说明 / 待删清单）在 views/tasks.js，有契约测试
   tEls.stats.innerHTML = taskDrawerStatsHtml({
     count, rows, bytes, exTotal, exPending, exFailed: taskState.exclusiveFailed, hasBodies: Boolean(d.db?.bodies),
   });
+  /* 活跃会话警示：这批里有没有"还挂在应用主列表里"的会话。
+     有就摆一条红条说清后果，没有就整块收起来 —— 摆一条空的"没有活跃会话"
+     只会稀释真正需要看的那一条。 */
+  const activeWarn = taskActiveWarnHtml({ picked, appLabel: who });
+  tEls.alert.hidden = !activeWarn;
+  if (activeWarn) {
+    tEls.alert.className = activeWarn.className;
+    tEls.alert.innerHTML = activeWarn.html;
+  } else {
+    tEls.alert.innerHTML = '';
+  }
   tEls.note.innerHTML = taskDrawerNoteHtml(d, { exB: exTotal?.bytes || 0, exN: exTotal?.blobs || 0, cascade });
   tEls.listD.innerHTML = taskDrawerListHtml(picked, who);
   tEls.countD.textContent = `${count.toLocaleString()} 个`;
@@ -2428,6 +2477,11 @@ function openTaskDrawer() {
   if (!renderTaskDrawerSummary()) return;
   tEls.dryWrap.hidden = true;
   tEls.word.value = '';
+  /* 占位符与提示里的词都要跟着这批要的词走 —— 含活跃会话时是「删除活跃会话」。
+     写死「清理」的话，红条说要输重词、输入框却提示轻词，人只会输错。 */
+  const word = TASK_PURGE_WORD();
+  tEls.word.placeholder = word;
+  if (tEls.wordHint) tEls.wordHint.textContent = word;
   tEls.confirmBox.hidden = false;
   tEls.msg.textContent = '';
   tEls.msg.className = 'drawer-msg';

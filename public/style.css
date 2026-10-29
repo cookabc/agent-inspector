@@ -1936,6 +1936,47 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
 /* 分组时工作区已经在组头上，行内的元信息就不再重复它 */
 .task-list { overflow: hidden auto; }
 
+/* ── 活跃会话警示（抽屉里）─────────────────────────────────
+   全工具唯一会改变"应用里看起来什么样子"的删除。用危险档的底色 + 左侧
+   色条，和下面那条中性说明条在视觉上分得开 —— 它俩说的不是一类事。 */
+.drawer-alert {
+  font-size: 12px;
+  line-height: 1.65;
+  padding: 11px 13px;
+  border-radius: var(--r-md);
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.drawer-alert[hidden] { display: none; }
+.drawer-alert > svg { width: 15px; height: 15px; flex: none; margin-top: 2px; }
+.drawer-alert p { margin: 0; }
+.drawer-alert p + p { margin-top: 6px; }
+.drawer-alert b { font-weight: 650; }
+.drawer-alert.is-danger {
+  color: var(--ink-2);
+  background: color-mix(in oklab, var(--st-serious) 9%, var(--surface));
+  border: 0.5px solid color-mix(in oklab, var(--st-serious) 45%, var(--line));
+  border-inline-start: 3px solid var(--st-serious);
+}
+.drawer-alert.is-danger > svg { color: var(--st-serious); }
+.drawer-alert.is-danger b { color: var(--ink); }
+
+/* 待删清单里"仍在用"的角标：这一列是最后看一眼的地方，
+   还在用与早就删了不能长得一样。 */
+.dlist-tag {
+  display: inline-block;
+  margin-inline-start: 6px;
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  border-radius: 3px;
+  color: var(--st-serious);
+  background: color-mix(in oklab, var(--st-serious) 14%, transparent);
+  vertical-align: 1px;
+}
+
 .tdrawer-note {
   font-size: 12px;
   color: var(--ink-2);

@@ -21,6 +21,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   esc, icon, badge, STATUS_CLASS, STATUS_LABEL,
 } from '../public/views/shared.js';
@@ -459,7 +460,7 @@ import {
   taskSelTotals, taskQuickSet, visibleTasks, groupTasksByWorkspace,
   dbBarSegments, taskRowHtml, taskGroupHtml, recoverRowHtml, dryRunHtml, checkLine,
   fileBasedNote, REASON_LABEL, REASON_TONE,
-  CONTENT_ROLE_LABEL, taskContentsHtml, mergeByRole,
+  CONTENT_ROLE_LABEL, taskContentsHtml, mergeByRole, taskActiveWarnHtml,
 } from '../public/views/tasks.js';
 import { auditSummary, auditLedeHtml, auditToolHtml, auditHitGroups, auditGroupHtml } from '../public/views/audit.js';
 
@@ -473,8 +474,12 @@ const trow = (over = {}) => ({
 test('状态文案：reason 优先于 state，两者都有档位映射', () => {
   assert.equal(stateLabel(trow({ reason: 'deleted', state: 'active' })), '已在界面删除');
   assert.equal(stateLabel(trow({ reason: null, state: 'active' })), '活跃会话');
-  assert.equal(stateTone(trow({ reason: 'manual', state: 'active' })), 'st-warning');
+  /* 活跃会话用最重的一档：它是唯一会改变"应用里看起来什么样子"的删除，
+     和"已归档/界面不可见"这种只是占着磁盘的情况不能一个颜色。 */
+  assert.equal(stateTone(trow({ reason: 'manual', state: 'active' })), 'st-serious');
   assert.equal(stateTone(trow({ reason: null, state: 'deleted' })), 'st-serious');
+  // 标签要说出后果，不能只说"可清理"
+  assert.match(stateLabel(trow({ reason: 'manual', state: 'active' })), /仍在用/);
   for (const k of Object.keys(REASON_LABEL)) assert.ok(REASON_TONE[k], `reason ${k} 缺色档`);
   for (const k of Object.keys(STATE_META_CN)) assert.ok(STATE_TONE[k], `state ${k} 缺色档`);
   for (const k of Object.values(STATUS_CLASS_TONE)) assert.match(k, /^st-/);
@@ -1228,4 +1233,91 @@ test('空跑对正文即文件的工具列出将移入废纸篓的文件，而�
   // 有库行的工具维持原状：逐表列行数
   const db = dryRunHtml({ perDb: [{ table: 'message', name: 'db.sqlite', count: 5 }] });
   assert.match(db.rowsHtml, /message/);
+});
+
+/* ── 活跃会话：可清，但提示必须做足 ─────────────────────────
+ * 放开活跃会话的删除入口，代价是"删掉后应用里会少几项"这件事必须被说清。
+ * 这一组测试守的就是那些提示：红条、角标、一键清理不碰活跃。 */
+
+test('活跃会话警示条：有才出现，点名到具体几条，说清后果与退路', () => {
+  const picked = [
+    trow({ id: 'a', title: '正在写的方案', reason: 'manual', state: 'active', bytes: 2048 }),
+    trow({ id: 'b', title: '已归档的旧会话', reason: 'archived', state: 'archived', bytes: 1024 }),
+  ];
+  const w = taskActiveWarnHtml({ picked, appLabel: 'Codex' });
+  assert.ok(w, '有活跃会话就要出警示条');
+  assert.equal(w.className, 'drawer-alert is-danger');
+  assert.match(w.html, /其中 1 条还在 Codex 的主列表里/, '要点名几条');
+  assert.match(w.html, /正在写的方案/, '要点名到具体会话');
+  assert.match(w.html, /历史列表里就.*不再有这几条/, '要说清后果');
+  assert.match(w.html, /归档/, '要给出"想留着该怎么办"');
+  assert.match(w.html, /另外 1 条本来就已经不在主列表里/, '混批时把两半分开说');
+});
+
+test('活跃会话警示条：没有活跃会话时整块不出现，不留空条', () => {
+  const picked = [trow({ id: 'a', reason: 'archived', state: 'archived' })];
+  assert.equal(taskActiveWarnHtml({ picked, appLabel: 'Codex' }), null);
+  assert.equal(taskActiveWarnHtml({ picked: [], appLabel: 'Codex' }), null);
+});
+
+test('活跃会话警示条：超过 3 条只点名前 3 个，其余说总数', () => {
+  const picked = Array.from({ length: 6 }, (_, i) =>
+    trow({ id: `s${i}`, title: `会话${i}`, reason: 'manual', state: 'active' }));
+  const w = taskActiveWarnHtml({ picked, appLabel: 'ZCode' });
+  assert.match(w.html, /会话0/);
+  assert.match(w.html, /会话2/);
+  assert.doesNotMatch(w.html, /会话5/, '第 4 条起不逐个列');
+  assert.match(w.html, /等 6 条/, '要说总数');
+});
+
+test('待删清单里活跃会话带「仍在用」角标，其余不带', () => {
+  const html = taskDrawerListHtml([
+    trow({ id: 'a', title: '在用的', reason: 'manual', state: 'active', bytes: 100 }),
+    trow({ id: 'b', title: '归档的', reason: 'archived', state: 'archived', bytes: 50 }),
+  ], 'Codex');
+  const activeLine = html.split('</li>').find((l) => l.includes('在用的'));
+  const archivedLine = html.split('</li>').find((l) => l.includes('归档的'));
+  assert.match(activeLine, /dlist-tag[^>]*>仍在用/, '活跃会话要标出来');
+  assert.doesNotMatch(archivedLine, /dlist-tag/, '归档的不该带这个角标');
+});
+
+test('一键清理永不碰活跃会话，也不碰挂着活跃子会话的已删除任务', () => {
+  /* 一键清理的定位是"清掉我在应用里删过、磁盘还占着的废料"。
+     活跃会话是逐个点的决定，不该被一键带走；已删除的父任务如果还有
+     活跃子会话，删父会连带删掉它们 —— 同样不能一键干。 */
+  const d = { tasks: [
+    trow({ id: 'active', state: 'active', reason: 'manual', updatedAt: 1 }),
+    trow({ id: 'deleted-plain', state: 'deleted', reason: 'deleted', updatedAt: 1 }),
+    trow({ id: 'deleted-with-active-kid', state: 'deleted', reason: 'deleted', updatedAt: 1, activeDescendants: 2 }),
+  ] };
+  const set = taskQuickSet(d, { ageDays: 0, skipPinned: false });
+  assert.deepEqual(set.tasks.map((t) => t.id), ['deleted-plain']);
+  assert.equal(set.skippedActiveDesc, 1, '要能报出"因为挂着活跃子会话而跳过"几条');
+});
+
+test('会话行标出「N 个子会话仍在用」——删父会连它们一起删', () => {
+  const html = taskRowHtml(trow({ id: 'p', children: 3, activeDescendants: 2 }), { sel: false, open: false });
+  assert.match(html, /2 个子会话仍在用/);
+  const none = taskRowHtml(trow({ id: 'q', children: 3 }), { sel: false, open: false });
+  assert.doesNotMatch(none, /仍在用/);
+});
+
+test('抽屉里提示要输的词必须就是真正要输的那个（不能一个说清理、一个要重词）', () => {
+  /* 实测踩到的坑：红条说"这批含活跃会话，要输重词"，确认框的提示却写死
+     「清理」，人照着提示输永远对不上。判据：提示文案与占位符都来自
+     TASK_PURGE_WORD() 这一个来源 —— 在源码层锁住"没有第二处写死"。 */
+  const appSrc = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  const htmlSrc = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
+
+  // 打开抽屉时把两个提示都改成同一份词
+  assert.match(appSrc, /tEls\.word\.placeholder = word/);
+  assert.match(appSrc, /tEls\.wordHint\.textContent = word/);
+  /* 提示行里的 <code> 由 JS 填，不再是写死的「清理」。
+     注意三条写入路径各有一句"以确认"，只有会话这条的词是条件性的
+     （文件删除与回灌的词固定），所以要认准带 tWordHint 的那一条。 */
+  assert.match(htmlSrc, /id="tWordHint"/);
+  const hintLine = htmlSrc.split('\n').find((l) => l.includes('id="tWordHint"'));
+  assert.ok(hintLine, '会话抽屉的提示行要带 tWordHint');
+  assert.match(hintLine, /以确认/);
+  assert.doesNotMatch(hintLine, /<code>清理<\/code>/, '不许把「清理」写死在提示里');
 });

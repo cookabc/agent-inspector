@@ -256,9 +256,11 @@ test('界面上不许把 undefined 印出来：单 app 的会话行没有 appLab
      唯一例外是跨工具的「全部」视图：那边每一行必须自带归属，
      aggregateSessions() 确实给每行赋了 appLabel。 */
   assert.match(app, /const who = d\.appLabel/);
-  // 抽屉清单的模板在 views/tasks.js（taskDrawerListHtml）：工具名由调用方传入，
-  // 不许取行上的 appLabel —— 那个字段不存在，取了就印 "undefined，标题"
-  assert.match(taskViewsSrc, /<span>\$\{esc\(who\)\}，\$\{esc\(t\.title\)\}<\/span>/);
+  /* 抽屉清单的模板在 views/tasks.js（taskDrawerListHtml）：工具名由调用方传入，
+     不许取行上的 appLabel —— 那个字段不存在，取了就印 "undefined，标题"。
+     这里不锁具体 span 写法（活跃会话的角标会插在标题后面），
+     只锁"用的是 who 而不是 t.appLabel"。 */
+  assert.match(taskViewsSrc, /<span>\$\{esc\(who\)\}，\$\{esc\(t\.title\)\}/);
 
   // 会话行模板（views/tasks.js）也不许取行上的 appLabel —— 模板一次只服务
   // 一个 app，标题旁的工具名由调用方拼。剥掉注释后全文不许出现。
@@ -445,7 +447,14 @@ test('三条写入路径的确认串都是"输对才亮"，且来自同一份定
   assert.doesNotMatch(app, /const PURGE_WORD = '彻底删除'/);
   assert.doesNotMatch(app, /const TASK_PURGE_WORD = '清理'/);
   assert.match(app, /const PURGE_WORD = \(\) => confirmWords\(\)\.FILES/);
-  assert.match(app, /const TASK_PURGE_WORD = \(\) => confirmWords\(\)\.SESSION/);
+  /* 会话清理的词是**有条件**的：批次里含活跃会话（reason==='manual'）时
+     要更强的 SESSION_ACTIVE，否则 SESSION。两者都必须从 confirmWords()
+     下发的那份定义里取，不许在前端另写字面量 —— 缺值时返回一个永远对不上
+     的占位串（按钮按不动），而不是猜一个词。 */
+  assert.match(app, /const TASK_PURGE_WORD = \(\) => \{[\s\S]{0,400}\.SESSION_ACTIVE\b/,
+    '含活跃会话时要走升级确认串');
+  assert.match(app, /\.SESSION_ACTIVE : w\.SESSION|\.SESSION_ACTIVE\s*:\s*\w+\.SESSION/,
+    '不含活跃会话时仍用普通确认串（三元取其一）');
   assert.match(app, /const RECOVER_WORD = \(\) => confirmWords\(\)\.RECOVER/);
 
   // 三条路径都要有 input 监听 —— 少一条就是"按钮一直亮着，点了才报错"
