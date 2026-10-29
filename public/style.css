@@ -1700,17 +1700,6 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
 /* 详情里"删除会连带回收"那一段的补充说明 */
 .tdetail-note { color: var(--muted); font-size: 12px; }
 
-.task-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding-top: 14px;
-  border-top: 0.5px solid var(--line);
-}
-.task-foot .ab-summary strong { font-size: 14px; }
-
 /* ── Cursor 孤儿会话回灌 ───────────────────────────────── */
 .recover {
   margin-top: 24px;
@@ -1772,17 +1761,6 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.recover-foot {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  font-size: 12px;
-  color: var(--ink-2);
-}
-.recover-foot b { color: var(--ink); }
-
 /* 状态文字只在 meta 那一行出现一次。
    它原本还有一份是右侧的 .trow-pill 药丸 —— 同一个词在一行里印两遍，
    而这一列总共只有 505px（会话管理列在 1400 宽的屏上就这么点），
@@ -2036,11 +2014,10 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   inset-inline: 0;
   bottom: 0;
   z-index: 45;
+  /* 纵向栈：多段各占一行；只显示一段时看起来与从前一致。 */
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 8px;
   padding: 12px clamp(16px, 4vw, 40px);
   padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
   background: color-mix(in oklab, var(--surface) 88%, transparent);
@@ -2049,13 +2026,38 @@ input[type="checkbox"]:disabled { opacity: .35; cursor: not-allowed; }
   border-top: 0.5px solid var(--line);
   box-shadow: var(--shadow-lg);
   animation: rise var(--dur) var(--ease-out);
+  /* 三套选区可能同时非空，条会变高；给个上限自己滚，别吃掉整个屏幕 */
+  max-height: 50vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 @keyframes rise { from { transform: translateY(14px); opacity: 0 } to { transform: none; opacity: 1 } }
+
+/* 一段：抬头（仅多段时出现）| 读数 | 动作，横排 */
+.ab-seg { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.ab-seg + .ab-seg { border-top: 0.5px solid var(--line); padding-top: 8px; }
+/* 多段并存时每段自报身份：否则会出现两句"已选 3 个"而含义完全不同。 */
+.ab-seg-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 2px 8px 2px 6px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.ab-seg-name svg { width: 13px; height: 13px; }
 
 .ab-summary { display: flex; align-items: baseline; gap: 7px; font-size: 14px; color: var(--ink-2); }
 .ab-summary strong { font-size: 14px; font-weight: 650; color: var(--ink); letter-spacing: -.02em; }
 .ab-summary b { color: var(--ink); font-variant-numeric: tabular-nums; }
-.ab-actions { display: flex; gap: 8px; }
+.ab-actions { display: flex; gap: 8px; margin-inline-start: auto; }
+/* 会话条里那句"其中 N 条仍在主列表里" —— 它比别的读数更要紧，
+   用警示色而不是灰，免得跟"已选 3 个"混成同一档信息。 */
+.ab-hint { color: var(--st-serious); font-weight: 550; }
 
 /* ── 抽屉 ───────────────────────────────────────────────── */
 
@@ -2531,8 +2533,9 @@ body.is-busy .sidebar::after {
   .tdetail-grid > div { grid-column: 1 / -1; }
   /* 窄屏上 42px 缩进太奢侈，说明直接占满一行 */
   .group-outcome, .group-more, .group-explain { padding-inline-start: 14px; }
-  .actionbar { justify-content: center; }
-  .ab-actions { width: 100%; }
+  /* 窄屏：每段里的动作按钮拉满一行，读数在上、按钮在下 */
+  .ab-seg { gap: 8px; }
+  .ab-actions { width: 100%; margin-inline-start: 0; }
   .ab-actions .btn { flex: 1; justify-content: center; }
 }
 

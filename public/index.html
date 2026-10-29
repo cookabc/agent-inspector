@@ -205,14 +205,6 @@
     <div class="task-list" id="taskList"></div>
     <p class="empty" id="taskEmpty" hidden>没有匹配的会话。</p>
 
-    <div class="task-foot" id="taskFoot" hidden>
-      <div class="ab-summary">
-        <span>已选</span> <strong id="tfCount">0</strong>
-        <span>个会话，文本 <b id="tfBytes">0 B</b></span>
-      </div>
-      <button class="btn btn-primary" id="taskPurgeBtn" type="button">清理…</button>
-    </div>
-
     <!-- Cursor 专用：界面看不到、transcript 还在的会话 -->
     <div class="recover" id="recoverPanel" hidden>
       <div class="recover-head">
@@ -227,10 +219,6 @@
       </div>
       <div class="app-warn" id="recoverWarn" hidden></div>
       <div class="recover-list" id="recoverList"></div>
-      <div class="recover-foot" id="recoverFoot" hidden>
-        <span>已选 <b id="recoverCount">0</b> 个会话，<b id="recoverBubbles">0</b> 条消息</span>
-        <button class="btn btn-primary btn-sm" id="recoverBtn" type="button">回灌…</button>
-      </div>
 
     </div>
   </section>
@@ -353,16 +341,13 @@
 </div><!-- /.shell -->
 
 <!-- ── 文件清理：底部操作条 + 确认抽屉 ─────────────────── -->
-<div class="actionbar" id="actionbar" hidden>
-  <div class="ab-summary">
-    <strong id="abCount">0</strong>
-    <span>项，<b id="abBytes">0 B</b></span>
-  </div>
-  <div class="ab-actions">
-    <button class="btn btn-ghost" id="abReveal" type="button">在 Finder 中显示</button>
-    <button class="btn btn-primary" id="abClean" type="button">清理…</button>
-  </div>
-</div>
+<!-- ── 底部操作条：三条清理线共用 ─────────────────────────
+     文件、会话、回灌各有自己的选区，但"选中了东西、接下来要动它"是同一件事。
+     以前它们各长各的：文件用底部固定条，会话与回灌用面板内嵌底栏 —— 同一类
+     动作三种位置，而且内嵌底栏会随列表滚走，勾到第 80 行就看不见"要删多少"。
+     现在统一成一个底部条，内部按"当前哪些选区非空"分段。同一视图里会话与
+     回灌可能同时有勾选（Cursor 就是），所以是多段并存、不是单段轮播。 -->
+<div class="actionbar" id="actionbar" hidden></div>
 
 <div class="drawer-scrim" id="scrim" hidden></div>
 <aside class="drawer" id="drawer" hidden aria-labelledby="drawerTitle" role="dialog" aria-modal="true" tabindex="-1">

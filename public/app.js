@@ -24,8 +24,7 @@ const els = {
   search: $('search'), statusChips: $('statusChips'), sortSel: $('sortSel'),
   clearSelBtn: $('clearSelBtn'),
   groups: $('groups'), emptyHint: $('emptyHint'),
-  actionbar: $('actionbar'), abCount: $('abCount'), abBytes: $('abBytes'),
-  abReveal: $('abReveal'), abClean: $('abClean'),
+  actionbar: $('actionbar'),
   scrim: $('scrim'), drawer: $('drawer'), drawerClose: $('drawerClose'),
   drawerStats: $('drawerStats'), drawerMix: $('drawerMix'),
   drawerList: $('drawerList'), drawerListCount: $('drawerListCount'),
@@ -610,16 +609,92 @@ const selectedByTarget = () => selectionStats().batches;
    服务端会报 canReveal:false，那就干脆不摆这个按钮 —— 摆了也只是让人白按。 */
 const canReveal = () => state.scan?.canReveal !== false;
 
+/**
+ * 底部操作条：三条清理线共用。
+ *
+ * 文件、会话、回灌各有一套选区，但"选中了东西、接下来要动它"是同一件事。
+ * 以前它们各长各的（文件=底部固定条，会话/回灌=面板内嵌底栏）：同一个动作
+ * 在三个位置、三种形态，学一遍不够；而且内嵌底栏会随列表滚走 —— 勾到第
+ * 80 行时已经看不见"要删多少"，得滚回去确认。
+ *
+ * 现在统一成一个底部条，内部**按段**渲染：哪条线的选区非空就出一段。
+ * 为什么不是"只显示最活跃的那一条"：Cursor 这一屏里，会话清理与孤儿回灌
+ * 的勾选可以同时存在（它们是两个互不相干的列表），只显示一条会让另一条
+ * 的选区变成隐形的 —— 用户以为没选，其实还在那儿等着。
+ *
+ * 多段并存时每段必须自报身份（图标 + 名字），否则会出现两句"已选 3 个"
+ * 而含义完全不同。单段时就省掉那个抬头，不啰嗦。
+ */
 function renderActionbar() {
-  const n = state.selection.size;
-  els.actionbar.hidden = n === 0;
+  const sections = [];
+  if (state.selection.size > 0) sections.push(fileBarSection());
+  if (taskState.sel.size > 0 && taskState.data && !taskState.data.readOnly) sections.push(taskBarSection());
+  if (recoverState.sel.size > 0) sections.push(recoverBarSection());
+
+  els.actionbar.hidden = sections.length === 0;
   // 操作条是 fixed 的：框架式布局里面板底边贴着视口底，不留这条 class
   // 出来的余量，操作条会盖住列表最后一行。
-  document.body.classList.toggle('has-bar', n > 0);
-  els.abCount.textContent = n.toLocaleString();
-  els.abBytes.textContent = fmtBytes(selectedBytes());
-  els.abBytes.title = bytesTip(selectedBytes());
-  els.abReveal.hidden = !canReveal();
+  document.body.classList.toggle('has-bar', sections.length > 0);
+  if (!sections.length) { els.actionbar.innerHTML = ''; return; }
+
+  /* 只有一段时不出抬头 —— 屏幕上只有一个"已选 N"，谁都知道说的是什么。
+     出现两段以上才需要名字来分辨。 */
+  const named = sections.length > 1;
+  els.actionbar.innerHTML = sections.map((s) => `
+    <div class="ab-seg"${named ? ` data-seg="${s.id}"` : ''}>
+      ${named ? `<span class="ab-seg-name">${icon(s.icon)}${esc(s.label)}</span>` : ''}
+      <div class="ab-summary">${s.summary}</div>
+      <div class="ab-actions">${s.actions}</div>
+    </div>`).join('');
+}
+
+/* ── 三条线各自的段 ───────────────────────────────────────── */
+
+function fileBarSection() {
+  const n = state.selection.size;
+  const bytes = selectedBytes();
+  return {
+    id: 'files', label: '文件', icon: 'box',
+    summary: `<strong>${n.toLocaleString()}</strong><span>项，<b title="${bytesTip(bytes)}">${fmtBytes(bytes)}</b></span>`,
+    actions:
+      `<button class="btn btn-ghost" id="abReveal" type="button"${canReveal() ? '' : ' hidden'}>在 Finder 中显示</button>` +
+      `<button class="btn btn-primary" id="abClean" type="button">清理…</button>`,
+  };
+}
+
+function taskBarSection() {
+  const d = taskState.data;
+  const { count, bytes } = taskSelTotals(d, taskState.sel);
+  /* 选中里有活跃会话时先把这件事说出来 —— 别等人打开抽屉才发现"哦这些还在用"。
+     底栏是一眼扫过的地方，值得占这几个字。 */
+  const activeN = activePicked().length;
+  const hint = activeN
+    ? `<span class="ab-hint">其中 ${activeN} 条仍在 ${esc(d?.appLabel || '应用')} 主列表里</span>`
+    : '';
+  // 这个按钮永远可点 —— 它只是打开抽屉；真正被拦的是抽屉里那个「删除」。
+  const running = d?.app?.running;
+  const title = running
+    ? `${d?.appLabel || '应用'} 正在运行：可以先空跑核对，但要完全退出它才能删除`
+    : `${activeN ? `其中 ${activeN} 条仍在 ${d?.appLabel || '应用'} 主列表里，删掉后它的历史会少几项；` : ''}` +
+      `清理这 ${count} 个会话；动手前会自动备份${d?.fileBased ? '，正文文件默认移入废纸篓' : ''}`;
+  return {
+    id: 'tasks', label: '会话', icon: 'doc',
+    summary: `<span>已选</span><strong>${count.toLocaleString()}</strong>` +
+      `<span>个会话，文本 <b title="${bytesTip(bytes)}">${fmtBytes(bytes)}</b></span>${hint}`,
+    actions: `<button class="btn btn-primary" id="taskPurgeBtn" type="button" title="${esc(title)}">清理…</button>`,
+  };
+}
+
+function recoverBarSection() {
+  const d = recoverState.data;
+  const picked = (d?.sessions || []).filter((s) => recoverState.sel.has(s.id));
+  const bubbles = picked.reduce((n, s) => n + s.bubbles, 0);
+  return {
+    id: 'recover', label: '孤儿回灌', icon: 'refresh',
+    summary: `<span>已选</span><strong>${picked.length.toLocaleString()}</strong>` +
+      `<span>个会话，<b>${bubbles.toLocaleString()}</b> 条消息</span>`,
+    actions: `<button class="btn btn-primary" id="recoverBtn" type="button">回灌…</button>`,
+  };
 }
 
 /* ── 抽屉 ───────────────────────────────────────────────── */
@@ -1656,8 +1731,7 @@ const tEls = {
   toolbar: $('taskToolbar'), empty: $('taskEmpty'),
   chips: $('taskChips'), search: $('taskSearch'), sort: $('taskSort'),
   pickAll: $('taskPickAll'), clearSel: $('taskClearSel'),
-  list: $('taskList'), empty: $('taskEmpty'), foot: $('taskFoot'),
-  tfCount: $('tfCount'), tfBytes: $('tfBytes'), purgeBtn: $('taskPurgeBtn'),
+  list: $('taskList'), empty: $('taskEmpty'),
   scrim: $('tscrim'), drawer: $('tdrawer'), close: $('tdrawerClose'), cancel: $('tdrawerCancel'),
   stats: $('tdrawerStats'), alert: $('tdrawerAlert'), note: $('tdrawerNote'),
   listD: $('tdrawerList'), countD: $('tdrawerCount'),
@@ -1687,9 +1761,7 @@ let renderedGroups = [];
 const rEls = {
   // 页面上的列表（浏览与勾选）
   panel: $('recoverPanel'), lede: $('recoverLede'), warn: $('recoverWarn'),
-  list: $('recoverList'), foot: $('recoverFoot'), count: $('recoverCount'),
-  bubbles: $('recoverBubbles'), pickAll: $('recoverPickAll'), clear: $('recoverClear'),
-  btn: $('recoverBtn'),
+  list: $('recoverList'), pickAll: $('recoverPickAll'), clear: $('recoverClear'),
   // 确认抽屉（与另外两条清理线同一套）
   scrim: $('rscrim'), drawer: $('rdrawer'), stats: $('rdrawerStats'),
   note: $('rdrawerNote'), listD: $('rdrawerList'), countD: $('rdrawerCount'),
@@ -1715,7 +1787,6 @@ function resetTaskPanel() {
   tEls.warn.innerHTML = '';
   tEls.comp.hidden = true;
   tEls.comp.innerHTML = '';
-  tEls.foot.hidden = true;
   tEls.list.innerHTML = '';
   tEls.empty.hidden = true;
   // 工具栏默认收起：没有数据时它全是摆设。有数据的那个分支会把它放回来。
@@ -1855,7 +1926,6 @@ function hideRecoverable() {
   rEls.panel.hidden = true;
   rEls.list.innerHTML = '';
   rEls.warn.hidden = true;
-  rEls.foot.hidden = true;
   // 抽屉可能开着 —— 切走时一起收掉，不能让它挂在新工具的画面上
   if (recoverState.open) closeRecoverDrawer();
   recoverState.data = null;
@@ -1872,7 +1942,6 @@ async function loadRecoverable() {  // 晚到的旧响应要丢掉：切走之�
   rEls.lede.textContent = '正在找界面里看不到的会话…';
   rEls.list.innerHTML = '';
   rEls.warn.hidden = true;
-  rEls.foot.hidden = true;
   if (recoverState.open) closeRecoverDrawer();
   recoverState.open = false;
 
@@ -1930,9 +1999,8 @@ function renderRecoverable() {
   rEls.list.innerHTML = sessions.map((s) => recoverRowHtml(s, recoverState.sel.has(s.id))).join('');
 
   const picked = sessions.filter((s) => recoverState.sel.has(s.id));
-  rEls.foot.hidden = picked.length === 0;
-  rEls.count.textContent = picked.length.toLocaleString();
-  rEls.bubbles.textContent = picked.reduce((n, s) => n + s.bubbles, 0).toLocaleString();
+  // 回灌的"已选 N 个、回灌…"也长在共用操作条里（renderActionbar）
+  renderActionbar();
 
   // 确认抽屉开着时，它的内容跟着选择集一起更新（取消勾选一条，抽屉里的清单要少一条）
   if (recoverState.open) renderRecoverDrawer();
@@ -2129,7 +2197,7 @@ rEls.list?.addEventListener('change', (e) => {
   else recoverState.sel.delete(box.dataset.recoverId);
   renderRecoverable();
 });
-rEls.btn?.addEventListener('click', openRecoverDrawer);
+/* 「回灌…」现在长在共用操作条里，随选区动态生成 —— 只能在 document 上委托。 */
 rEls.dryBtn?.addEventListener('click', () => callRecover(true));
 rEls.go?.addEventListener('click', () => callRecover(false));
 rEls.scrim?.addEventListener('click', closeRecoverDrawer);
@@ -2307,44 +2375,18 @@ function renderTaskList() {
   tEls.list.querySelectorAll('[data-indeterminate]').forEach((el) => { el.indeterminate = true; });
 }
 
-/** 从会话详情跳到文件清单：定位正文文件并让搜索框带着它。 */
 /* 勾选合计（taskSelTotals）在 views/tasks.js —— 调用点传数据与选择集。 */
 
+/**
+ * 会话选区的刷新入口。
+ *
+ * 会话的"已选 N 个、清理…"现在长在共用的底部操作条里（renderActionbar），
+ * 不再是面板内嵌的一栏。这里保留成一个转发函数而不是把十几处调用点都改掉：
+ * 调用点的语义是"会话选择变了，重画与它相关的东西"，那个语义没变 ——
+ * 变的只是画在哪儿。少改十几处，也少十几处漏改的机会。
+ */
 function renderTaskFoot() {
-  const d = taskState.data;
-  const { count, bytes } = taskSelTotals(d, taskState.sel);
-  // 只读的 app 连"清理"这个入口都不摆 —— 摆了也是必然被拒的按钮
-  tEls.foot.hidden = !d || d.readOnly || count === 0;
-  /* 这一栏的数字也要擦干净，不能只靠 hidden：从某个工具带着勾选切到「全部」，
-     整块虽然 display:none 了，里面的 "已选 1 个会话，99 KB" 还留在 DOM 里。
-     下一次它被放出来（切回同一个工具）之前，读屏与复制文本都能拿到这句旧话。 */
-  if (!d) {
-    tEls.tfCount.textContent = '0';
-    tEls.tfBytes.textContent = fmtBytes(0);
-    tEls.purgeBtn.textContent = '清理…';
-    tEls.purgeBtn.title = '';
-    return;
-  }
-  tEls.tfCount.textContent = count.toLocaleString();
-  tEls.tfBytes.textContent = fmtBytes(bytes);
-  tEls.tfBytes.title = bytesTip(bytes);
-  /* 所有工具都从会话抽屉走：正文即文件的那两家也走级联（备份 + 移入废纸篓）。
-     「按文件清理」这个入口已经取消 —— 会话正文不再出现在文件清单里，
-     而"挑几个正文文件删掉"正是会留下残骸的做法。 */
-  tEls.purgeBtn.textContent = '清理…';
-
-  // 这个按钮永远可点 —— 它只是打开抽屉。空跑核对是只读的，应用开着也安全，
-  // 拦住用户看清单没有任何好处。真正被拦的是抽屉里那个「删除」。
-  const running = d?.app?.running;
-  /* 选中里有活跃会话时，按钮先把这件事说出来 —— 别等人打开抽屉才发现
-     "哦这些还在用"。底栏是一眼扫过的地方，值得占这几个字。 */
-  const activeN = activePicked().length;
-  const activeHint = activeN
-    ? `其中 ${activeN} 条仍在 ${d?.appLabel || '应用'} 主列表里，删掉后它的历史会少几项；`
-    : '';
-  tEls.purgeBtn.title = running
-    ? `${d?.appLabel || '应用'} 正在运行：可以先空跑核对，但要完全退出它才能删除`
-    : `${activeHint}清理这 ${count} 个会话；动手前会自动备份${d?.fileBased ? '，正文文件默认移入废纸篓' : ''}`;
+  renderActionbar();
 }
 
 /* ── 首屏的会话快捷项 ───────────────────────────────────── */
@@ -2713,6 +2755,8 @@ document.addEventListener('click', (e) => {
     return;
   }
   if (t.closest('#taskPurgeBtn')) { openTaskAction(); return; }
+  // 「回灌…」与上面两个清理按钮一样，都长在共用的底部操作条里
+  if (t.closest('#recoverBtn')) { openRecoverDrawer(); return; }
   if (t.closest('#tdryBtn')) { callPurge(true); return; }
   if (t.closest('#tdrawerGo')) { callPurge(false); return; }
   if (t.closest('#tdrawerClose') || t.closest('#tdrawerCancel') || t === tEls.scrim) { closeTaskDrawer(); return; }
