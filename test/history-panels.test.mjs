@@ -618,12 +618,20 @@ test('活跃会话的清理要升级确认串：轻词被拒、重词放行', as
      否则绕过界面直接打接口，一句「清理」就能删掉还在用的会话。 */
   const f = await fixture(t);
   seedZcode(f.home);
-  // sess_b 是活跃会话（索引 deleted=0、archived=0、工作区存在）
+  /* sess_b 要成为**真正的活跃会话**（reason=manual），工作区目录必须真的存在 ——
+     否则它会被判成 wsMissing，走的是轻词，这条测试就验不到升级逻辑了。
+     建在临时 HOME 里，不碰任何真实路径。 */
+  const ws = path.join(f.home, 'ws');
+  await fs.mkdir(ws, { recursive: true });
+  const db = new DatabaseSync(path.join(f.home, '.zcode', 'v2', 'tasks-index.sqlite'));
+  db.exec("UPDATE tasks SET workspace_path='" + ws + "' WHERE task_id='sess_b'");
+  db.close();
   const ids = ['sess_b'];
 
+  /* 确认串的校验排在进程闸**之前**（服务端刻意这么排：先算清这批要什么词，
+     再问应用退没退）。所以这一步在任何环境下都该是 400，不受"应用正开着"影响。 */
   const light = await f.post('/api/tasks/purge', { app: 'zcode', ids, confirm: '清理' });
-  if (light.status === 409) { assert.match(light.body.error, /正在运行/); return; }
-  assert.equal(light.status, 400, '含活跃会话时轻词必须被拒');
+  assert.equal(light.status, 400, '含活跃会话时轻词必须被拒：' + JSON.stringify(light.body));
   assert.match(light.body.error, /删除活跃会话/);
   assert.match(light.body.error, /主列表/, '要说清为什么拒');
 
@@ -632,6 +640,12 @@ test('活跃会话的清理要升级确认串：轻词被拒、重词放行', as
   assert.ok(still.body.tasks.some((x) => x.id === 'sess_b'), '被拒时不能删掉任何东西');
 
   const heavy = await f.post('/api/tasks/purge', { app: 'zcode', ids, confirm: '删除活跃会话' });
+  /* 重词这步会撞上进程闸：这台机器可能正开着 ZCode（CI 上不会）。
+     409 也是正确行为 —— 闸生效本身就该被验证，不该假装它跑过。 */
+  if (heavy.status === 409) {
+    assert.match(heavy.body.error, /正在运行/, '进程闸拒绝时要说清是谁在跑');
+    return;
+  }
   assert.equal(heavy.status, 200, JSON.stringify(heavy.body));
   const gone = await f.get('/api/tasks?app=zcode');
   assert.ok(!gone.body.tasks.some((x) => x.id === 'sess_b'), '重词放行，活跃会话被删');
