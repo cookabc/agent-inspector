@@ -702,9 +702,6 @@ const server = http.createServer(async (req, res) => {
       validateIds(ids);
       validateDryRun(dryRun);
 
-      // 最要紧的一条：绝不能对正在被写入的数据库动手
-      if (!dryRun && confirm !== CONFIRM.SESSION) throw httpError(400, `确认串不正确（应为「${CONFIRM.SESSION}」）`);
-
       /* 级联要删的不只是库行 —— 还有这条会话在磁盘上的专属文件。
          会话 id 到文件路径的映射由各家的 sessionContents() 给（与列表里
          「所属内容」那块是同一份计划），所以预览和实际执行不会说两套话。
@@ -712,15 +709,35 @@ const server = http.createServer(async (req, res) => {
          那几个文件也都属于第一个 target），不需要跨 target 编排。 */
       const key = plan.targets[0].key;
       const work = async () => {
-        if (!dryRun) await assertAppStopped(plan.app);
-
         // dry-run 也要算内容计划 —— 它就是"将要删什么"的答案
-        const plan0 = cascade ? await sessionContentsOf(plan, ids) : { files: [] };
+        const plan0 = cascade ? await sessionContentsOf(plan, ids) : { files: [], activeCount: 0 };
         const files = filesToRemove(plan0);
+
+        /* 确认串在算完内容计划之后才校验：批次里含活跃会话（reason=manual）
+           时要更强的词。顺序是刻意的 —— 先算出"这批里有几条还在用"，
+           再拿它去挑词，两边才可能说同一件事。 */
+        if (!dryRun) {
+          const need = plan0.activeCount > 0 ? CONFIRM.SESSION_ACTIVE : CONFIRM.SESSION;
+          if (confirm !== need) {
+            throw httpError(400, plan0.activeCount > 0
+              ? `确认串不正确：这批里有 ${plan0.activeCount} 条会话仍挂在 ${plan.app.label} 的主列表里，` +
+                `删掉后它的历史会少几项。请照实输入「${CONFIRM.SESSION_ACTIVE}」。`
+              : `确认串不正确（应为「${CONFIRM.SESSION}」）`);
+          }
+          await assertAppStopped(plan.app);
+        }
+
         if (dryRun) {
           const dbPlan = await runDb('purge', plan.app.id, plan.targets.map(stripTarget),
             [ids, { backupDir: BACKUP_DIR, dryRun: true }]);
-          return { ...dbPlan, cascade: describeCascade({ dbIds: ids, files }), files };
+          return {
+            ...dbPlan,
+            cascade: describeCascade({ dbIds: ids, files }),
+            files,
+            // 空跑就把"这批里几条还在用"交出去 —— 抽屉据此换确认词，
+            // 不必等到真删那一刻才被服务端拒一次。
+            activeCount: plan0.activeCount || 0,
+          };
         }
 
         /* 文件这一半默认**移入废纸篓**（可撤销），与方案里"给退路"一致：
@@ -819,15 +836,21 @@ async function sessionContentsOf(plan, ids) {
   const out = await runDb('scan', plan.app.id, plan.targets.map(stripTarget), []);
   const wanted = new Set(ids);
   const files = [];
+  const picked = [];
   for (const t of out.tasks || []) {
-    if (!wanted.has(t.id) || !t.contents) continue;
-    files.push(...t.contents.files);
+    if (!wanted.has(t.id)) continue;
+    picked.push(t);
+    if (t.contents) files.push(...t.contents.files);
   }
   const seen = new Set();
   return {
     files: files.filter((f) => (seen.has(f.rel) ? false : seen.add(f.rel))),
     // 顺带把"这条会话根本不能按行删"的残骸情况带出去：它们只有文件没有行
-    residualOnly: (out.tasks || []).filter((t) => wanted.has(t.id)).every((t) => t.residual),
+    residualOnly: picked.length > 0 && picked.every((t) => t.residual),
+    /* 这批里有多少条还挂在应用主列表里（reason==='manual' 是五家统一定义）。
+       服务端用它决定要不要升级确认串 —— 判断依据与前端抽屉里那条红条同源，
+       不会出现"界面说要输重词、服务端只认轻词"的错位。 */
+    activeCount: picked.filter((t) => t.reason === 'manual').length,
   };
 }
 

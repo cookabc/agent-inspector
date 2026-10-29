@@ -116,11 +116,15 @@ test('ZCode 父记录丢失的会话仍显示并计入体积', async t => {
   assert.equal(result.tasks[0].bytes, 8);
 });
 
-test('ZCode 活跃子会话阻止整组清理，列表与预览一致', async t => {
+test('ZCode 活跃子会话不再阻止整组清理，但父任务行上要标出来', async t => {
+  /* 放开之后，这条父任务仍然可清（reason 不再是 null），但必须能看出
+     "删它会连带带走一个还在用的子会话" —— 那是 activeDescendants 的职责。 */
   const { root } = await zcodeFixture(t, [['parent', null], ['child', 'parent']], [['parent', 1], ['child', 0]]);
   const result = zcode(root);
-  assert.equal(result.tasks[0].reason, null);
-  assert.throws(() => previewPurge(root, ['parent']), /仍在 ZCode 主列表/);
+  assert.equal(result.tasks[0].reason, 'archived', '归档父任务本身可清');
+  assert.equal(result.tasks[0].activeDescendants, 1, '要标出还有 1 个活跃子会话会被带走');
+  const preview = previewPurge(root, ['parent']);
+  assert.ok(preview.perDb.length > 0, '预览不再抛 409，给出真实计划');
 });
 
 test('ZCode 无根循环被报告，不能伪装成没有会话', async t => {

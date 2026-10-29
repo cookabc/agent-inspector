@@ -83,14 +83,13 @@ test('删除跨三个库清干净，正文文件留给文件那条线', async (t
   assert.equal(after.totals.bytes, after.db.bodies.bytes);
 });
 
-test('仍在主列表里、正文也还在的会话不许从这里消失', async (t) => {
+test('活跃会话现在能删了 —— 进程闸之外不再有主列表拦截', async (t) => {
+  /* 以前活跃会话从会话管理删不掉（要求先在 Codex 里归档）。现在放开了：
+     代价改由升级确认串承担（在 HTTP 层校验，见 history-panels）。
+     这里验的是**适配器层不再拦** —— 否则界面给了勾选框，点了却被 409 拒。 */
   const f = await fixture(t);
-  await assert.rejects(purgeTasks(f.root, [ACTIVE_ID], { backupDir: f.backup }), (err) => {
-    assert.equal(err.statusCode, 409);
-    assert.match(err.message, /仍在 Codex 主列表/);
-    return true;
-  });
-  assert.equal(count(path.join(f.root, 'state_5.sqlite'), 'SELECT count(*) c FROM threads'), 2);
+  const r = await purgeTasks(f.root, [ACTIVE_ID], { backupDir: f.backup });
+  assert.ok(r.perDb.some((x) => x.deleted > 0), '活跃会话的库行应该被删掉');
 });
 
 test('残骸编号混进删除请求时不动任何行', async (t) => {

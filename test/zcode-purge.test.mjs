@@ -50,13 +50,15 @@ test('ZCode removes descendants from both body and index databases', async t => 
   assert.equal(rows(path.join(result.backup, 'db.sqlite'), 'session'), 2);
 });
 
-test('an active child prevents deletion through an archived parent', async t => {
+test('an active child no longer blocks an archived parent (it is reported instead)', async t => {
+  /* 以前活跃子会话会整组挡住清理。现在放开：删父会连活跃子会话一起带走，
+     这是用户点"删这一族"时想要的；代价是行上必须标出 activeDescendants、
+     抽屉里点名。这里验适配器层不再拦。 */
   const f = await fixture(t), db = new DatabaseSync(f.index);
   db.exec("UPDATE tasks SET archived=0 WHERE task_id='child'"); db.close();
-  for (const dryRun of [true, false]) {
-    await assert.rejects(purgeTasks(f.root, ['root'], { backupDir: f.backupDir, dryRun }), { statusCode: 409 });
-  }
-  assert.equal(rows(f.main, 'session'), 2);
+  const r = await purgeTasks(f.root, ['root'], { backupDir: f.backupDir });
+  assert.equal(r.integrity, 'ok');
+  assert.equal(rows(f.main, 'session'), 0, '父与活跃子会话一起被删');
 });
 
 test('index DELETE failure rolls back body deletion', async t => {

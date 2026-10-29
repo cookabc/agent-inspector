@@ -611,3 +611,28 @@ test('ZCode 的级联把会话的四类文件也带走，而不只是库行', as
     await assert.rejects(fs.access(p), `${name} 应该已经不在了`);
   }
 });
+
+test('活跃会话的清理要升级确认串：轻词被拒、重词放行', async (t) => {
+  /* 放开活跃会话之后，"删掉后应用历史会少几项"这件事只能靠确认串兜住。
+     这一条守的是服务端那半边：界面说重词，服务端就必须只认重词 ——
+     否则绕过界面直接打接口，一句「清理」就能删掉还在用的会话。 */
+  const f = await fixture(t);
+  seedZcode(f.home);
+  // sess_b 是活跃会话（索引 deleted=0、archived=0、工作区存在）
+  const ids = ['sess_b'];
+
+  const light = await f.post('/api/tasks/purge', { app: 'zcode', ids, confirm: '清理' });
+  if (light.status === 409) { assert.match(light.body.error, /正在运行/); return; }
+  assert.equal(light.status, 400, '含活跃会话时轻词必须被拒');
+  assert.match(light.body.error, /删除活跃会话/);
+  assert.match(light.body.error, /主列表/, '要说清为什么拒');
+
+  // 数据一条都不能少
+  const still = await f.get('/api/tasks?app=zcode');
+  assert.ok(still.body.tasks.some((x) => x.id === 'sess_b'), '被拒时不能删掉任何东西');
+
+  const heavy = await f.post('/api/tasks/purge', { app: 'zcode', ids, confirm: '删除活跃会话' });
+  assert.equal(heavy.status, 200, JSON.stringify(heavy.body));
+  const gone = await f.get('/api/tasks?app=zcode');
+  assert.ok(!gone.body.tasks.some((x) => x.id === 'sess_b'), '重词放行，活跃会话被删');
+});
