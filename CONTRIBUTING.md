@@ -1,34 +1,36 @@
-# 维护约定
+**English** · [简体中文](CONTRIBUTING.zh-CN.md)
 
-## 数据边界
+# Maintenance conventions
 
-- 测试、性能试验和删除验证必须使用临时 HOME、临时扫描根和独立备份目录。禁止对真实会话发测试删除请求。
-- 不把「检查失败」当作「不存在」或「可以删除」。权限错误、进程检测失败、schema 不兼容都必须显式处理。
-- 所有数据库写操作通过 `writeDatabases`，所有 HTTP 写入口通过写操作互斥层。备份失败不得继续。
-- 不用宽泛 `catch` 隐藏 SQL 写入失败。可选表使用明确的存在性检查；现存表的结构或约束错误应回滚。
-- SQLite 查询无结果时不要仅判断 `.get()` 返回值的真假：Node 22.5 返回字段为 `null` 的对象。检查实际字段或使用 `.all()[0]`。
-- 回灌只能新增正文。缺失会话头不代表正文不存在。
-- 不承诺跨独立数据库在断电时原子提交；错误必须保留备份位置与已提交范围。
+## Data boundaries
 
-## 模块与界面
+- Tests, performance experiments, and delete verification must use a temporary HOME, a temporary scan root, and a separate backup directory. Sending test delete requests against real sessions is forbidden.
+- Do not treat "the check failed" as "it does not exist" or "it can be deleted." Permission errors, process detection failures, and schema incompatibilities must all be handled explicitly.
+- All database write operations go through `writeDatabases`, and all HTTP write entry points go through the write-operation mutual exclusion layer. A failed backup must not be followed by continuing.
+- Do not use broad `catch` blocks to hide SQL write failures. Optional tables use explicit existence checks; structural or constraint errors in existing tables should be rolled back.
+- When a SQLite query returns no result, do not judge only by the truthiness of the `.get()` return value: Node 22.5 returns an object whose fields are `null`. Check the actual fields or use `.all()[0]`.
+- Backfill may only add bodies. A missing session header does not mean the body does not exist.
+- Do not promise atomic commits across independent databases under power loss; errors must preserve the backup location and the committed scope.
 
-- 保持零第三方运行依赖。新增依赖需要明确收益和替代方案。
-- 共享分类语义放在 `lib/apps/taxonomy.mjs`，共同规则放在 `common.mjs`。保护规则与扫描显示必须一致。
-- 适配器返回 `tasks-shape.mjs` 的会话契约；`bodyRel` 必须能匹配文件扫描结果。
-- **每个适配器必须导出 `sessionContents(root, tasks, problems)`**，返回 `Map<会话 id, contents>`，形状见 `lib/session-contents.mjs` 的 `emptyContents()`。它回答「删掉这条会话会带走什么」，界面上的「所属内容」与清理抽屉的规模都读它 —— 所以**预览与实际删除必须共用同一份实现**，两处各算一次迟早会说出两套话。
-  - `removable: false` 的项不会被删，必须如实标出（例如 Cursor 的搜索索引、DSH 的 `workspace.json` 记录）。
-  - 文件逐条列出（出事时要能指名道姓），目录合成一条并带条目数。
-  - 枚举失败只记 `problems`，不要让整个会话列表打不开。
-- 会话清理走 `lib/cascade.mjs` 的 `runCascade()`，不要在路由里自己拼顺序。纪律是**先备份全部文件 → 再删库 → 最后删文件**：反过来一旦备份失败就是「会话从列表消失、文件一个没少」。`CONTENT_ROLES` 与前端 `CONTENT_ROLE_LABEL` 由测试双向锁死，加角色要两边一起加。
-- 会话面板是主体，文件清单收在 `#extras` 折叠区里。改 `grid-template-areas` 时同步 `test/frontend-static` 里那条「会话在补充区之前」的不变量（它守的是宽窄屏阅读顺序一致）。
-- 文件和会话属于两条不同的清理路径。会话级联是唯一的例外，且必须经过 `runCascade`；不能因为界面上像就把两批路径塞进同一个请求。
-- 异步结果更新界面前检查请求代次与当前视图。失败时保留可操作的错误信息；部分成功必须明确列出。
-- 写操作处理中禁止重复提交，确认词输入不能重新启用正在处理的按钮。
+## Modules and interface
 
-## 验证与交付
+- Keep zero third-party runtime dependencies. New dependencies require a clear benefit and alternative.
+- Shared classification semantics live in `lib/apps/taxonomy.mjs`, and common rules live in `common.mjs`. Protection rules and scan display must stay consistent.
+- Adapters return the session contract from `tasks-shape.mjs`; `bodyRel` must be able to match the file scan results.
+- **Every adapter must export `sessionContents(root, tasks, problems)`**, returning `Map<session id, contents>`, with the shape of `emptyContents()` in `lib/session-contents.mjs`. It answers "what does deleting this session take with it," and both the "Contents" view in the interface and the size in the cleanup drawer read it — so **the preview and the actual deletion must share the same implementation**; computing it twice separately will sooner or later tell two different stories.
+  - Items with `removable: false` are not deleted and must be marked truthfully (for example Cursor's search index, or the `workspace.json` record of DSH).
+  - Files are listed individually (you must be able to name names when something goes wrong), and directories are combined into one entry with an item count.
+  - Enumeration failures only record `problems`; do not let the entire session list fail to open.
+- Session cleanup goes through `runCascade()` in `lib/cascade.mjs`; do not assemble the order yourself in routes. The discipline is **back up all files first → then delete the database → finally delete the files**: in reverse, a failed backup means "the session vanished from the list while not a single file was removed." `CONTENT_ROLES` and the frontend `CONTENT_ROLE_LABEL` are locked together bidirectionally by tests; adding a role means adding it on both sides.
+- The session panel is the main body, and the file list is tucked into the `#extras` collapsed area. When changing `grid-template-areas`, update the "sessions before the extras area" invariant in `test/frontend-static` at the same time (it guards consistent reading order on wide and narrow screens).
+- Files and sessions belong to two different cleanup paths. The session cascade is the only exception and must go through `runCascade`; do not stuff both batches of paths into the same request just because they look alike in the interface.
+- Check the request generation and the current view before updating the interface with asynchronous results. Preserve actionable error messages on failure; partial success must be listed explicitly.
+- Repeated submission is forbidden while a write operation is in progress, and entering the confirmation word must not re-enable a button that is still processing.
 
-- 修复数据安全或行为缺陷时增加行为测试，覆盖失败方向。避免只用源码正则证明功能正确。
-- 对关键回归用例，用修复前代码核对其是否失败，或注入可观察的失败，证明测试能发现问题。
-- 修改接口后核对文档、前端与夹具；修改交互后在浏览器验证窄屏、键盘和错误状态。
-- 运行 `npm run check`。报告本地运行环境、实际结果及未运行的平台，不把配置存在当作验证通过。
-- 保留用户现有修改和备份。不自动重写 Git 历史，不将会话数据加入版本控制。
+## Verification and delivery
+
+- Add behavior tests that cover the failure direction when fixing data-safety or behavior defects. Avoid proving correctness only with source-code regular expressions.
+- For critical regression cases, verify that they fail against the code before the fix, or inject an observable failure to prove the test can catch the problem.
+- After changing an interface, verify the documentation, frontend, and fixtures; after changing interactions, verify narrow screens, the keyboard, and error states in a browser.
+- Run `npm run check`. Report the local runtime environment, the actual results, and any platforms not run; do not treat a configuration existing as verification passing.
+- Preserve the user's existing changes and backups. Do not automatically rewrite Git history, and do not add session data to version control.

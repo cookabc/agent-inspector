@@ -1,20 +1,22 @@
+**English** · [简体中文](README.zh-CN.md)
+
 # Agent Inspector
 
-在本机浏览 ZCode、Codex、Claude Code、Cursor 和 DeepSeek Harness 的磁盘占用与历史会话，核对清理后果，再选择要删除的内容；也可以只读地扫一遍会话正文，看凭据有没有外泄过。使用 Node.js 内置模块，无第三方运行依赖。
+Browse the disk usage and session history of ZCode, Codex, Claude Code, Cursor, and DeepSeek Harness on your machine, check what cleanup will actually take with it, then choose what to delete; you can also scan session bodies read-only to see whether credentials have ever leaked. Uses only built-in Node.js modules, with no third-party runtime dependencies.
 
 <p align="center">
-  <img src="docs/images/overview.png" width="880" alt="总览：磁盘占用与可清理空间分级，左列文件清单，右列按工具分组的会话列表">
+  <img src="docs/images/overview.png" width="880" alt="Overview: disk usage and cleanup space by tier, file list on the left, sessions grouped by tool on the right">
 </p>
 
 <p align="center">
-  <img src="docs/images/all-tools.png" width="880" alt="全部视图：五个工具共 319 个会话按文件夹聚合的只读汇总">
+  <img src="docs/images/all-tools.png" width="880" alt="All view: read-only summary of 319 sessions across five tools, aggregated by folder">
 </p>
 
-界面分两栏：左侧文件清单按「删了会怎样」分成可直接清理、谨慎清理、请勿删除三档；右侧会话管理按工具与文件夹折叠，逐条会话显示体积和最后使用时间。清理前必须勾选并确认，删除默认移入废纸篓。
+The interface has two columns: the file list on the left is split by "what happens if you delete it" into three tiers — safe to clean, clean with caution, and do not delete; session management on the right is collapsible by tool and folder, with each session showing its size and last-used time. Cleaning requires ticking items and confirming first; deletion goes to the Trash by default.
 
-## 启动
+## Getting started
 
-需要 Node.js ≥ 22.5。macOS 支持全部操作；其他系统支持扫描与文件备份删除，数据库写入还要求可用的 `pgrep` 进程检查。
+Requires Node.js ≥ 22.5. macOS supports every operation; other systems support scanning and file backup deletion, and database writes additionally require a working `pgrep` process check.
 
 ```bash
 git clone https://github.com/cookabc/agent-inspector.git
@@ -22,179 +24,179 @@ cd agent-inspector
 npm start
 ```
 
-浏览器自动打开 [本地页面](http://127.0.0.1:4173)。服务只监听 `127.0.0.1`，不提供远程访问。
+The browser opens the [local page](http://127.0.0.1:4173) automatically. The server listens only on `127.0.0.1` and offers no remote access.
 
-| 参数 | 默认值 | 用途 |
+| Flag | Default | Purpose |
 |---|---|---|
-| `--port <n>` | `4173`，也可用 `PORT` | 监听端口；`0` 自动分配空闲端口 |
-| `--app <id>` | 全部 | `zcode`、`codex`、`claude`、`cursor`、`dsh` |
-| `--root <dir>` | 工具自己的数据目录 | 覆盖所选工具的第一个目标；未指定 `--app` 时使用 ZCode 分类 |
-| `--backup-dir <dir>` | 项目下的 `backups/` | 设置清理前备份的保存目录 |
-| `--no-open` | 关闭 | 不自动打开浏览器 |
-| `--help` / `--version` | — | 显示帮助或版本后退出 |
+| `--port <n>` | `4173`, also settable via `PORT` | Listening port; `0` assigns a free port automatically |
+| `--app <id>` | all | `zcode`, `codex`, `claude`, `cursor`, `dsh` |
+| `--root <dir>` | the tool's own data directory | Overrides the first target of the selected tool; without `--app`, the ZCode category is used |
+| `--backup-dir <dir>` | `backups/` under the project | Sets the directory where pre-cleanup backups are stored |
+| `--no-open` | off | Does not open the browser automatically |
+| `--help` / `--version` | — | Prints help or version, then exits |
 
-例如，审计独立的 Codex 数据副本：
+For example, to audit a standalone copy of Codex data:
 
 ```bash
 npm start -- --app codex --root /absolute/path/to/codex-copy --no-open
 ```
 
-`--root` 只替换扫描位置，分类规则仍属于指定工具。它不会把任意目录变成通用清理目标。多目标工具的其他目标仍使用默认路径；测试必须设置临时 `HOME`，并指定独立的 `--backup-dir`。
+`--root` only replaces the scan location; the classification rules still belong to the specified tool. It does not turn an arbitrary directory into a generic cleanup target. Other targets of a multi-target tool still use their default paths; tests must set a temporary `HOME` and specify a separate `--backup-dir`.
 
-## 支持范围
+## Supported scope
 
-| 工具 | 默认扫描位置 | 会话清理方式 |
+| Tool | Default scan location | Session cleanup method |
 |---|---|---|
-| ZCode | `~/.zcode` | 删除正文库与任务索引中的目标及后代（含 `cli/` 下该会话的子 Agent 记录、产物、贴图、命令日志），随后 VACUUM |
-| Codex | `~/.codex` | 删除线程索引、历史投影和日志中的关联行；同线程的 rollout 正文（含分页续段）一并移入废纸篓 |
-| Claude Code | `~/.claude`、`~/.claude.json` | 正文是 `projects/` 下的 JSONL 文件；在会话管理里按会话删（备份后移入废纸篓） |
-| Cursor | `~/.cursor`、`~/Library/Application Support/Cursor` | 删除会话及仅由该批会话引用的 blob；支持孤儿 transcript 回灌 |
-| DeepSeek Harness | `~/.dsh` | 删除整个会话目录（含 lock）与投影缓存；投影缓存同时提供列表元数据 |
+| ZCode | `~/.zcode` | Deletes the target and its descendants from the body database and task index (including that session's sub-agent records, artifacts, pasted images, and command logs under `cli/`), then VACUUMs |
+| Codex | `~/.codex` | Deletes the linked rows in the thread index, history projections, and logs; rollout bodies of the same thread (including paginated continuation segments) are moved to the Trash as well |
+| Claude Code | `~/.claude`, `~/.claude.json` | The body is a JSONL file under `projects/`; delete per session in session management (backed up, then moved to the Trash) |
+| Cursor | `~/.cursor`, `~/Library/Application Support/Cursor` | Deletes the session and blobs referenced only by that batch of sessions; supports orphan transcript backfill |
+| DeepSeek Harness | `~/.dsh` | Deletes the entire session directory (including the lock) and the projection cache; the projection cache also supplies list metadata |
 
-工具标签用于查看单个工具；「全部」按项目聚合会话，供查找和浏览，不提供混合删除。「安全审计」扫各工具会话正文里的凭据外泄模式，只读、不给删除入口。
+Tool tabs are for viewing a single tool; "All" aggregates sessions by project for lookup and browsing and offers no mixed deletion. "Security audit" scans the session bodies of each tool for credential leak patterns; it is read-only and provides no deletion entry point.
 
-文件分类分为可安全清理、谨慎清理、异常建议清理、请勿删除。凭据、配置和数据库文件受保护。未归类内容不默认推荐；符号链接不可直接选择。
+File classification is split into safe to clean, clean with caution, anomaly suggested cleaning, and do not delete. Credential, configuration, and database files are protected. Unclassified content is not recommended by default; symbolic links cannot be selected directly.
 
-「推荐清理」和「一键清理」只生成选择与确认清单。执行前仍可取消项目。会话清理的默认范围还会跳过近期使用和置顶项，具体范围以界面为准。
+"Recommended cleanup" and "one-click cleanup" only produce a selection and confirmation list. Items can still be cancelled before execution. The default scope of session cleanup also skips recently used and pinned items; the interface is the authority on the exact scope.
 
-## 清理与备份
+## Cleanup and backup
 
-### 会话清理是级联的
+### Session cleanup is cascading
 
-会话是这个工具的主体：列表占满整宽，点开任一条能看到它的全部属性，以及**删掉它到底会带走什么**（「所属内容」）。清理一条会话不是只抹数据库 —— 顺序是：
+Sessions are this tool's main subject: the list fills the full width, and opening any entry shows all of its attributes as well as **what deleting it actually takes with it** ("Contents"). Cleaning a session is not just wiping the database — the order is:
 
-1. 备份这条会话在磁盘上的全部专属文件；
-2. 删数据库行并 VACUUM；
-3. 那些文件移入废纸篓（非 macOS 上改为「备份后彻底删除」，结果里会标明走的是哪条）。
+1. Back up all of this session's dedicated files on disk;
+2. Delete the database rows and VACUUM;
+3. Move those files to the Trash (on non-macOS this becomes "delete permanently after backup," and the result states which path was taken).
 
-各工具的级联范围差别很大，界面上会逐项列出：
+The cascade scope differs greatly between tools, and the interface lists it item by item:
 
-| 工具 | 一次会话清理带走什么 |
+| Tool | What one session cleanup takes with it |
 |---|---|
-| ZCode | 两个库的 18 类表行 + `cli/{agents,artifacts,image-cache}/sess_<id>/` + `cli/rollout/model-io-sess_<id>.jsonl` + `cli/exec/sess_<id>/` |
-| Codex | 三个库家族里所有带 thread_id 的行 + 同线程的**全部** rollout 段（分页续段一并带走 —— 留一段残骸会让恢复报 missing source rollout） |
-| Claude Code | 一个 `.jsonl`（正文即文件，没有行可删） |
-| Cursor | `cursorDiskKV` 的会话行 + 独占的内容池 blob + 库外 `agent-transcripts/<id>/`；`conversation-search.db` 里的旧文本由 Cursor 自己维护，本工具不写它 |
-| DeepSeek Harness | 整个 `session-<id>/` 目录（含 lock）+ 投影 JSON；`workspace.json` 里的悬空 id 会在下次启动时重建 |
+| ZCode | 18 classes of table rows in two databases + `cli/{agents,artifacts,image-cache}/sess_<id>/` + `cli/rollout/model-io-sess_<id>.jsonl` + `cli/exec/sess_<id>/` |
+| Codex | Every row with a thread_id across three database families + **all** rollout segments of the same thread (paginated continuation segments come along too — leaving one segment of wreckage makes recovery report a missing source rollout) |
+| Claude Code | One `.jsonl` (the body is the file; there are no rows to delete) |
+| Cursor | The session row in `cursorDiskKV` + exclusively owned content-pool blobs + out-of-database `agent-transcripts/<id>/`; the old text in `conversation-search.db` is maintained by Cursor itself, and this tool does not write it |
+| DeepSeek Harness | The entire `session-<id>/` directory (including the lock) + the projection JSON; dangling ids in `workspace.json` are rebuilt on the next launch |
 
-**备份 → 删库 → 删文件**这个顺序是刻意的：反过来的话，一旦备份失败就会出现「会话从列表消失、文件一个没少」，而文件恰恰是以前完全没被清掉的那一半。备份没做完时整批中止，数据库一行不动。
+The **backup → delete database → delete files** order is deliberate: in reverse, a failed backup would produce "the session vanished from the list while not a single file was removed" — and the files are precisely the half that was never cleaned up before. If the backup does not complete, the whole batch aborts and not one database row is touched.
 
-### 文件
+### Files
 
-- **移入废纸篓**：macOS 下移到 `~/.Trash`；跨文件系统移动失败时会保留源文件并报告失败。
-- **彻底删除**：先复制并核对内容，再删除原路径。每项使用独立备份目录，按工具、目标和相对路径存放；空文件也可以备份。备份失败时不删除该项。
-- 路径必须位于目标根内，不能使用绝对路径、`..` 或符号链接跳转。删除目录前递归检查受保护内容。
-- 整批路径先校验，执行期间逐项报告结果。磁盘错误可能导致部分项成功、部分项失败；已成功项会从当前选择中移除。
+- **Move to Trash**: on macOS they go to `~/.Trash`; if a cross-filesystem move fails, the source files are kept and the failure is reported.
+- **Delete permanently**: copy and verify the contents first, then remove the original path. Each item uses its own backup directory, stored by tool, target, and relative path; empty files can be backed up too. If the backup fails, that item is not deleted.
+- Paths must lie within the target root; absolute paths, `..`, and symbolic-link traversal are not allowed. Protected content is checked recursively before deleting a directory.
+- The whole batch of paths is validated first, and results are reported item by item during execution. Disk errors can leave some items succeeded and others failed; items that succeeded are removed from the current selection.
 
-文件清单收在页面底部的「磁盘与其他」里，默认折起，标题行给出体积与条目数。收起不等于藏起来 —— 折起后仍然告诉你值不值得展开。
+The file list lives at the bottom of the page under "Disk & other"; it is collapsed by default, with the title row showing the size and item count. Collapsed does not mean hidden — even when folded it still tells you whether it is worth expanding.
 
-备份也占用磁盘。文件从扫描目录移走，不等于整块磁盘立即增加同样多的可用空间。确认恢复不再需要后，再自行管理备份。
+Backups also take up disk space. Moving files out of the scanned directory does not mean the disk immediately gains that much free space. Once you are sure recovery is no longer needed, manage the backups yourself.
 
-### 数据库
+### Databases
 
-正式清理与回灌要求目标应用完全退出。进程检查失败会阻止写入；只读预览仍可使用。
+Formal cleanup and backfill require the target application to be fully exited. A failed process check blocks writes; read-only previews remain available.
 
-写入顺序统一为：
+The write order is uniform:
 
-1. 校验主库路径及已有 WAL、SHM、journal 侧文件，再打开全部相关库并取得写锁，检查完整性和外键。
-2. 将主库与存在的 WAL/SHM/journal 侧文件复制到独立目录，核对文件内容。
-3. 在事务中重新核对目标并执行 SQL。
-4. 检查所有库，再逐库提交。
-5. 清理操作执行 VACUUM，再检查完整性。
+1. Validate the main database path and any existing WAL, SHM, and journal side files, then open all related databases and acquire write locks, checking integrity and foreign keys.
+2. Copy the main database and any existing WAL/SHM/journal side files into a separate directory and verify the file contents.
+3. Re-verify the targets inside a transaction and execute the SQL.
+4. Check all databases, then commit database by database.
+5. Cleanup operations run VACUUM, then re-check integrity.
 
-SQL 或提交前检查失败时，尚未提交的事务全部回滚。**多个独立 SQLite 文件无法保证断电或提交阶段磁盘故障下的全局原子性。** 提交或 VACUUM 阶段失败时，错误会列明已提交的库和备份位置。停止后续清理，先核对并恢复数据。
+If the SQL or the pre-commit checks fail, every uncommitted transaction is rolled back. **Multiple independent SQLite files cannot guarantee global atomicity across a power loss or a disk failure during the commit phase.** If the commit or VACUUM phase fails, the error lists the committed databases and the backup location. Stop further cleanup, verify, and restore the data first.
 
-一个服务实例同时只接受一项写操作，重叠请求返回 `409`。不要同时启动多个实例操作同一批文件；文件系统操作无法隔离外部程序的并发修改。数据库锁也不能代替退出目标应用的要求。
+A single server instance accepts only one write operation at a time; overlapping requests return `409`. Do not start multiple instances operating on the same batch of files; filesystem operations cannot isolate against concurrent modification by external programs. Database locks are also no substitute for the requirement to exit the target application.
 
-Codex 根目录同时存在多个 `state_*.sqlite` 时，无法可靠确定当前使用的索引，暂不提供会话清理。文件扫描会合并可读索引中的会话 ID，避免把仍有索引的正文误标为孤儿。
+When multiple `state_*.sqlite` files exist in the Codex root, the index currently in use cannot be reliably determined, so session cleanup is not offered for now. File scanning merges the session IDs from readable indexes to avoid mislabelling bodies that still have an index as orphans.
 
-### 恢复备份
+### Restoring backups
 
-先退出目标应用并停止 Inspector。保留故障现场副本，避免恢复过程覆盖唯一证据。
+Exit the target application and stop Inspector first. Keep a copy of the failure scene so the recovery process does not overwrite the only evidence.
 
-- 文件：使用操作返回的 `backup` 路径，将副本放回原目标与相对路径。
-- 数据库：按同一次操作的备份恢复整组相关库。先将当前主库及其 `-wal`、`-shm`、`-journal` 一起移到现场保留目录，再复制备份中的主库及侧文件；不要混用不同批次的文件，也不要留下旧侧文件。
-- 恢复后先做只读检查，确认目标应用能正常读取会话，再继续使用。
+- Files: use the `backup` path returned by the operation and put the copy back at the original target and relative path.
+- Databases: restore the whole group of related databases from the same operation's backup. First move the current main database together with its `-wal`, `-shm`, and `-journal` into a directory kept for the scene, then copy the main database and side files from the backup; do not mix files from different batches, and do not leave old side files behind.
+- After restoring, do a read-only check first, confirming the target application can read the sessions normally before continuing to use it.
 
-`backups/` 包含完整会话正文，已被 Git 忽略。自定义备份目录也应保持私有，不应提交到仓库。
+`backups/` contains complete session bodies and is ignored by Git. Custom backup directories should also stay private and must not be committed to the repository.
 
-## Cursor 回灌边界
+## Cursor backfill boundaries
 
-回灌面向「transcript 存在、会话头缺失」的会话，只恢复可重建的文本和工具调用摘要。不能重建原始检查点、工具结果 blob 或执行环境。
+Backfill targets sessions where "the transcript exists but the session header is missing" and restores only the reconstructable text and tool-call summaries. It cannot reconstruct original checkpoints, tool-result blobs, or the execution environment.
 
-读不到会话头时不判断孤儿。已有会话头或已有同 ID 正文的会话会跳过；写入采用插入，不覆盖已有正文。回灌需要明确选择、输入确认词、退出 Cursor，并完成备份与数据库检查。
+When the session header cannot be read, no orphan judgment is made. Sessions that already have a header or already have a body with the same ID are skipped; writes use inserts and do not overwrite existing bodies. Backfill requires an explicit selection, an entered confirmation word, exiting Cursor, and a completed backup and database check.
 
-blob 清理使用已识别的文本 hash、二进制 hash 和工具调用 ID 引用关系。未知键族引用到的 blob，以及保留 blob 引用到的后代，均予以保留。Cursor 内部格式不是稳定的公开协议；出现新格式时，应先补夹具和识别规则再扩大清理范围。
+Blob cleanup uses the identified text hashes, binary hashes, and tool-call ID references. Blobs referenced by unknown key families, and descendants referenced by retained blobs, are all preserved. Cursor's internal format is not a stable public protocol; when a new format appears, fixtures and recognition rules should be added before broadening the cleanup scope.
 
-## 安全审计
+## Security audit
 
-回答一个问题：**凭据有没有从会话里漏出去过**。它读会话正文（只读），把工具调用与输出按落盘顺序过一遍，报三级结果：
+Answers one question: **have credentials ever leaked out of the sessions**. It reads session bodies (read-only), walks tool calls and outputs in on-disk order, and reports three levels of results:
 
-| 级别 | 判据 |
+| Level | Criterion |
 |---|---|
-| 高危 | 先读到敏感文件（`.env`、`id_rsa`、`credentials.json`…），之后同一条值出现在外发调用里 |
-| 疑似 | 外发调用里内嵌凭据样式（AWS key、GitHub token、URL 内嵌账号密码、Bearer 等） |
-| 提示 | 读过敏感文件。内容已经进了模型上下文 —— 这不是要删的东西，是该知道的事 |
+| High risk | A sensitive file (`.env`, `id_rsa`, `credentials.json`…) was read first, and the same value later appears in an outbound call |
+| Suspected | An outbound call embeds a credential pattern (AWS key, GitHub token, credentials in a URL, Bearer, etc.) |
+| Info | A sensitive file was read. The content has already entered the model context — this is not something to delete, it is something you should know |
 
-外发的判据按形态分：shell 看外发动词与外部 URL，Codex 的 `exec` 是 JS 源码，看取网工具与 `fetch` 族，WebFetch / 搜索生来就是外发。本地地址不作为“外部 URL”信号，但 `curl`、`fetch` 等调用仍会按网络操作检查；这不是实际网络流量或发送成功的证明。凭据值的来源只有两种：敏感文件的读取输出，以及 `printenv` / `env` 的倾倒输出。
+The outbound criterion differs by form: for shell, the outbound verbs and external URLs are checked; Codex's `exec` is JavaScript source, so the network-access tools and the `fetch` family are checked; WebFetch / search are outbound by nature. Local addresses do not count as an "external URL" signal, but calls such as `curl` and `fetch` are still checked as network operations; this is not proof of actual network traffic or of a successful send. Credential values come from only two sources: the read output of sensitive files, and the dump output of `printenv` / `env`.
 
-**证据一律脱敏。** 这是硬约束，不是修饰：这个工具的存在意义是审计凭据泄露，如果它自己把凭据摘出来摆在页面上，它就是新的泄露面。页面上只出现形如 `AKI••••QQ` 的遮蔽值与命中点附近的短窗口，窗口内所有已知值在截取**之前**就替换好；输出前还有一道终检，对 bank 里每个值、每条样式再扫一遍，撞上就地再脱一次。
+**Evidence is always redacted.** This is a hard constraint, not decoration: the whole point of this tool is auditing credential leaks, and if it plucked credentials out and put them on the page, it would itself become a new leak surface. The page shows only masked values of the form `AKI••••QQ` plus a short window around the hit; every known value inside the window is substituted **before** truncation; before output there is a final pass that re-scans every value and every pattern in the bank and re-redacts in place on any hit.
 
-已知边界：
+Known boundaries:
 
-- Cursor 暂不支持。它的正文散在内容寻址 blob 里，解开整池要十几秒起步 —— 那个代价留给「按会话清理」那条线，那边有明确的动作要配。
-- 单条文本只扫前 256 KiB，按 UTF-8 字节计数。超过窗口的内容可能含有凭据，界面会标为扫描不完整。
-- JSONL 最多读取前 48 MiB，超过 512 KiB 的行跳过；DSH 解压输出上限为 96 MiB，仅解析前 48 MiB。读取或解压失败会单独报告。
-- 单个会话累计超过 32 MiB 或 60 条命中后停止，被截断的会话在界面上标出。
-- 模式匹配不是数据流分析。它不认得变量在中间被改写、拼接、编码或分片传输；反过来，把测试用的假 key 写进会话也会照样报。**它减少的是漏看，不是替你做判断。**
+- Cursor is not supported for now. Its bodies are scattered across content-addressed blobs, and opening the whole pool takes at least a dozen seconds — that cost is reserved for the "cleanup by session" line, where there is a definite action to pair with it.
+- A single text is scanned only for the first 256 KiB, counted in UTF-8 bytes. Content beyond the window may contain credentials, and the interface marks it as an incomplete scan.
+- JSONL is read up to the first 48 MiB, and lines longer than 512 KiB are skipped; DSH decompression output is capped at 96 MiB, and only the first 48 MiB is parsed. Read or decompression failures are reported separately.
+- Scanning stops after a single session accumulates more than 32 MiB or 60 hits, and truncated sessions are marked in the interface.
+- Pattern matching is not data-flow analysis. It does not recognize variables being rewritten, concatenated, encoded, or split across chunks in between; conversely, a fake test key written into a session is reported just the same. **What it reduces is oversight, not your judgment.**
 
-## 扫描口径与限制
+## Scan scope and limitations
 
-- 文件清单主要读取文件元数据；Codex 分类会额外读取 rollout 首行，识别分页续段及其引用的原始会话，保护分页依赖。
-- 会话列表会读取数据库、投影缓存或正文元数据。Claude 读取文件开头；Cursor 回灌扫描逐行解析 transcript。
-- 「安全审计」会读会话正文（其余功能不读）。见上一节的口径与边界。
-- DeepSeek 优先使用投影；缺失时尝试内置 zstd 解压，输出上限 96 MiB，解析前 400 行。旧 Node 无 zstd 时保留会话与体积，并说明标题不可用。
-- SQLite 请求只读连接，并开启 `query_only`，补足旧 Node 对 `readOnly` 选项的支持差异；直接打开失败时尝试临时副本。SQLite 可能维护 WAL 的共享内存侧文件，不承诺扫描目录完全没有文件系统变化。
-- 会话库不可读时不应把所有文件推断成孤儿。错误与不完整结果会在页面显示。
-- 文件体积使用 1024 进制；它是逻辑文件大小，不等同于 APFS 实际分配空间、稀疏文件占用或可立即回收空间。
-- 文件列表缓存 15 秒，会话列表 60 秒，Cursor 引用分析 10 分钟，安全审计 10 分钟。手动重新扫描可以刷新；清理和回灌结束后相关缓存失效。
-- 不同工具升级后可能改变数据库结构或落盘格式。不识别的格式需要维护适配器；不应绕过错误强制清理。
+- The file list mainly reads file metadata; Codex classification additionally reads the first line of rollouts to identify paginated continuation segments and the original sessions they reference, protecting pagination dependencies.
+- The session list reads databases, projection caches, or body metadata. Claude reads the start of the file; Cursor backfill scanning parses transcripts line by line.
+- "Security audit" reads session bodies (the other features do not). See the previous section for its scope and boundaries.
+- DeepSeek prefers the projection; when it is missing, it tries built-in zstd decompression with an output cap of 96 MiB, parsing the first 400 lines. On older Node without zstd, the session and its size are kept, and the title is reported as unavailable.
+- SQLite requests read-only connections and enables `query_only`, making up for older Node's differences in supporting the `readOnly` option; when a direct open fails, a temporary copy is attempted. SQLite may maintain shared-memory side files for WAL, so no promise is made that scanning a directory leaves the filesystem completely unchanged.
+- When the session database is unreadable, all files should not be inferred to be orphans. Errors and incomplete results are shown on the page.
+- File sizes use base 1024; this is the logical file size and is not the same as actual space allocated by APFS, sparse-file occupancy, or immediately reclaimable space.
+- The file list is cached for 15 seconds, the session list for 60 seconds, Cursor reference analysis for 10 minutes, and security audit for 10 minutes. A manual rescan refreshes them; the relevant caches are invalidated after cleanup and backfill finish.
+- Upgrading different tools may change database structures or on-disk formats. Unrecognized formats require maintaining the adapter; you should not bypass errors to force cleanup.
 
-## 开发与验证
+## Development and verification
 
 ```bash
 npm test
 npm run check
 ```
 
-`check` 检查源码语法并执行测试，只遍历源码目录，不读取 `backups/`。测试使用临时 HOME、临时数据库和独立备份目录，不清理真实会话数据。
+`check` checks source syntax and runs the tests; it only walks the source directory and does not read `backups/`. Tests use a temporary HOME, temporary databases, and separate backup directories, and do not clean up real session data.
 
-测试覆盖分类、会话契约、路径与跨站边界、备份、写锁、跨库回滚、父子会话、Cursor 引用保留与回灌、凭据外泄判定与脱敏不变量，以及前端纯函数和静态交互约束。静态前端测试不能替代浏览器行为验证。
+Tests cover classification, the session contract, path and cross-site boundaries, backup, write locks, cross-database rollback, parent-child sessions, Cursor reference preservation and backfill, credential-leak judgment and redaction invariants, as well as frontend pure functions and static interaction constraints. Static frontend tests are no substitute for verifying browser behavior.
 
-`npm run test:ui` 使用合成接口数据检查视图切换、刷新、清理入口、弹窗焦点、错误反馈与窄屏，不连接真实会话接口。默认使用 macOS 的 Google Chrome；其他安装位置可通过 `CHROME_PATH` 指定可执行文件。
+`npm run test:ui` uses synthetic API data to check view switching, refresh, cleanup entry points, dialog focus, error feedback, and narrow screens, without connecting to the real session API. It uses macOS's Google Chrome by default; other installation locations can be pointed at via `CHROME_PATH`.
 
-CI 配置在 Linux、macOS 与 Node 22.5.0 / 22.23.4 / 24.22.1 / 26.12.1 上执行检查。本地通过不等于远程 CI 已通过。Node 22.5 缺少 zstd 测试夹具所需 API，对应用例会跳过。
+CI runs checks on Linux, macOS, and Node 22.5.0 / 22.23.4 / 24.22.1 / 26.12.1. Passing locally does not mean the remote CI has passed. Node 22.5 lacks the API required by the zstd test fixtures, so the corresponding cases are skipped.
 
-| 文件 | 职责 |
+| File | Responsibility |
 |---|---|
-| `server.mjs` | 本地 HTTP、请求校验、文件操作、缓存与 worker 调度 |
-| `lib/apps/` | 工具注册、目标目录、分类与运行进程 |
-| `lib/scan.mjs` | 文件清单、分类汇总与孤儿判定 |
-| `lib/tasks*.mjs` | 各工具会话适配器与共同返回契约 |
-| `lib/cursor-purge.mjs` | Cursor 引用分析与按会话删除 |
-| `lib/cursor-recover.mjs` | Cursor transcript 扫描与受控回灌 |
-| `lib/audit.mjs` | 凭据外泄判定核心：敏感路径、密文样式、外发判据、脱敏（纯函数） |
-| `lib/audit-sessions.mjs` | 各工具会话正文 → 事件流 → 判定 |
-| `lib/backup.mjs` | 独立备份目录与复制校验 |
-| `lib/database-write.mjs` | 数据库锁、事务、备份、提交和自检 |
-| `lib/write-guard.mjs` | 单实例写操作互斥 |
-| `lib/validation.mjs` | 会话请求参数校验 |
-| `lib/sqlite-open.mjs`、`lib/db-worker.mjs` | 只读连接、临时副本与后台执行 |
-| `public/` | 页面、样式、浏览器状态和纯函数 |
-| `test/` | 临时数据回归测试 |
+| `server.mjs` | Local HTTP, request validation, file operations, caching, and worker scheduling |
+| `lib/apps/` | Tool registration, target directories, classification, and running processes |
+| `lib/scan.mjs` | File list, classification summary, and orphan determination |
+| `lib/tasks*.mjs` | Session adapters for each tool and the shared return contract |
+| `lib/cursor-purge.mjs` | Cursor reference analysis and deletion by session |
+| `lib/cursor-recover.mjs` | Cursor transcript scanning and controlled backfill |
+| `lib/audit.mjs` | Credential-leak judgment core: sensitive paths, secret patterns, outbound criteria, redaction (pure functions) |
+| `lib/audit-sessions.mjs` | Session bodies of each tool → event stream → judgment |
+| `lib/backup.mjs` | Separate backup directories and copy verification |
+| `lib/database-write.mjs` | Database locks, transactions, backup, commit, and self-checks |
+| `lib/write-guard.mjs` | Single-instance write-operation mutual exclusion |
+| `lib/validation.mjs` | Session request parameter validation |
+| `lib/sqlite-open.mjs`, `lib/db-worker.mjs` | Read-only connections, temporary copies, and background execution |
+| `public/` | Pages, styles, browser state, and pure functions |
+| `test/` | Regression tests with temporary data |
 
-维护约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+See [CONTRIBUTING.md](CONTRIBUTING.md) for maintenance conventions.
 
-## 许可
+## License
 
 [MIT](LICENSE)
