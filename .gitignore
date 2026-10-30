@@ -32,3 +32,5 @@ npm-debug.log*
 # 临时文件与缓存
 *.tmp
 .cache/
+test-results/
+playwright-report/

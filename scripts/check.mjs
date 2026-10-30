@@ -22,4 +22,4 @@ function run(args) {
   if (result.status !== 0) process.exit(result.status || 1);
 }
 for (const file of files.sort()) run(['--check', file]);
-run(['--experimental-sqlite', '--test']);
+run(['--experimental-sqlite', '--test', ...files.filter(file => file.startsWith('test' + path.sep) && file.endsWith('.test.mjs')).sort()]);

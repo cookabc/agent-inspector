@@ -162,11 +162,20 @@ Known boundaries:
 - The file list is cached for 15 seconds, the session list for 60 seconds, Cursor reference analysis for 10 minutes, and security audit for 10 minutes. A manual rescan refreshes them; the relevant caches are invalidated after cleanup and backfill finish.
 - Upgrading different tools may change database structures or on-disk formats. Unrecognized formats require maintaining the adapter; you should not bypass errors to force cleanup.
 
+## Browser request boundary
+
+The interface remains Chinese. `public/requests.js` validates HTTP, JSON and required fields for read-only APIs before committing browser state. Only the newest scan can update the view; failures retain existing results and offer a retry. Deletion, backup and confirmation retain their existing write boundaries.
+
 ## Development and verification
+
+Playwright is a development dependency only. `test:e2e` checks scan recovery, response races, malformed payloads, keyboard navigation and read-only audit in desktop and mobile viewports. Its server supplies synthetic records, rejects writes and never scans real Agent directories. CI also keeps the existing `test:ui` regressions and uploads failure traces.
 
 ```bash
 npm test
 npm run check
+npm ci
+npx playwright install chromium
+npm run test:e2e
 ```
 
 `check` checks source syntax and runs the tests; it only walks the source directory and does not read `backups/`. Tests use a temporary HOME, temporary databases, and separate backup directories, and do not clean up real session data.

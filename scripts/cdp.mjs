@@ -21,7 +21,7 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
  */
 export async function launch({ port, profile = 'agent-inspector-cdp', size = [1440, 1000], executable = process.env.CHROME_PATH || CHROME }) {
   const proc = spawn(executable, [
-    '--headless=new', `--remote-debugging-port=${port}`,
+    '--headless=new', ...(process.env.CI ? ['--no-sandbox'] : []), `--remote-debugging-port=${port}`,
     `--user-data-dir=/tmp/${profile}`, '--no-first-run',
     `--window-size=${size[0]},${size[1]}`, 'about:blank',
   ], { stdio: 'ignore' });

@@ -28,7 +28,11 @@
     "start": "node --experimental-sqlite server.mjs",
     "test": "node --experimental-sqlite --test",
     "check": "node scripts/check.mjs",
-    "test:ui": "node scripts/ui-regression.mjs"
+    "test:ui": "node scripts/ui-regression.mjs",
+    "test:e2e": "playwright test"
   },
-  "author": "cookabc"
+  "author": "cookabc",
+  "devDependencies": {
+    "@playwright/test": "1.64.1"
+  }
 }
