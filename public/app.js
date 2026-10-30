@@ -1,3 +1,4 @@
+import {readJson,scanResponse,allResponse,auditResponse,taskResponse} from './requests.js';
 /* Agent Inspector —— 前端
  *
  * 一次只审一个 app：ZCode / Codex / Claude Code / Cursor 把东西存在完全不同的地方，
@@ -9,6 +10,7 @@ const $ = (id) => document.getElementById(id);
 const els = {
   rootPath: $('rootPath'), scanNote: $('scanNote'), rescanBtn: $('rescanBtn'), themeBtn: $('themeBtn'),
   appTabs: $('appTabs'),
+  scanError: $('scanError'), scanErrorMessage: $('scanErrorMessage'),
   single: $('single'),
   skeleton: $('skeleton'),
   heroBytes: $('heroBytes'), heroSub: $('heroSub'),
@@ -147,7 +149,7 @@ const REC_KEY = 'zci-rec-off';   // 每个 app 各记一份：分类表本来就
 function recStore() {
   try {
     const raw = JSON.parse(localStorage.getItem(REC_KEY) || '{}');
-    return raw && typeof raw === 'object' ? raw : {};
+    return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
   } catch { return {}; }
 }
 
@@ -218,10 +220,8 @@ async function load(refresh = false) {
   setBusy(true);
   els.scanNote.textContent = refresh ? '重新扫描中…' : '扫描中…';
   try {
-    const res = await fetch('/api/scan' + (refresh ? '?refresh=1' : ''));
-    if (!res.ok) throw new Error((await res.json()).error || res.statusText);
-    const data = await res.json();
-    if (request !== scanRequest) return;
+    const data = await readJson('/api/scan' + (refresh ? '?refresh=1' : ''), scanResponse);
+    if (request !== scanRequest) return false;
     state.scan = data;
     if (refresh) { allState.data = null; auditState.data = null; }
     state.apps = state.scan.apps;
@@ -230,6 +230,13 @@ async function load(refresh = false) {
     indexRows();
     if (!isAll() && !isAudit() && !state.apps.some((a) => a.app === state.appId)) state.appId = pickApp();
     applyApp();
+    els.scanError.hidden = true;
+    return true;
+  } catch (error) {
+    if (request !== scanRequest) return false;
+    els.scanErrorMessage.textContent = `扫描失败，已有结果已保留。请确认本地服务仍在运行后重试。${error.message}`;
+    els.scanError.hidden = false;
+    throw error;
   } finally {
     if (request === scanRequest) { dropSkeleton(); setBusy(false); }
   }
@@ -1055,9 +1062,7 @@ async function loadAllSessions(refresh = false) {
   allState.loading = true;
   els.allLede.textContent = '正在汇总各工具的会话…';
   try {
-    const res = await fetch('/api/tasks/all' + (refresh ? '?refresh=1' : ''));
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.statusText);
+    const data = await readJson('/api/tasks/all' + (refresh ? '?refresh=1' : ''), allResponse);
     if (!isAll() || request !== allRequest || epoch !== viewEpoch) return;   // 切走了就丢掉
     allState.data = data;
   } catch (err) {
@@ -1134,9 +1139,7 @@ async function loadAudit(refresh = false) {
   auditState.loading = true;
   els.auditLede.textContent = '正在扫描各工具的会话正文…（只读）';
   try {
-    const res = await fetch('/api/audit' + (refresh ? '?refresh=1' : ''));
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.statusText);
+    const data = await readJson('/api/audit' + (refresh ? '?refresh=1' : ''), auditResponse);
     if (!isAudit() || request !== auditRequest || epoch !== viewEpoch) return;
     auditState.data = data;
   } catch (err) {
@@ -1513,11 +1516,11 @@ document.addEventListener('click', async (e) => {
     selectAllVisible(state, visibleCategories(), { selectableOnly, keyOf });
     renderSplit(); renderGroups(); renderActionbar(); return;
   }
-  if (t.closest('#rescanBtn')) {
+  if (t.closest('#rescanBtn, [data-retry-scan]')) {
     if (operationBusy) return;
     setBtnBusy(els.rescanBtn, true);
     try {
-      await load(true);
+      if (!await load(true)) return;
       if (isAll()) await loadAllSessions(true);
       else if (isAudit()) await loadAudit(true);
       else await loadTasks(true);
@@ -1841,9 +1844,7 @@ async function loadTasks(refresh = false) {
   // 只在右上角转一个圈，数据到了整块换掉。
   setPanelBusy(true);
   try {
-    const res = await fetch(`/api/tasks?app=${encodeURIComponent(appId)}` + (refresh ? '&refresh=1' : ''));
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || res.statusText);
+    const data = await readJson(`/api/tasks?app=${encodeURIComponent(appId)}` + (refresh ? '&refresh=1' : ''), taskResponse);
     // 换 app 换得快了，晚到的旧响应要丢掉
     if (request !== taskRequest || epoch !== viewEpoch || state.appId !== appId || data.appId !== appId) return;
     taskState.data = data;
@@ -2800,12 +2801,12 @@ loadTqScope();
   }
   try {
     const saved = localStorage.getItem('zci-theme');
-    if (saved) document.documentElement.setAttribute('data-theme', saved);
+    if (saved === 'dark' || saved === 'light') document.documentElement.setAttribute('data-theme', saved);
   } catch {}
 })();
 
-load().then(() => loadTasks()).catch((err) => {
-  els.heroSub.innerHTML = `<b>扫描失败：</b>${esc(err.message)}`;
+load().then((committed) => committed && loadTasks()).catch((err) => {
+  if (!state.scan) els.heroSub.innerHTML = `<b>扫描失败：</b>${esc(err.message)}`;
   els.scanNote.textContent = '出错';
   // 失败时也要把忙碌态收掉 —— 否则顶栏那条线会一直跑，看起来像永远没扫完
   dropSkeleton();

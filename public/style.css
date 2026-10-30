@@ -2790,3 +2790,8 @@ html.is-theme-switching *::before,
 html.is-theme-switching *::after {
   transition: none !important;
 }
+
+.scan-error {display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:20px;padding:16px;border:1px solid var(--st-warning);border-radius:var(--r-sm);background:var(--surface-2);color:var(--ink);}
+.scan-error[hidden] {display:none;}
+.scan-error p {margin:0;flex:1;min-width:0;overflow-wrap:anywhere;}
+.scan-error button {min-height:44px;}
